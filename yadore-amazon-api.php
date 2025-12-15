@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.2.1
+ * Version: 1.2.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.2.1');
+define('YAA_VERSION', '1.2.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -271,26 +271,34 @@ final class Yadore_Amazon_API_Plugin {
             wp_register_style('yaa-minimal-functional', false);
             wp_enqueue_style('yaa-minimal-functional');
             
-            // Minimales CSS, damit "Mehr lesen" technisch funktioniert (Einklappen/Ausklappen)
+            // Minimales CSS, damit "Mehr lesen" technisch funktioniert
+            // WICHTIG: Die .expanded Regeln nutzen !important, um Custom CSS (wie line-clamp) zu überschreiben
             $minimal_css = "
                 .yaa-description {
                     overflow: hidden;
-                    max-height: 4.8em; /* Höhe im eingeklappten Zustand */
-                    transition: max-height 0.4s ease-out;
                     position: relative;
+                    /* Fallback für Themes ohne eigenes CSS */
+                    max-height: 4.8em; 
+                    transition: max-height 0.4s ease-out;
                 }
+                
                 .yaa-description.expanded {
-                    max-height: 1000px; /* Ausreichende Höhe zum Ausklappen */
+                    max-height: none !important; /* Maximale Höhe aufheben */
+                    -webkit-line-clamp: unset !important; /* Line-Clamp aufheben */
+                    line-clamp: unset !important;
+                    display: block !important; /* -webkit-box aufheben */
+                    overflow: visible !important;
                 }
+                
                 .yaa-read-more {
                     cursor: pointer;
                     display: inline-block;
                 }
-                /* Optional: Grid Basis-Setup, falls gewünscht, sonst muss das Theme das machen */
+                
+                /* Basis-Grid, falls vom Theme nicht definiert */
                 .yaa-grid-container {
                     display: grid;
                     gap: 20px;
-                    /* Default auf 3 Spalten, wenn nichts im Theme definiert ist */
                     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
                 }
             ";
