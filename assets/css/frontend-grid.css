@@ -1,0 +1,559 @@
+/**
+ * Yadore-Amazon-API Frontend Grid Styles
+ * Version 1.0.0 - PHP 8.3+ compatible
+ */
+
+/* =========================================
+ * CSS CUSTOM PROPERTIES
+ * ========================================= */
+.yaa-grid-container {
+    --yaa-primary: #ff00cc;
+    --yaa-secondary: #00ffff;
+    --yaa-amazon: #ff9900;
+    --yaa-dark-bg: #0a0a0a;
+    --yaa-glass-bg: rgba(255, 255, 255, 0.05);
+    --yaa-glass-border: rgba(255, 255, 255, 0.1);
+    --yaa-text-main: #ffffff;
+    --yaa-text-muted: #aaaaaa;
+    --yaa-columns-desktop: 3;
+    --yaa-columns-tablet: 2;
+    --yaa-columns-mobile: 1;
+}
+
+/* =========================================
+ * GRID CONTAINER
+ * ========================================= */
+.yaa-grid-container {
+    display: grid;
+    grid-template-columns: repeat(var(--yaa-columns-desktop), 1fr);
+    gap: 25px;
+    padding: 10px 0;
+    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* =========================================
+ * PRODUCT CARD
+ * ========================================= */
+.yaa-item {
+    background: var(--yaa-glass-bg);
+    border: 1px solid var(--yaa-glass-border);
+    border-bottom: 2px solid var(--yaa-primary);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+}
+
+.yaa-item:nth-child(even) {
+    border-bottom-color: var(--yaa-secondary);
+}
+
+.yaa-item.yaa-amazon {
+    border-bottom-color: var(--yaa-amazon);
+}
+
+/* Hover Effects */
+.yaa-item:hover {
+    transform: translateY(-8px);
+    border-color: rgba(255, 255, 255, 0.3);
+    box-shadow: 
+        0 15px 40px rgba(0, 0, 0, 0.4),
+        0 0 30px color-mix(in srgb, var(--yaa-primary), transparent 80%);
+}
+
+.yaa-item:nth-child(even):hover {
+    box-shadow: 
+        0 15px 40px rgba(0, 0, 0, 0.4),
+        0 0 30px color-mix(in srgb, var(--yaa-secondary), transparent 80%);
+}
+
+.yaa-item.yaa-amazon:hover {
+    box-shadow: 
+        0 15px 40px rgba(0, 0, 0, 0.4),
+        0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 80%);
+}
+
+/* =========================================
+ * PRIME BADGE
+ * ========================================= */
+.yaa-prime-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: var(--yaa-amazon);
+    color: #000;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(255, 153, 0, 0.4);
+}
+
+/* =========================================
+ * IMAGE WRAPPER
+ * ========================================= */
+.yaa-image-wrapper {
+    position: relative;
+    width: 100%;
+    padding-top: 100%; /* 1:1 Aspect Ratio */
+    background: linear-gradient(180deg, 
+        rgba(10, 10, 10, 0.3) 0%, 
+        rgba(10, 10, 10, 0.6) 100%);
+    overflow: hidden;
+}
+
+.yaa-image-wrapper a {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+}
+
+.yaa-image-wrapper img {
+    width: 85%;
+    height: 85%;
+    object-fit: contain;
+    transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+    filter: brightness(0.95) saturate(0.95) drop-shadow(0 4px 20px rgba(0, 0, 0, 0.5));
+}
+
+.yaa-item:hover .yaa-image-wrapper img {
+    transform: scale(1.08);
+    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 0, 204, 0.3));
+}
+
+.yaa-item.yaa-amazon:hover .yaa-image-wrapper img {
+    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 153, 0, 0.3));
+}
+
+/* No Image Placeholder */
+.yaa-no-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+}
+
+.yaa-no-image span {
+    font-size: 4rem;
+    opacity: 0.3;
+}
+
+/* =========================================
+ * CONTENT SECTION
+ * ========================================= */
+.yaa-content {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    border-top: 1px solid var(--yaa-glass-border);
+}
+
+/* Title */
+.yaa-title {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.4;
+    margin: 0 0 12px 0;
+    color: var(--yaa-text-main);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 2.8em;
+}
+
+.yaa-title a {
+    color: var(--yaa-text-main);
+    text-decoration: none;
+    transition: all 0.3s ease;
+}
+
+.yaa-title a:hover {
+    color: var(--yaa-secondary);
+    text-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+}
+
+.yaa-item.yaa-amazon .yaa-title a:hover {
+    color: var(--yaa-amazon);
+    text-shadow: 0 0 15px rgba(255, 153, 0, 0.5);
+}
+
+/* =========================================
+ * DESCRIPTION
+ * ========================================= */
+.yaa-description-wrapper {
+    position: relative;
+    margin-bottom: 15px;
+}
+
+.yaa-description {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--yaa-text-muted);
+    max-height: 4.8em;
+    overflow: hidden;
+    transition: max-height 0.4s ease-out;
+    position: relative;
+}
+
+.yaa-description::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2.4em;
+    background: linear-gradient(to bottom, transparent 0%, rgba(10, 10, 10, 0.9) 100%);
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.yaa-description.expanded {
+    max-height: 500px;
+}
+
+.yaa-description.expanded::after {
+    opacity: 0;
+}
+
+/* Read More Button */
+.yaa-read-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--yaa-primary);
+    cursor: pointer;
+    margin-top: 8px;
+    padding: 5px 0;
+    border: none;
+    background: none;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+}
+
+.yaa-read-more:hover {
+    color: var(--yaa-secondary);
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.yaa-read-more::after {
+    content: "▼";
+    font-size: 0.6rem;
+    transition: transform 0.3s ease;
+}
+
+.yaa-read-more.expanded::after {
+    transform: rotate(180deg);
+}
+
+.yaa-item.yaa-amazon .yaa-read-more {
+    color: var(--yaa-amazon);
+}
+
+.yaa-no-description {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.3);
+    font-style: italic;
+    margin-bottom: 15px;
+}
+
+/* =========================================
+ * META & PRICE
+ * ========================================= */
+.yaa-meta {
+    margin: 0 0 15px 0;
+}
+
+.yaa-price {
+    display: block;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 1.6rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, 
+        var(--yaa-primary) 0%, 
+        #ff66dd 50%, 
+        var(--yaa-secondary) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: yaa-price-glow 3s ease-in-out infinite;
+    margin-bottom: 5px;
+}
+
+.yaa-item.yaa-amazon .yaa-price {
+    background: linear-gradient(135deg, 
+        var(--yaa-amazon) 0%, 
+        #ffb84d 50%, 
+        var(--yaa-amazon) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+@keyframes yaa-price-glow {
+    0%, 100% { background-position: 0% center; }
+    50% { background-position: 100% center; }
+}
+
+.yaa-merchant {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--yaa-text-muted);
+    font-weight: 600;
+}
+
+.yaa-merchant::before {
+    content: "via ";
+    color: var(--yaa-secondary);
+}
+
+.yaa-item.yaa-amazon .yaa-merchant::before {
+    color: var(--yaa-amazon);
+}
+
+/* =========================================
+ * BUTTON
+ * ========================================= */
+.yaa-button-wrapper {
+    margin-top: auto;
+}
+
+.yaa-button {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background-color: transparent;
+    border: 2px solid var(--yaa-primary);
+    color: var(--yaa-primary);
+    padding: 14px 20px;
+    border-radius: 50px;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    box-sizing: border-box;
+}
+
+.yaa-button:hover {
+    background-color: var(--yaa-primary);
+    color: #000;
+    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-primary), transparent 30%);
+    transform: translateY(-2px);
+    text-decoration: none;
+}
+
+/* Alternating Colors */
+.yaa-item:nth-child(even) .yaa-button {
+    border-color: var(--yaa-secondary);
+    color: var(--yaa-secondary);
+}
+
+.yaa-item:nth-child(even) .yaa-button:hover {
+    background-color: var(--yaa-secondary);
+    color: #000;
+    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-secondary), transparent 30%);
+}
+
+/* Amazon Button */
+.yaa-item.yaa-amazon .yaa-button {
+    border-color: var(--yaa-amazon);
+    color: var(--yaa-amazon);
+}
+
+.yaa-item.yaa-amazon .yaa-button:hover {
+    background-color: var(--yaa-amazon);
+    color: #000;
+    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 30%);
+}
+
+/* =========================================
+ * MESSAGE STATES (Error/Empty)
+ * ========================================= */
+.yaa-message {
+    text-align: center;
+    padding: 50px 30px;
+    background: var(--yaa-glass-bg);
+    border: 1px solid var(--yaa-glass-border);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.yaa-message .yaa-icon {
+    display: block;
+    font-size: 3rem;
+    margin-bottom: 15px;
+    filter: drop-shadow(0 0 15px var(--yaa-primary));
+    animation: yaa-pulse 2s infinite ease-in-out;
+}
+
+.yaa-message p {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--yaa-text-main);
+}
+
+.yaa-error .yaa-icon {
+    filter: drop-shadow(0 0 15px #ff4444);
+}
+
+@keyframes yaa-pulse {
+    0%, 100% { 
+        filter: drop-shadow(0 0 10px var(--yaa-primary)); 
+        transform: scale(1);
+    }
+    50% { 
+        filter: drop-shadow(0 0 20px var(--yaa-secondary)); 
+        transform: scale(1.05);
+    }
+}
+
+/* =========================================
+ * RESPONSIVE DESIGN
+ * ========================================= */
+@media (max-width: 1400px) {
+    .yaa-grid-container {
+        grid-template-columns: repeat(var(--yaa-columns-desktop), 1fr);
+    }
+}
+
+@media (max-width: 1024px) {
+    .yaa-grid-container {
+        grid-template-columns: repeat(var(--yaa-columns-tablet), 1fr);
+        gap: 20px;
+    }
+}
+
+@media (max-width: 600px) {
+    .yaa-grid-container {
+        grid-template-columns: repeat(var(--yaa-columns-mobile), 1fr);
+        gap: 20px;
+    }
+    
+    .yaa-title {
+        font-size: 1rem;
+    }
+    
+    .yaa-price {
+        font-size: 1.4rem;
+    }
+    
+    .yaa-content {
+        padding: 15px;
+    }
+    
+    .yaa-button {
+        padding: 12px 18px;
+        font-size: 0.75rem;
+    }
+    
+    .yaa-description {
+        font-size: 0.8rem;
+    }
+    
+    .yaa-prime-badge {
+        top: 8px;
+        left: 8px;
+        font-size: 0.6rem;
+        padding: 3px 8px;
+    }
+}
+
+/* Large screens */
+@media (min-width: 1600px) {
+    .yaa-grid-container {
+        gap: 30px;
+    }
+    
+    .yaa-title {
+        font-size: 1.15rem;
+    }
+    
+    .yaa-price {
+        font-size: 1.8rem;
+    }
+}
+
+/* =========================================
+ * ACCESSIBILITY
+ * ========================================= */
+@media (prefers-reduced-motion: reduce) {
+    .yaa-item,
+    .yaa-image-wrapper img,
+    .yaa-button,
+    .yaa-description,
+    .yaa-read-more::after {
+        transition: none;
+    }
+    
+    .yaa-price,
+    .yaa-message .yaa-icon {
+        animation: none;
+    }
+}
+
+/* Focus styles for keyboard navigation */
+.yaa-button:focus,
+.yaa-read-more:focus,
+.yaa-title a:focus,
+.yaa-image-wrapper a:focus {
+    outline: 2px solid var(--yaa-secondary);
+    outline-offset: 2px;
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+    .yaa-item {
+        border-width: 2px;
+    }
+    
+    .yaa-button {
+        border-width: 3px;
+    }
+}
+
+/* Dark mode support (if system prefers) */
+@media (prefers-color-scheme: light) {
+    .yaa-grid-container {
+        --yaa-glass-bg: rgba(0, 0, 0, 0.03);
+        --yaa-glass-border: rgba(0, 0, 0, 0.1);
+        --yaa-text-main: #1a1a1a;
+        --yaa-text-muted: #666666;
+    }
+    
+    .yaa-description::after {
+        background: linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.95) 100%);
+    }
+}
