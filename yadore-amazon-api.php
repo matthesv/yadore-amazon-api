@@ -73,25 +73,21 @@ require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
 if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php')) {
     require_once YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php';
     
-    use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
-    
-    $yaaUpdateChecker = PucFactory::buildUpdateChecker(
+    // WICHTIG: Vollqualifizierten Klassennamen mit führendem Backslash verwenden!
+    $yaaUpdateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
         'https://github.com/matthesv/yadore-amazon-api/',
-        YAA_PLUGIN_FILE, // Wichtig: __FILE__ oder die Konstante verwenden
+        YAA_PLUGIN_FILE,
         'yadore-amazon-api'
     );
     
     // Branch festlegen
     $yaaUpdateChecker->setBranch('main');
     
-    // Optional: Für private Repositories - Token aus den Einstellungen oder wp-config.php
+    // Optional: Für private Repositories
     $github_token = defined('YAA_GITHUB_TOKEN') ? YAA_GITHUB_TOKEN : yaa_get_option('github_token', '');
     if (!empty($github_token)) {
         $yaaUpdateChecker->setAuthentication($github_token);
     }
-    
-    // Optional: Release Assets verwenden (für .zip Downloads)
-    // $yaaUpdateChecker->getVcsApi()->enableReleaseAssets();
 }
 
 /**
