@@ -2,6 +2,14 @@
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
+ * 
+ * Features:
+ * - Yadore API Configuration
+ * - Amazon PA-API 5.0 Configuration (all marketplaces)
+ * - Custom Products Management
+ * - Redis Cache Configuration
+ * - Display Settings
+ * - Status & Documentation
  */
 
 declare(strict_types=1);
@@ -115,7 +123,7 @@ final class YAA_Admin {
         // Amazon settings
         $sanitized['enable_amazon'] = isset($input['enable_amazon']) ? 'yes' : 'no';
         $sanitized['amazon_access_key'] = sanitize_text_field($input['amazon_access_key'] ?? '');
-        $sanitized['amazon_secret_key'] = $input['amazon_secret_key'] ?? ''; // Don't sanitize secret
+        $sanitized['amazon_secret_key'] = $input['amazon_secret_key'] ?? '';
         $sanitized['amazon_partner_tag'] = sanitize_text_field($input['amazon_partner_tag'] ?? '');
         $sanitized['amazon_marketplace'] = sanitize_text_field($input['amazon_marketplace'] ?? 'de');
         $sanitized['amazon_default_category'] = sanitize_text_field($input['amazon_default_category'] ?? 'All');
@@ -139,12 +147,19 @@ final class YAA_Admin {
         $sanitized['grid_columns_mobile'] = max(1, min(2, (int) ($input['grid_columns_mobile'] ?? 1)));
         $sanitized['button_text_yadore'] = sanitize_text_field($input['button_text_yadore'] ?? 'Zum Angebot');
         $sanitized['button_text_amazon'] = sanitize_text_field($input['button_text_amazon'] ?? 'Bei Amazon kaufen');
+        $sanitized['button_text_custom'] = sanitize_text_field($input['button_text_custom'] ?? 'Zum Angebot');
         $sanitized['show_prime_badge'] = isset($input['show_prime_badge']) ? 'yes' : 'no';
         $sanitized['show_merchant'] = isset($input['show_merchant']) ? 'yes' : 'no';
         $sanitized['show_description'] = isset($input['show_description']) ? 'yes' : 'no';
+        $sanitized['show_custom_badge'] = isset($input['show_custom_badge']) ? 'yes' : 'no';
+        $sanitized['custom_badge_text'] = sanitize_text_field($input['custom_badge_text'] ?? 'Empfohlen');
         $sanitized['color_primary'] = sanitize_hex_color($input['color_primary'] ?? '#ff00cc') ?: '#ff00cc';
         $sanitized['color_secondary'] = sanitize_hex_color($input['color_secondary'] ?? '#00ffff') ?: '#00ffff';
         $sanitized['color_amazon'] = sanitize_hex_color($input['color_amazon'] ?? '#ff9900') ?: '#ff9900';
+        $sanitized['color_custom'] = sanitize_hex_color($input['color_custom'] ?? '#4CAF50') ?: '#4CAF50';
+        
+        // GitHub Token
+        $sanitized['github_token'] = sanitize_text_field($input['github_token'] ?? '');
         
         return $sanitized;
     }
@@ -180,31 +195,53 @@ final class YAA_Admin {
     private function get_admin_css(): string {
         return '
             .yaa-admin-wrap { max-width: 1200px; }
-            .yaa-card { background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin-bottom: 20px; }
-            .yaa-card h2 { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #eee; }
-            .yaa-card h3 { margin-top: 20px; }
+            .yaa-card { background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 1px rgba(0,0,0,.04); }
+            .yaa-card h2 { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; }
+            .yaa-card h3 { margin-top: 20px; color: #1d2327; }
+            .yaa-card h4 { margin: 15px 0 10px; color: #50575e; }
             .yaa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
-            .yaa-status-badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; }
+            .yaa-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+            .yaa-status-badge { display: inline-block; padding: 4px 10px; border-radius: 3px; font-size: 12px; font-weight: 600; }
             .yaa-status-success { background: #d4edda; color: #155724; }
             .yaa-status-warning { background: #fff3cd; color: #856404; }
             .yaa-status-error { background: #f8d7da; color: #721c24; }
-            .yaa-tabs { display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ccd0d4; }
-            .yaa-tab { padding: 10px 20px; background: #f1f1f1; border: 1px solid #ccd0d4; border-bottom: none; cursor: pointer; margin-bottom: -1px; transition: all 0.2s; }
-            .yaa-tab:hover { background: #e5e5e5; }
-            .yaa-tab.active { background: #fff; border-bottom: 1px solid #fff; font-weight: 600; }
+            .yaa-status-info { background: #cce5ff; color: #004085; }
+            .yaa-tabs { display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ccd0d4; background: #f6f7f7; }
+            .yaa-tab { padding: 12px 20px; background: transparent; border: 1px solid transparent; border-bottom: none; cursor: pointer; margin-bottom: -1px; transition: all 0.2s; font-weight: 500; }
+            .yaa-tab:hover { background: #fff; }
+            .yaa-tab.active { background: #fff; border-color: #ccd0d4; border-bottom-color: #fff; font-weight: 600; }
             .yaa-tab-content { display: none; padding-top: 20px; }
             .yaa-tab-content.active { display: block; }
-            .yaa-form-row { margin-bottom: 15px; }
-            .yaa-form-row label { display: block; font-weight: 600; margin-bottom: 5px; }
+            .yaa-form-row { margin-bottom: 20px; }
+            .yaa-form-row label { display: block; font-weight: 600; margin-bottom: 5px; color: #1d2327; }
+            .yaa-form-row label.inline { display: inline; font-weight: normal; }
             .yaa-form-row input[type="text"],
             .yaa-form-row input[type="password"],
             .yaa-form-row input[type="number"],
-            .yaa-form-row select { width: 100%; max-width: 400px; padding: 8px; }
-            .yaa-form-row .description { color: #666; font-size: 13px; margin-top: 5px; }
-            .yaa-shortcode-box { background: #f5f5f5; padding: 10px 15px; border-radius: 4px; font-family: monospace; margin: 10px 0; overflow-x: auto; }
-            .yaa-test-result { margin-top: 10px; padding: 10px; border-radius: 4px; display: none; }
+            .yaa-form-row input[type="url"],
+            .yaa-form-row select,
+            .yaa-form-row textarea { width: 100%; max-width: 400px; padding: 8px 10px; border: 1px solid #8c8f94; border-radius: 4px; }
+            .yaa-form-row textarea { min-height: 80px; max-width: 600px; }
+            .yaa-form-row .description { color: #646970; font-size: 13px; margin-top: 6px; line-height: 1.5; }
+            .yaa-form-row .description code { background: #f0f0f1; padding: 2px 6px; border-radius: 3px; }
+            .yaa-shortcode-box { background: #f6f7f7; padding: 12px 15px; border-radius: 4px; font-family: Consolas, Monaco, monospace; font-size: 13px; margin: 10px 0; overflow-x: auto; border: 1px solid #dcdcde; }
+            .yaa-test-result { margin-top: 10px; padding: 12px; border-radius: 4px; display: none; }
             .yaa-marketplace-info { background: #f0f6fc; border: 1px solid #c8d9e8; border-radius: 4px; padding: 15px; margin-top: 15px; }
-            .yaa-marketplace-info h4 { margin: 0 0 10px 0; }
+            .yaa-marketplace-info h4 { margin: 0 0 10px 0; color: #1d2327; }
+            .yaa-marketplace-info table { margin-top: 10px; }
+            .yaa-preview-box { background: #1a1a1a; padding: 20px; border-radius: 8px; margin-top: 15px; }
+            .yaa-preview-item { display: inline-block; padding: 15px 20px; margin: 5px; border-radius: 8px; text-align: center; }
+            .yaa-code-block { background: #23282d; color: #fff; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+            .yaa-code-block code { color: #98c379; }
+            .yaa-tip { background: #fff8e5; border-left: 4px solid #ffb900; padding: 12px 15px; margin: 15px 0; }
+            .yaa-tip strong { color: #826200; }
+            .yaa-columns-2 { column-count: 2; column-gap: 30px; }
+            .yaa-columns-3 { column-count: 3; column-gap: 20px; }
+            @media (max-width: 782px) { 
+                .yaa-grid { grid-template-columns: 1fr; }
+                .yaa-grid-3 { grid-template-columns: 1fr; }
+                .yaa-columns-2, .yaa-columns-3 { column-count: 1; }
+            }
         ';
     }
     
@@ -224,13 +261,20 @@ final class YAA_Admin {
                     $(this).addClass("active");
                     $(".yaa-tab-content").removeClass("active");
                     $("#yaa-tab-" + tab).addClass("active");
+                    localStorage.setItem("yaa_active_tab", tab);
                 });
                 
-                // Marketplace change - update info
+                // Restore active tab
+                var savedTab = localStorage.getItem("yaa_active_tab");
+                if (savedTab && $(".yaa-tab[data-tab=\"" + savedTab + "\"]").length) {
+                    $(".yaa-tab[data-tab=\"" + savedTab + "\"]").click();
+                }
+                
+                // Marketplace change
                 $("select[name=\'yaa_settings[amazon_marketplace]\']").on("change", function() {
                     var marketplace = $(this).val();
                     $(".yaa-marketplace-detail").hide();
-                    $("#marketplace-info-" + marketplace.replace(".", "-")).show();
+                    $("#marketplace-info-" + marketplace.replace(/\\./g, "-")).show();
                 });
                 
                 // Test buttons
@@ -261,13 +305,13 @@ final class YAA_Admin {
                     $.post(yaaAdmin.ajaxurl, data, function(response) {
                         $btn.prop("disabled", false).text(originalText);
                         if (response.success) {
-                            $result.html("<div class=\'yaa-status-success\' style=\'padding:10px;border-radius:4px;\'>✅ " + response.data.message + "</div>").show();
+                            $result.html("<div class=\'yaa-status-success\' style=\'padding:12px;border-radius:4px;\'>✅ " + response.data.message + "</div>").show();
                         } else {
-                            $result.html("<div class=\'yaa-status-error\' style=\'padding:10px;border-radius:4px;\'>❌ " + response.data.message + "</div>").show();
+                            $result.html("<div class=\'yaa-status-error\' style=\'padding:12px;border-radius:4px;\'>❌ " + response.data.message + "</div>").show();
                         }
                     }).fail(function() {
                         $btn.prop("disabled", false).text(originalText);
-                        $result.html("<div class=\'yaa-status-error\' style=\'padding:10px;border-radius:4px;\'>❌ Verbindungsfehler</div>").show();
+                        $result.html("<div class=\'yaa-status-error\' style=\'padding:12px;border-radius:4px;\'>❌ Verbindungsfehler</div>").show();
                     });
                 });
             });
@@ -302,6 +346,7 @@ final class YAA_Admin {
                 <div class="yaa-tabs">
                     <div class="yaa-tab active" data-tab="yadore">📦 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
+                    <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
                     <div class="yaa-tab" data-tab="cache">⚡ Cache & Redis</div>
                     <div class="yaa-tab" data-tab="display">🎨 Darstellung</div>
                 </div>
@@ -314,6 +359,11 @@ final class YAA_Admin {
                 <!-- Amazon Tab -->
                 <div id="yaa-tab-amazon" class="yaa-tab-content">
                     <?php $this->render_amazon_settings($options, $marketplaces); ?>
+                </div>
+                
+                <!-- Custom Products Tab -->
+                <div id="yaa-tab-custom" class="yaa-tab-content">
+                    <?php $this->render_custom_products_settings($options); ?>
                 </div>
                 
                 <!-- Cache Tab -->
@@ -341,10 +391,10 @@ final class YAA_Admin {
     private function render_yadore_settings(array $options, array $markets): void {
         ?>
         <div class="yaa-card">
-            <h2>Yadore API Konfiguration</h2>
+            <h2>📦 Yadore API Konfiguration</h2>
             <p class="description">
                 Yadore bietet Zugang zu über 9.000 Shops und 250 Millionen Produkten. 
-                <a href="https://www.yadore.com/publisher" target="_blank">Publisher-Account erstellen</a>
+                <a href="https://www.yadore.com/publisher" target="_blank" rel="noopener">Publisher-Account erstellen →</a>
             </p>
             
             <div class="yaa-form-row">
@@ -359,9 +409,10 @@ final class YAA_Admin {
                 <label for="yadore_api_key">API-Key</label>
                 <input type="text" id="yadore_api_key" name="yaa_settings[yadore_api_key]" 
                        value="<?php echo esc_attr($options['yadore_api_key'] ?? ''); ?>"
-                       <?php echo defined('YADORE_API_KEY') ? 'disabled' : ''; ?>>
+                       <?php echo defined('YADORE_API_KEY') ? 'disabled' : ''; ?>
+                       placeholder="Dein Yadore API-Key">
                 <?php if (defined('YADORE_API_KEY')): ?>
-                    <p class="description">✅ Via wp-config.php definiert (YADORE_API_KEY)</p>
+                    <p class="description">✅ Via <code>wp-config.php</code> definiert (YADORE_API_KEY)</p>
                 <?php else: ?>
                     <p class="description">Den API-Key erhältst du nach der Registrierung bei Yadore.</p>
                 <?php endif; ?>
@@ -374,10 +425,11 @@ final class YAA_Admin {
                         <?php foreach ($markets as $code => $name): ?>
                             <option value="<?php echo esc_attr($code); ?>" 
                                 <?php selected(($options['yadore_market'] ?? 'de'), $code); ?>>
-                                <?php echo esc_html($name); ?>
+                                <?php echo esc_html($name . ' (' . strtoupper($code) . ')'); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
+                    <p class="description">Kann im Shortcode mit <code>market="xx"</code> überschrieben werden.</p>
                 </div>
                 
                 <div class="yaa-form-row">
@@ -402,9 +454,20 @@ final class YAA_Admin {
             
             <div class="yaa-form-row">
                 <button type="button" class="button yaa-test-btn" data-action="yaa_test_yadore">
-                    Verbindung testen
+                    🔍 Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>💡 Multi-Keyword Feature</h2>
+            <p class="description">
+                Du kannst mehrere Keywords in einem Shortcode verwenden. Das Limit wird automatisch aufgeteilt.
+            </p>
+            <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
+            <div class="yaa-tip">
+                <strong>Tipp:</strong> Bei 3 Keywords und limit="9" werden je 3 Produkte pro Keyword geladen.
             </div>
         </div>
         <?php
@@ -421,11 +484,10 @@ final class YAA_Admin {
         $all_marketplaces = $this->amazon_api->get_marketplaces();
         ?>
         <div class="yaa-card">
-            <h2>Amazon Product Advertising API 5.0</h2>
+            <h2>🛒 Amazon Product Advertising API 5.0</h2>
             <p class="description">
-                Für die Amazon PA-API benötigst du ein Amazon Associates Konto. 
-                <a href="https://webservices.amazon.com/paapi5/documentation/" target="_blank">Dokumentation</a> | 
-                <a href="https://affiliate-program.amazon.de/" target="_blank">Amazon PartnerNet</a>
+                Für die Amazon PA-API benötigst du ein Amazon Associates Konto mit mindestens 10 qualifizierten Verkäufen in 30 Tagen.
+                <a href="https://webservices.amazon.com/paapi5/documentation/" target="_blank" rel="noopener">Dokumentation →</a>
             </p>
             
             <div class="yaa-form-row">
@@ -440,9 +502,10 @@ final class YAA_Admin {
                 <label for="amazon_access_key">Access Key</label>
                 <input type="text" id="amazon_access_key" name="yaa_settings[amazon_access_key]" 
                        value="<?php echo esc_attr($options['amazon_access_key'] ?? ''); ?>"
-                       <?php echo defined('AMAZON_PAAPI_ACCESS_KEY') ? 'disabled' : ''; ?>>
+                       <?php echo defined('AMAZON_PAAPI_ACCESS_KEY') ? 'disabled' : ''; ?>
+                       placeholder="AKIAXXXXXXXXXX">
                 <?php if (defined('AMAZON_PAAPI_ACCESS_KEY')): ?>
-                    <p class="description">✅ Via wp-config.php definiert</p>
+                    <p class="description">✅ Via <code>wp-config.php</code> definiert</p>
                 <?php endif; ?>
             </div>
             
@@ -452,18 +515,18 @@ final class YAA_Admin {
                        value="<?php echo esc_attr($options['amazon_secret_key'] ?? ''); ?>"
                        <?php echo defined('AMAZON_PAAPI_SECRET_KEY') ? 'disabled' : ''; ?>>
                 <?php if (defined('AMAZON_PAAPI_SECRET_KEY')): ?>
-                    <p class="description">✅ Via wp-config.php definiert</p>
+                    <p class="description">✅ Via <code>wp-config.php</code> definiert</p>
                 <?php endif; ?>
             </div>
             
             <div class="yaa-form-row">
-                <label for="amazon_partner_tag">Partner Tag (Affiliate-Name)</label>
+                <label for="amazon_partner_tag">Partner Tag (Tracking-ID)</label>
                 <input type="text" id="amazon_partner_tag" name="yaa_settings[amazon_partner_tag]" 
                        value="<?php echo esc_attr($options['amazon_partner_tag'] ?? ''); ?>"
                        placeholder="deinshop-21"
                        <?php echo defined('AMAZON_PAAPI_PARTNER_TAG') ? 'disabled' : ''; ?>>
                 <p class="description">
-                    Deine Tracking-ID aus dem Amazon PartnerNet. Wird für die Provision verwendet.
+                    Deine Tracking-ID aus dem Amazon PartnerNet. <strong>Muss zum Marketplace passen!</strong>
                 </p>
             </div>
             
@@ -471,41 +534,37 @@ final class YAA_Admin {
                 <div class="yaa-form-row">
                     <label for="amazon_marketplace">Marketplace</label>
                     <select id="amazon_marketplace" name="yaa_settings[amazon_marketplace]">
-                        <optgroup label="Europa">
+                        <optgroup label="🇪🇺 Europa">
                             <?php foreach (['de', 'fr', 'it', 'es', 'co.uk', 'nl', 'pl', 'se', 'be', 'com.tr'] as $code): ?>
                                 <?php if (isset($marketplaces[$code])): ?>
-                                <option value="<?php echo esc_attr($code); ?>" 
-                                    <?php selected($current_marketplace, $code); ?>>
+                                <option value="<?php echo esc_attr($code); ?>" <?php selected($current_marketplace, $code); ?>>
                                     <?php echo esc_html($marketplaces[$code]); ?>
                                 </option>
                                 <?php endif; ?>
                             <?php endforeach; ?>
                         </optgroup>
-                        <optgroup label="Naher Osten & Afrika">
+                        <optgroup label="🌍 Naher Osten & Afrika">
                             <?php foreach (['ae', 'sa', 'eg'] as $code): ?>
                                 <?php if (isset($marketplaces[$code])): ?>
-                                <option value="<?php echo esc_attr($code); ?>" 
-                                    <?php selected($current_marketplace, $code); ?>>
+                                <option value="<?php echo esc_attr($code); ?>" <?php selected($current_marketplace, $code); ?>>
                                     <?php echo esc_html($marketplaces[$code]); ?>
                                 </option>
                                 <?php endif; ?>
                             <?php endforeach; ?>
                         </optgroup>
-                        <optgroup label="Nordamerika">
+                        <optgroup label="🌎 Amerika">
                             <?php foreach (['com', 'ca', 'com.mx', 'com.br'] as $code): ?>
                                 <?php if (isset($marketplaces[$code])): ?>
-                                <option value="<?php echo esc_attr($code); ?>" 
-                                    <?php selected($current_marketplace, $code); ?>>
+                                <option value="<?php echo esc_attr($code); ?>" <?php selected($current_marketplace, $code); ?>>
                                     <?php echo esc_html($marketplaces[$code]); ?>
                                 </option>
                                 <?php endif; ?>
                             <?php endforeach; ?>
                         </optgroup>
-                        <optgroup label="Asien-Pazifik">
+                        <optgroup label="🌏 Asien-Pazifik">
                             <?php foreach (['co.jp', 'in', 'com.au', 'sg'] as $code): ?>
                                 <?php if (isset($marketplaces[$code])): ?>
-                                <option value="<?php echo esc_attr($code); ?>" 
-                                    <?php selected($current_marketplace, $code); ?>>
+                                <option value="<?php echo esc_attr($code); ?>" <?php selected($current_marketplace, $code); ?>>
                                     <?php echo esc_html($marketplaces[$code]); ?>
                                 </option>
                                 <?php endif; ?>
@@ -521,9 +580,8 @@ final class YAA_Admin {
                         $search_indexes = $this->amazon_api->get_search_indexes();
                         foreach ($search_indexes as $code => $name): 
                         ?>
-                            <option value="<?php echo esc_attr($code); ?>" 
-                                <?php selected(($options['amazon_default_category'] ?? 'All'), $code); ?>>
-                                <?php echo esc_html($name); ?>
+                            <option value="<?php echo esc_attr($code); ?>" <?php selected(($options['amazon_default_category'] ?? 'All'), $code); ?>>
+                                <?php echo esc_html($code === $name ? $code : "$code - $name"); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -538,11 +596,10 @@ final class YAA_Admin {
                      class="yaa-marketplace-detail" 
                      style="<?php echo $code !== $current_marketplace ? 'display:none;' : ''; ?>">
                     <table class="widefat" style="margin-top: 10px;">
-                        <tr><td><strong>Host:</strong></td><td><code><?php echo esc_html($info['host']); ?></code></td></tr>
+                        <tr><td width="150"><strong>Host:</strong></td><td><code><?php echo esc_html($info['host']); ?></code></td></tr>
                         <tr><td><strong>Region:</strong></td><td><?php echo esc_html($info['region']); ?></td></tr>
                         <tr><td><strong>Währung:</strong></td><td><?php echo esc_html($info['currency']); ?></td></tr>
                         <tr><td><strong>Sprache:</strong></td><td><?php echo esc_html($info['language']); ?></td></tr>
-                        <tr><td><strong>Verfügbare Sprachen:</strong></td><td><?php echo esc_html(implode(', ', $info['languages'])); ?></td></tr>
                     </table>
                 </div>
                 <?php endforeach; ?>
@@ -550,21 +607,115 @@ final class YAA_Admin {
             
             <div class="yaa-form-row" style="margin-top: 20px;">
                 <button type="button" class="button yaa-test-btn" data-action="yaa_test_amazon">
-                    Verbindung testen
+                    🔍 Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
             </div>
-            
-            <hr style="margin: 20px 0;">
-            
-            <h3>⚠️ Amazon API Einschränkungen</h3>
-            <ul style="list-style: disc; margin-left: 20px;">
-                <li>Mindestens 1 qualifizierter Verkauf in den letzten 30 Tagen erforderlich</li>
-                <li>Maximal 1 Request pro Sekunde (bei niedrigen Verkäufen)</li>
-                <li>Maximal 10 Produkte pro API-Anfrage</li>
-                <li>API-Zugang kann bei Inaktivität entzogen werden</li>
-                <li>Partner Tag muss zum gewählten Marketplace passen</li>            
+        </div>
+        
+        <div class="yaa-card">
+            <h2>⚠️ Amazon API Einschränkungen</h2>
+            <ul style="list-style: disc; margin-left: 20px; line-height: 1.8;">
+                <li><strong>10 qualifizierte Verkäufe</strong> in den letzten 30 Tagen erforderlich (seit Nov. 2025)</li>
+                <li>Maximal <strong>1 Request/Sekunde</strong> bei wenigen Verkäufen</li>
+                <li>Maximal <strong>10 Produkte</strong> pro API-Anfrage</li>
+                <li>Partner-Tag <strong>muss zum Marketplace</strong> passen</li>
             </ul>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Render custom products settings
+     * 
+     * @param array<string, mixed> $options
+     */
+    private function render_custom_products_settings(array $options): void {
+        $product_count = wp_count_posts(YAA_Custom_Products::get_post_type());
+        $published_count = $product_count->publish ?? 0;
+        
+        $categories = get_terms([
+            'taxonomy' => YAA_Custom_Products::get_taxonomy(),
+            'hide_empty' => false,
+        ]);
+        $category_count = is_array($categories) ? count($categories) : 0;
+        ?>
+        <div class="yaa-card">
+            <h2>⭐ Eigene Produkte</h2>
+            <p class="description">
+                Erstelle eigene Produkteinträge mit individuellen Links, Bildern und Preisen.
+            </p>
+            
+            <div class="yaa-grid" style="margin: 20px 0;">
+                <div style="background: #f0f6fc; padding: 20px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: #0073aa;"><?php echo (int) $published_count; ?></div>
+                    <div style="color: #50575e;">Veröffentlichte Produkte</div>
+                </div>
+                <div style="background: #fef8ee; padding: 20px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: #996800;"><?php echo (int) $category_count; ?></div>
+                    <div style="color: #50575e;">Kategorien</div>
+                </div>
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center;">
+                    <a href="<?php echo admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" 
+                       class="button button-primary button-hero" style="margin-top: 10px;">
+                        ➕ Neues Produkt
+                    </a>
+                </div>
+            </div>
+            
+            <p>
+                <a href="<?php echo admin_url('edit.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button">
+                    📋 Alle Produkte verwalten
+                </a>
+                <a href="<?php echo admin_url('edit-tags.php?taxonomy=' . YAA_Custom_Products::get_taxonomy() . '&post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button" style="margin-left: 10px;">
+                    🏷️ Kategorien verwalten
+                </a>
+            </p>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>📝 Shortcodes für eigene Produkte</h2>
+            
+            <h4>Nach IDs anzeigen:</h4>
+            <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
+            
+            <h4>Nach Kategorie anzeigen:</h4>
+            <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
+            
+            <h4>Kombiniert mit anderen Quellen:</h4>
+            <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" custom_ids="10,15" yadore_limit="4" amazon_limit="2"]</div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🎨 Darstellung eigener Produkte</h2>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[show_custom_badge]" value="yes" 
+                        <?php checked(($options['show_custom_badge'] ?? 'yes'), 'yes'); ?>>
+                    Badge bei eigenen Produkten anzeigen
+                </label>
+            </div>
+            
+            <div class="yaa-form-row">
+                <label for="custom_badge_text">Badge-Text</label>
+                <input type="text" id="custom_badge_text" name="yaa_settings[custom_badge_text]" 
+                       value="<?php echo esc_attr($options['custom_badge_text'] ?? 'Empfohlen'); ?>"
+                       placeholder="Empfohlen">
+            </div>
+            
+            <div class="yaa-form-row">
+                <label for="button_text_custom">Button-Text</label>
+                <input type="text" id="button_text_custom" name="yaa_settings[button_text_custom]" 
+                       value="<?php echo esc_attr($options['button_text_custom'] ?? 'Zum Angebot'); ?>">
+            </div>
+            
+            <div class="yaa-form-row">
+                <label for="color_custom">Farbe für eigene Produkte</label>
+                <input type="text" id="color_custom" name="yaa_settings[color_custom]" 
+                       value="<?php echo esc_attr($options['color_custom'] ?? '#4CAF50'); ?>"
+                       class="yaa-color-picker">
+            </div>
         </div>
         <?php
     }
@@ -578,7 +729,7 @@ final class YAA_Admin {
     private function render_cache_settings(array $options, array $cache_status): void {
         ?>
         <div class="yaa-card">
-            <h2>Cache-Einstellungen</h2>
+            <h2>⚡ Cache-Einstellungen</h2>
             
             <div class="yaa-grid">
                 <div>
@@ -587,7 +738,7 @@ final class YAA_Admin {
                         <input type="number" id="cache_duration" name="yaa_settings[cache_duration]" 
                                value="<?php echo esc_attr($options['cache_duration'] ?? '6'); ?>"
                                min="1" max="168">
-                        <p class="description">Wie lange Daten im Cache gehalten werden (1-168 Stunden).</p>
+                        <p class="description">Wie lange API-Daten im Cache bleiben (1-168 Stunden).</p>
                     </div>
                     
                     <div class="yaa-form-row">
@@ -600,7 +751,7 @@ final class YAA_Admin {
                 </div>
                 
                 <div>
-                    <h4>📊 Aktueller Status</h4>
+                    <h4 style="margin-top: 0;">📊 Aktueller Status</h4>
                     <table class="widefat" style="margin-top: 10px;">
                         <tr>
                             <td><strong>Backend:</strong></td>
@@ -616,7 +767,7 @@ final class YAA_Admin {
                             <td><?php echo esc_html($cache_status['redis_info']['version']); ?></td>
                         </tr>
                         <tr>
-                            <td><strong>Speichernutzung:</strong></td>
+                            <td><strong>Speicher:</strong></td>
                             <td><?php echo esc_html($cache_status['redis_info']['used_memory']); ?></td>
                         </tr>
                         <?php endif; ?>
@@ -626,36 +777,31 @@ final class YAA_Admin {
         </div>
         
         <div class="yaa-card">
-            <h2>Redis-Konfiguration</h2>
+            <h2>🔴 Redis-Konfiguration</h2>
             <p class="description">
-                Redis bietet schnelleres Caching als WordPress-Transients. 
-                Benötigt die PHP Redis-Extension oder Predis.
+                Redis bietet schnelleres Caching als WordPress-Transients.
             </p>
             
             <div class="yaa-form-row">
                 <label for="enable_redis">Redis verwenden</label>
                 <select id="enable_redis" name="yaa_settings[enable_redis]">
                     <option value="auto" <?php selected(($options['enable_redis'] ?? 'auto'), 'auto'); ?>>
-                        Automatisch erkennen
+                        🔄 Automatisch erkennen
                     </option>
                     <option value="yes" <?php selected(($options['enable_redis'] ?? 'auto'), 'yes'); ?>>
-                        Ja, Redis verwenden
+                        ✅ Ja, Redis verwenden
                     </option>
                     <option value="no" <?php selected(($options['enable_redis'] ?? 'auto'), 'no'); ?>>
-                        Nein, nur Transients
+                        ❌ Nein, nur Transients
                     </option>
                 </select>
-                <p class="description">
-                    "Automatisch" prüft zuerst WordPress Object Cache, dann direkte Redis-Verbindung.
-                </p>
             </div>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
                     <label for="redis_host">Host</label>
                     <input type="text" id="redis_host" name="yaa_settings[redis_host]" 
-                           value="<?php echo esc_attr($options['redis_host'] ?? '127.0.0.1'); ?>"
-                           placeholder="127.0.0.1">
+                           value="<?php echo esc_attr($options['redis_host'] ?? '127.0.0.1'); ?>">
                 </div>
                 
                 <div class="yaa-form-row">
@@ -668,33 +814,22 @@ final class YAA_Admin {
                 <div class="yaa-form-row">
                     <label for="redis_password">Passwort (optional)</label>
                     <input type="password" id="redis_password" name="yaa_settings[redis_password]" 
-                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>"
-                           placeholder="Leer lassen wenn kein Passwort">
+                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>">
                 </div>
                 
                 <div class="yaa-form-row">
                     <label for="redis_database">Datenbank (0-15)</label>
                     <input type="number" id="redis_database" name="yaa_settings[redis_database]" 
-                           value="<?php echo esc_attr($options['redis_database'] ?? '0'); ?>" 
+                           value="<?php echo esc_attr($options['redis_database'] ?? '0'); ?>"
                            min="0" max="15">
                 </div>
             </div>
             
             <div class="yaa-form-row">
                 <button type="button" class="button yaa-test-btn" data-action="yaa_test_redis">
-                    Redis-Verbindung testen
+                    🔍 Redis-Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
-            </div>
-            
-            <div class="yaa-marketplace-info" style="margin-top: 20px;">
-                <h4>💡 wp-config.php Konfiguration</h4>
-                <p>Redis kann auch via wp-config.php konfiguriert werden (hat Priorität):</p>
-                <pre style="background:#fff;padding:10px;border-radius:4px;overflow-x:auto;font-size:12px;">
-define('WP_REDIS_HOST', '127.0.0.1');
-define('WP_REDIS_PORT', 6379);
-define('WP_REDIS_PASSWORD', ''); // optional
-define('WP_REDIS_DATABASE', 0);  // optional</pre>
             </div>
         </div>
         <?php
@@ -708,8 +843,7 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
     private function render_display_settings(array $options): void {
         ?>
         <div class="yaa-card">
-            <h2>Grid-Layout</h2>
-            <p class="description">Konfiguriere die Anzahl der Spalten für verschiedene Bildschirmgrößen.</p>
+            <h2>📐 Grid-Layout</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
@@ -748,8 +882,7 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
         </div>
         
         <div class="yaa-card">
-            <h2>Farben</h2>
-            <p class="description">Passe die Farben an dein Theme an.</p>
+            <h2>🎨 Farben</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
@@ -757,7 +890,6 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                     <input type="text" id="color_primary" name="yaa_settings[color_primary]" 
                            value="<?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>"
                            class="yaa-color-picker">
-                    <p class="description">Für Buttons, Akzente bei Yadore-Produkten</p>
                 </div>
                 
                 <div class="yaa-form-row">
@@ -765,7 +897,6 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                     <input type="text" id="color_secondary" name="yaa_settings[color_secondary]" 
                            value="<?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>"
                            class="yaa-color-picker">
-                    <p class="description">Für Hover-Effekte, alternierende Elemente</p>
                 </div>
                 
                 <div class="yaa-form-row">
@@ -773,13 +904,12 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                     <input type="text" id="color_amazon" name="yaa_settings[color_amazon]" 
                            value="<?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>"
                            class="yaa-color-picker">
-                    <p class="description">Für Amazon-Produkte und Prime-Badge</p>
                 </div>
             </div>
         </div>
         
         <div class="yaa-card">
-            <h2>Anzeige-Optionen</h2>
+            <h2>⚙️ Anzeige-Optionen</h2>
             
             <div class="yaa-form-row">
                 <label>
@@ -822,29 +952,6 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                 </div>
             </div>
         </div>
-        
-        <div class="yaa-card">
-            <h2>🎨 Vorschau</h2>
-            <p>Die Änderungen werden nach dem Speichern auf allen Seiten mit Shortcodes sichtbar.</p>
-            <div style="display: flex; gap: 20px; margin-top: 15px;">
-                <div style="padding: 20px; background: #1a1a1a; border-radius: 8px; text-align: center;">
-                    <div style="width: 100px; height: 100px; background: linear-gradient(135deg, <?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>, <?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>); border-radius: 8px; margin: 0 auto 10px;"></div>
-                    <small style="color: #999;">Farbverlauf</small>
-                </div>
-                <div style="padding: 20px; background: #1a1a1a; border-radius: 8px; text-align: center;">
-                    <button type="button" style="background: transparent; border: 2px solid <?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>; color: <?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>; padding: 10px 20px; border-radius: 25px; cursor: pointer;">
-                        <?php echo esc_html($options['button_text_yadore'] ?? 'Zum Angebot'); ?>
-                    </button>
-                    <br><small style="color: #999; display: block; margin-top: 10px;">Yadore Button</small>
-                </div>
-                <div style="padding: 20px; background: #1a1a1a; border-radius: 8px; text-align: center;">
-                    <button type="button" style="background: transparent; border: 2px solid <?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>; color: <?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>; padding: 10px 20px; border-radius: 25px; cursor: pointer;">
-                        <?php echo esc_html($options['button_text_amazon'] ?? 'Bei Amazon kaufen'); ?>
-                    </button>
-                    <br><small style="color: #999; display: block; margin-top: 10px;">Amazon Button</small>
-                </div>
-            </div>
-        </div>
         <?php
     }
     
@@ -860,14 +967,11 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
         
         $cache_status = $this->cache->get_status();
         $cached_keywords = get_option('yaa_cached_keywords', []);
-        
         if (!is_array($cached_keywords)) {
             $cached_keywords = [];
         }
-        
         $next_cron = wp_next_scheduled('yaa_cache_refresh_event');
         
-        // Count cache entries
         $cache_count = (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_%' AND option_name NOT LIKE '_transient_timeout_%'"
         );
@@ -881,7 +985,7 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                     <h2>📊 Cache-Status</h2>
                     <table class="widefat striped">
                         <tr>
-                            <td><strong>Cache-Backend:</strong></td>
+                            <td><strong>Backend:</strong></td>
                             <td>
                                 <span class="yaa-status-badge <?php echo $cache_status['redis_available'] ? 'yaa-status-success' : 'yaa-status-warning'; ?>">
                                     <?php echo esc_html($cache_status['cache_backend']); ?>
@@ -889,7 +993,7 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                             </td>
                         </tr>
                         <tr>
-                            <td><strong>Cache-Einträge (Transients):</strong></td>
+                            <td><strong>Cache-Einträge:</strong></td>
                             <td><?php echo $cache_count; ?></td>
                         </tr>
                         <tr>
@@ -897,37 +1001,15 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                             <td><?php echo count($cached_keywords); ?></td>
                         </tr>
                         <tr>
-                            <td><strong>Nächster Cron-Lauf:</strong></td>
-                            <td>
-                                <?php 
-                                if ($next_cron) {
-                                    echo esc_html(date_i18n('d.m.Y H:i:s', $next_cron));
-                                    $diff = $next_cron - time();
-                                    if ($diff > 0) {
-                                        $hours = floor($diff / 3600);
-                                        $mins = floor(($diff % 3600) / 60);
-                                        echo ' <small style="color:#666;">(in ' . $hours . 'h ' . $mins . 'm)</small>';
-                                    }
-                                } else {
-                                    echo '<span class="yaa-status-badge yaa-status-error">Nicht geplant</span>';
-                                }
-                                ?>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><strong>Cache-Dauer:</strong></td>
-                            <td><?php echo (int) yaa_get_option('cache_duration', 6); ?> Stunden</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Fallback-Dauer:</strong></td>
-                            <td><?php echo (int) yaa_get_option('fallback_duration', 24); ?> Stunden</td>
+                            <td><strong>Nächster Cron:</strong></td>
+                            <td><?php echo $next_cron ? esc_html(date_i18n('d.m.Y H:i', $next_cron)) : 'Nicht geplant'; ?></td>
                         </tr>
                     </table>
                     
                     <p style="margin-top: 15px;">
                         <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_cache'), 'yaa_clear_cache_nonce')); ?>" 
                            class="button button-primary">
-                            🗑️ Gesamten Cache leeren
+                            🗑️ Cache leeren
                         </a>
                     </p>
                 </div>
@@ -939,49 +1021,27 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                             <td><strong>Yadore API:</strong></td>
                             <td>
                                 <?php if ($this->yadore_api->is_configured()): ?>
-                                    <span class="yaa-status-badge yaa-status-success">✅ Konfiguriert & Aktiv</span>
+                                    <span class="yaa-status-badge yaa-status-success">✅ Aktiv</span>
                                 <?php else: ?>
                                     <span class="yaa-status-badge yaa-status-error">❌ Nicht konfiguriert</span>
                                 <?php endif; ?>
                             </td>
-                        </tr>
-                        <tr>
-                            <td><strong>Yadore Markt:</strong></td>
-                            <td><?php echo esc_html(strtoupper((string) yaa_get_option('yadore_market', 'de'))); ?></td>
                         </tr>
                         <tr>
                             <td><strong>Amazon PA-API:</strong></td>
                             <td>
                                 <?php if ($this->amazon_api->is_configured()): ?>
-                                    <span class="yaa-status-badge yaa-status-success">✅ Konfiguriert & Aktiv</span>
+                                    <span class="yaa-status-badge yaa-status-success">✅ Aktiv</span>
                                 <?php else: ?>
                                     <span class="yaa-status-badge yaa-status-error">❌ Nicht konfiguriert</span>
                                 <?php endif; ?>
                             </td>
                         </tr>
-                        <?php if ($this->amazon_api->is_configured()): ?>
-                        <tr>
-                            <td><strong>Amazon Partner-Tag:</strong></td>
-                            <td><code><?php echo esc_html($this->amazon_api->get_partner_tag()); ?></code></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Amazon Marketplace:</strong></td>
-                            <td>
-                                <?php 
-                                $mp = $this->amazon_api->get_current_marketplace();
-                                echo $mp ? esc_html($mp['name']) : '-';
-                                ?>
-                            </td>
-                        </tr>
-                        <?php endif; ?>
                         <tr>
                             <td><strong>Redis:</strong></td>
                             <td>
                                 <?php if ($cache_status['redis_available']): ?>
                                     <span class="yaa-status-badge yaa-status-success">✅ Verbunden</span>
-                                    <?php if (!empty($cache_status['redis_info'])): ?>
-                                        <br><small>Version: <?php echo esc_html($cache_status['redis_info']['version']); ?></small>
-                                    <?php endif; ?>
                                 <?php else: ?>
                                     <span class="yaa-status-badge yaa-status-warning">⚠️ Nicht verfügbar</span>
                                 <?php endif; ?>
@@ -991,62 +1051,16 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                 </div>
             </div>
             
-            <?php if (!empty($cached_keywords)): ?>
-            <div class="yaa-card">
-                <h2>📝 Getrackte Keywords (für Cron-Preload)</h2>
-                <p class="description">Diese Keywords werden automatisch beim nächsten Cron-Lauf vorgeladen.</p>
-                <table class="widefat striped" style="margin-top: 10px;">
-                    <thead>
-                        <tr>
-                            <th>Keyword</th>
-                            <th>Quelle</th>
-                            <th>Limit</th>
-                            <th>Markt/Kategorie</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach (array_reverse($cached_keywords) as $entry): ?>
-                        <tr>
-                            <td><code><?php echo esc_html($entry['keyword'] ?? '-'); ?></code></td>
-                            <td>
-                                <?php $source = $entry['source'] ?? 'yadore'; ?>
-                                <?php if ($source === 'amazon'): ?>
-                                    <span class="yaa-status-badge" style="background:#ff9900;color:#000;">Amazon</span>
-                                <?php else: ?>
-                                    <span class="yaa-status-badge" style="background:#4CAF50;color:#fff;">Yadore</span>
-                                <?php endif; ?>
-                            </td>
-                            <td><?php echo (int) ($entry['limit'] ?? 9); ?></td>
-                            <td>
-                                <?php 
-                                if ($source === 'amazon') {
-                                    echo esc_html($entry['category'] ?? 'All');
-                                    if (!empty($entry['marketplace'])) {
-                                        echo ' <small>(' . esc_html($entry['marketplace']) . ')</small>';
-                                    }
-                                } else {
-                                    echo esc_html(strtoupper($entry['market'] ?? 'de'));
-                                }
-                                ?>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-            <?php endif; ?>
-            
             <div class="yaa-card">
                 <h2>🛠️ System-Informationen</h2>
                 <table class="widefat striped">
                     <tr>
                         <td><strong>PHP Version:</strong></td>
-                        <td>
-                            <?php echo esc_html(PHP_VERSION); ?>
-                            <?php if (version_compare(PHP_VERSION, '8.1', '<')): ?>
-                                <span class="yaa-status-badge yaa-status-error">Minimum 8.1 erforderlich!</span>
-                            <?php else: ?>
+                        <td><?php echo esc_html(PHP_VERSION); ?>
+                            <?php if (version_compare(PHP_VERSION, '8.1', '>=')): ?>
                                 <span class="yaa-status-badge yaa-status-success">✓</span>
+                            <?php else: ?>
+                                <span class="yaa-status-badge yaa-status-error">Minimum 8.1 erforderlich</span>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1063,47 +1077,8 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                         <td>
                             <?php if (extension_loaded('redis')): ?>
                                 <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
-                                <?php 
-                                if (class_exists('Redis')) {
-                                    $redis = new \Redis();
-                                    echo ' <small>(Version: ' . phpversion('redis') . ')</small>';
-                                }
-                                ?>
                             <?php else: ?>
                                 <span class="yaa-status-badge yaa-status-warning">Nicht installiert</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td><strong>cURL Extension:</strong></td>
-                        <td>
-                            <?php if (function_exists('curl_version')): ?>
-                                <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
-                                <?php $curl = curl_version(); ?>
-                                <small>(<?php echo esc_html($curl['version']); ?>)</small>
-                            <?php else: ?>
-                                <span class="yaa-status-badge yaa-status-error">Nicht installiert</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td><strong>JSON Extension:</strong></td>
-                        <td>
-                            <?php if (function_exists('json_encode')): ?>
-                                <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
-                            <?php else: ?>
-                                <span class="yaa-status-badge yaa-status-error">Nicht installiert</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td><strong>OpenSSL Extension:</strong></td>
-                        <td>
-                            <?php if (extension_loaded('openssl')): ?>
-                                <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
-                                <small>(<?php echo esc_html(OPENSSL_VERSION_TEXT); ?>)</small>
-                            <?php else: ?>
-                                <span class="yaa-status-badge yaa-status-error">Nicht installiert (benötigt für Amazon API)</span>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1121,7 +1096,6 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
             return;
         }
         
-        $search_indexes = $this->amazon_api->get_search_indexes();
         ?>
         <div class="wrap yaa-admin-wrap">
             <h1><?php esc_html_e('Dokumentation', 'yadore-amazon-api'); ?></h1>
@@ -1130,148 +1104,48 @@ define('WP_REDIS_DATABASE', 0);  // optional</pre>
                 <h2>📝 Shortcodes</h2>
                 
                 <h3>Yadore Produkte</h3>
-                <div class="yaa-shortcode-box">[yadore_products keyword="Smartphone" limit="9" market="de"]</div>
-                <table class="widefat" style="margin-bottom: 20px;">
-                    <thead>
-                        <tr><th>Parameter</th><th>Beschreibung</th><th>Standard</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td><code>keyword</code></td><td>Suchbegriff (erforderlich)</td><td>-</td></tr>
-                        <tr><td><code>limit</code></td><td>Anzahl der Produkte (1-50)</td><td><?php echo (int) yaa_get_option('yadore_default_limit', 9); ?></td></tr>
-                        <tr><td><code>market</code></td><td>Markt: de, at, ch, fr, it, es, nl, uk, us...</td><td><?php echo esc_html(yaa_get_option('yadore_market', 'de')); ?></td></tr>
-                        <tr><td><code>precision</code></td><td><code>fuzzy</code> (mehr) oder <code>strict</code> (genauer)</td><td><?php echo esc_html(yaa_get_option('yadore_precision', 'fuzzy')); ?></td></tr>
-                        <tr><td><code>columns</code></td><td>Spalten überschreiben (1-6)</td><td>-</td></tr>
-                        <tr><td><code>class</code></td><td>Zusätzliche CSS-Klasse</td><td>-</td></tr>
-                    </tbody>
-                </table>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Smartphone" limit="9"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
                 
                 <h3>Amazon Produkte</h3>
                 <div class="yaa-shortcode-box">[amazon_products keyword="Laptop" category="Computers" limit="10"]</div>
-                <table class="widefat" style="margin-bottom: 20px;">
-                    <thead>
-                        <tr><th>Parameter</th><th>Beschreibung</th><th>Standard</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td><code>keyword</code></td><td>Suchbegriff</td><td>-</td></tr>
-                        <tr><td><code>asins</code></td><td>Komma-getrennte ASINs (alternativ zu keyword)</td><td>-</td></tr>
-                        <tr><td><code>category</code></td><td>Amazon-Kategorie (SearchIndex)</td><td><?php echo esc_html(yaa_get_option('amazon_default_category', 'All')); ?></td></tr>
-                        <tr><td><code>limit</code></td><td>Anzahl (max. 10 pro Anfrage)</td><td>10</td></tr>
-                        <tr><td><code>min_price</code></td><td>Mindestpreis in lokaler Währung</td><td>-</td></tr>
-                        <tr><td><code>max_price</code></td><td>Maximalpreis in lokaler Währung</td><td>-</td></tr>
-                        <tr><td><code>brand</code></td><td>Nach Marke filtern</td><td>-</td></tr>
-                        <tr><td><code>sort</code></td><td>Sortierung: Price:LowToHigh, Price:HighToLow, etc.</td><td>-</td></tr>
-                    </tbody>
-                </table>
+                <div class="yaa-shortcode-box">[amazon_products asins="B08N5WRWNW,B09V3KXJPB"]</div>
                 
-                <h3>Kombinierte Produkte (Yadore + Amazon)</h3>
-                <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" yadore_limit="6" amazon_limit="4" shuffle="yes"]</div>
-                <table class="widefat">
-                    <thead>
-                        <tr><th>Parameter</th><th>Beschreibung</th><th>Standard</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td><code>keyword</code></td><td>Suchbegriff für beide APIs</td><td>-</td></tr>
-                        <tr><td><code>yadore_limit</code></td><td>Anzahl Yadore-Produkte</td><td>6</td></tr>
-                        <tr><td><code>amazon_limit</code></td><td>Anzahl Amazon-Produkte</td><td>4</td></tr>
-                        <tr><td><code>shuffle</code></td><td><code>yes</code>/<code>no</code> - Produkte mischen</td><td>yes</td></tr>
-                        <tr><td><code>market</code></td><td>Yadore-Markt</td><td>de</td></tr>
-                        <tr><td><code>category</code></td><td>Amazon-Kategorie</td><td>All</td></tr>
-                    </tbody>
-                </table>
+                <h3>Eigene Produkte</h3>
+                <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
+                <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
+                
+                <h3>Kombinierte Ansicht</h3>
+                <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" yadore_limit="6" amazon_limit="4" custom_ids="10,15"]</div>
+                <div class="yaa-shortcode-box">[all_products keyword="Smartphone" total_limit="12" priority="custom,yadore,amazon"]</div>
             </div>
             
             <div class="yaa-card">
                 <h2>⚙️ wp-config.php Konstanten</h2>
-                <p>API-Schlüssel können auch sicher in der wp-config.php definiert werden (empfohlen für Produktivsysteme):</p>
-                <pre style="background:#f5f5f5; padding:15px; overflow:auto; border-radius:4px;">
-&lt;?php
+                <div class="yaa-code-block">
+                    <pre>
 // Yadore API
-define('YADORE_API_KEY', 'dein-api-key-hier');
+define('YADORE_API_KEY', 'dein-api-key');
 
 // Amazon PA-API 5.0
 define('AMAZON_PAAPI_ACCESS_KEY', 'AKIAXXXXXXXXXX');
-define('AMAZON_PAAPI_SECRET_KEY', 'dein-secret-key-hier');
+define('AMAZON_PAAPI_SECRET_KEY', 'dein-secret-key');
 define('AMAZON_PAAPI_PARTNER_TAG', 'deinshop-21');
 
-// Redis (optional - überschreibt Backend-Einstellungen)
+// Redis (optional)
 define('WP_REDIS_HOST', '127.0.0.1');
 define('WP_REDIS_PORT', 6379);
-define('WP_REDIS_PASSWORD', '');
-define('WP_REDIS_DATABASE', 0);
-                </pre>
-            </div>
-            
-            <div class="yaa-card">
-                <h2>📚 Amazon Kategorien (SearchIndex) für <?php echo esc_html(strtoupper((string) yaa_get_option('amazon_marketplace', 'de'))); ?></h2>
-                <p class="description">Diese Kategorien können im <code>category</code> Parameter verwendet werden:</p>
-                <div style="column-count: 3; column-gap: 20px; margin-top: 15px;">
-                    <?php foreach ($search_indexes as $code => $name): ?>
-                        <div style="margin-bottom: 5px;">
-                            <code style="background:#e0e0e0;padding:2px 6px;border-radius:3px;"><?php echo esc_html($code); ?></code>
-                            <?php if ($code !== $name): ?>
-                                <small style="color:#666;"> – <?php echo esc_html($name); ?></small>
-                            <?php endif; ?>
-                        </div>
-                    <?php endforeach; ?>
+                    </pre>
                 </div>
-            </div>
-            
-            <div class="yaa-card">
-                <h2>🌍 Verfügbare Amazon Marketplaces</h2>
-                <p class="description">Der Partner-Tag muss zum jeweiligen Marketplace passen!</p>
-                <table class="widefat striped" style="margin-top: 10px;">
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Name</th>
-                            <th>Host</th>
-                            <th>Währung</th>
-                            <th>Region</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($this->amazon_api->get_marketplaces() as $code => $info): ?>
-                        <tr>
-                            <td><code><?php echo esc_html($code); ?></code></td>
-                            <td><?php echo esc_html($info['name']); ?></td>
-                            <td><small><?php echo esc_html($info['host']); ?></small></td>
-                            <td><?php echo esc_html($info['currency']); ?></td>
-                            <td><?php echo esc_html($info['region']); ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
             </div>
             
             <div class="yaa-card">
                 <h2>🔗 Nützliche Links</h2>
                 <ul style="list-style: disc; margin-left: 20px;">
-                    <li><a href="https://www.yadore.com/publisher" target="_blank" rel="noopener">Yadore Publisher Portal</a> – Account & API-Key erstellen</li>
-                    <li><a href="https://webservices.amazon.com/paapi5/documentation/" target="_blank" rel="noopener">Amazon PA-API 5.0 Dokumentation</a></li>
-                    <li><a href="https://webservices.amazon.com/paapi5/documentation/locale-reference.html" target="_blank" rel="noopener">Amazon Locale Reference</a> – Alle Marketplaces</li>
-                    <li><a href="https://affiliate-program.amazon.de/" target="_blank" rel="noopener">Amazon PartnerNet (DE)</a></li>
-                    <li><a href="https://affiliate-program.amazon.com/" target="_blank" rel="noopener">Amazon Associates (US)</a></li>
-                    <li><a href="https://webservices.amazon.com/paapi5/scratchpad/" target="_blank" rel="noopener">Amazon API Scratchpad</a> – API testen</li>
+                    <li><a href="https://www.yadore.com/publisher" target="_blank">Yadore Publisher Portal</a></li>
+                    <li><a href="https://webservices.amazon.com/paapi5/documentation/" target="_blank">Amazon PA-API 5.0 Dokumentation</a></li>
+                    <li><a href="https://affiliate-program.amazon.de/" target="_blank">Amazon PartnerNet (DE)</a></li>
                 </ul>
-            </div>
-            
-            <div class="yaa-card">
-                <h2>❓ FAQ & Troubleshooting</h2>
-                
-                <h4>Amazon API gibt "TooManyRequests" Fehler</h4>
-                <p>Die Amazon PA-API hat strikte Rate-Limits. Bei wenigen Verkäufen ist nur 1 Request/Sekunde erlaubt. Das Plugin cached automatisch, aber bei vielen gleichzeitigen Besuchern kann das Limit erreicht werden.</p>
-                
-                <h4>Amazon API gibt "InvalidPartnerTag" Fehler</h4>
-                <p>Der Partner-Tag muss zum gewählten Marketplace passen. Ein deutscher Tag (xxxxx-21) funktioniert nur mit amazon.de.</p>
-                
-                <h4>Keine Ergebnisse von Amazon</h4>
-                <p>Mindestens 1 qualifizierter Verkauf in den letzten 30 Tagen ist erforderlich. Neue Associates haben oft noch keinen API-Zugang.</p>
-                
-                <h4>Redis funktioniert nicht</h4>
-                <p>Prüfe ob die PHP Redis-Extension installiert ist: <code>php -m | grep redis</code>. Alternativ funktioniert auch die Predis-Library.</p>
-                
-                <h4>Cache wird nicht geleert</h4>
-                <p>Bei Redis Object Cache muss ggf. auch der Object Cache geleert werden (z.B. über Redis Object Cache Plugin).</p>
             </div>
         </div>
         <?php
@@ -1289,9 +1163,6 @@ define('WP_REDIS_DATABASE', 0);
             'id'    => 'yaa-clear-cache',
             'title' => '🗑️ YAA Cache leeren',
             'href'  => wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_cache'), 'yaa_clear_cache_nonce'),
-            'meta'  => [
-                'title' => __('Yadore-Amazon-API Cache leeren', 'yadore-amazon-api'),
-            ],
         ]);
     }
     
@@ -1315,11 +1186,7 @@ define('WP_REDIS_DATABASE', 0);
             'message' => __('Cache erfolgreich geleert!', 'yadore-amazon-api'),
         ], 30);
         
-        $redirect = wp_get_referer();
-        if (!$redirect) {
-            $redirect = admin_url('admin.php?page=yaa-status');
-        }
-        
+        $redirect = wp_get_referer() ?: admin_url('admin.php?page=yaa-status');
         wp_safe_redirect($redirect);
         exit;
     }
@@ -1437,16 +1304,15 @@ define('WP_REDIS_DATABASE', 0);
         $next_cron = wp_next_scheduled('yaa_cache_refresh_event');
         
         echo '<table class="widefat striped" style="border:none;">';
-        echo '<tr><td>Yadore API:</td><td>' . ($this->yadore_api->is_configured() ? '✅ Aktiv' : '❌ Nicht konfiguriert') . '</td></tr>';
-        echo '<tr><td>Amazon PA-API:</td><td>' . ($this->amazon_api->is_configured() ? '✅ Aktiv' : '❌ Nicht konfiguriert') . '</td></tr>';
-        echo '<tr><td>Cache-Backend:</td><td>' . esc_html($cache_status['cache_backend']) . '</td></tr>';
-        echo '<tr><td>Nächster Cron:</td><td>' . ($next_cron ? esc_html(date_i18n('d.m.Y H:i', $next_cron)) : 'Nicht geplant') . '</td></tr>';
+        echo '<tr><td>Yadore API:</td><td>' . ($this->yadore_api->is_configured() ? '✅ Aktiv' : '❌') . '</td></tr>';
+        echo '<tr><td>Amazon PA-API:</td><td>' . ($this->amazon_api->is_configured() ? '✅ Aktiv' : '❌') . '</td></tr>';
+        echo '<tr><td>Cache:</td><td>' . esc_html($cache_status['cache_backend']) . '</td></tr>';
+        echo '<tr><td>Nächster Cron:</td><td>' . ($next_cron ? esc_html(date_i18n('d.m.Y H:i', $next_cron)) : '-') . '</td></tr>';
         echo '</table>';
         
         echo '<p style="margin-top:15px;">';
         echo '<a href="' . esc_url(admin_url('admin.php?page=yaa-settings')) . '" class="button">⚙️ Einstellungen</a> ';
-        echo '<a href="' . esc_url(admin_url('admin.php?page=yaa-status')) . '" class="button">📊 Status</a> ';
-        echo '<a href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_cache'), 'yaa_clear_cache_nonce')) . '" class="button">🗑️ Cache</a>';
+        echo '<a href="' . esc_url(admin_url('admin.php?page=yaa-status')) . '" class="button">📊 Status</a>';
         echo '</p>';
     }
-}        
+}

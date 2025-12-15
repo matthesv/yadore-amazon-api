@@ -2,10 +2,10 @@
 /**
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
- * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching und vollständiger Backend-Konfiguration.
- * Version: 1.0.0
+ * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
+ * Version: 1.1.0
  * Author: Matthes Vogel
- * Author URI: https://vogel-webmarketing.de
+ * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
  * Domain Path: /languages
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.0.0');
+define('YAA_VERSION', '1.1.0');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -64,6 +64,7 @@ function yaa_get_fallback_time(): int {
 require_once YAA_PLUGIN_PATH . 'includes/class-cache-handler.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-yadore-api.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-amazon-paapi.php';
+require_once YAA_PLUGIN_PATH . 'includes/class-custom-products.php';  // NEU
 require_once YAA_PLUGIN_PATH . 'includes/class-shortcode-renderer.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
 
@@ -73,17 +74,14 @@ require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
 if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php')) {
     require_once YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php';
     
-    // WICHTIG: Vollqualifizierten Klassennamen mit führendem Backslash verwenden!
     $yaaUpdateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
         'https://github.com/matthesv/yadore-amazon-api/',
         YAA_PLUGIN_FILE,
         'yadore-amazon-api'
     );
     
-    // Branch festlegen
     $yaaUpdateChecker->setBranch('main');
     
-    // Optional: Für private Repositories
     $github_token = defined('YAA_GITHUB_TOKEN') ? YAA_GITHUB_TOKEN : yaa_get_option('github_token', '');
     if (!empty($github_token)) {
         $yaaUpdateChecker->setAuthentication($github_token);
@@ -100,6 +98,7 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Cache_Handler $cache;
     public readonly YAA_Yadore_API $yadore_api;
     public readonly YAA_Amazon_PAAPI $amazon_api;
+    public readonly YAA_Custom_Products $custom_products;  // NEU
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
     
@@ -116,11 +115,17 @@ final class Yadore_Amazon_API_Plugin {
     }
     
     private function init_components(): void {
-        $this->cache      = new YAA_Cache_Handler();
-        $this->yadore_api = new YAA_Yadore_API($this->cache);
-        $this->amazon_api = new YAA_Amazon_PAAPI($this->cache);
-        $this->shortcode  = new YAA_Shortcode_Renderer($this->yadore_api, $this->amazon_api, $this->cache);
-        $this->admin      = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
+        $this->cache           = new YAA_Cache_Handler();
+        $this->yadore_api      = new YAA_Yadore_API($this->cache);
+        $this->amazon_api      = new YAA_Amazon_PAAPI($this->cache);
+        $this->custom_products = new YAA_Custom_Products();  // NEU
+        $this->shortcode       = new YAA_Shortcode_Renderer(
+            $this->yadore_api, 
+            $this->amazon_api, 
+            $this->cache,
+            $this->custom_products  // NEU: Übergeben
+        );
+        $this->admin           = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
     
     private function register_hooks(): void {
@@ -165,12 +170,14 @@ final class Yadore_Amazon_API_Plugin {
             'grid_columns_mobile'    => 1,
             'button_text_yadore'     => 'Zum Angebot',
             'button_text_amazon'     => 'Bei Amazon kaufen',
+            'button_text_custom'     => 'Zum Angebot',  // NEU
             'show_prime_badge'       => 'yes',
             'show_merchant'          => 'yes',
             'show_description'       => 'yes',
             'color_primary'          => '#ff00cc',
             'color_secondary'        => '#00ffff',
             'color_amazon'           => '#ff9900',
+            'color_custom'           => '#4CAF50',  // NEU
             
             // Update Settings
             'github_token'           => '',
@@ -200,7 +207,16 @@ final class Yadore_Amazon_API_Plugin {
             return;
         }
         
-        $shortcodes = ['yaa_products', 'yadore_products', 'amazon_products', 'combined_products'];
+        // Erweiterte Shortcode-Liste
+        $shortcodes = [
+            'yaa_products', 
+            'yadore_products', 
+            'amazon_products', 
+            'combined_products',
+            'custom_products',      // NEU
+            'all_products',         // NEU
+        ];
+        
         $has_shortcode = false;
         
         foreach ($shortcodes as $shortcode) {
@@ -227,6 +243,7 @@ final class Yadore_Amazon_API_Plugin {
         $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
         $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
         $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
+        $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
         $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
         $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
         $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
@@ -236,6 +253,7 @@ final class Yadore_Amazon_API_Plugin {
                 --yaa-primary: {$primary};
                 --yaa-secondary: {$secondary};
                 --yaa-amazon: {$amazon};
+                --yaa-custom: {$custom};
                 --yaa-columns-desktop: {$columns_desktop};
                 --yaa-columns-tablet: {$columns_tablet};
                 --yaa-columns-mobile: {$columns_mobile};

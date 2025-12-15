@@ -557,3 +557,75 @@
         background: linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.95) 100%);
     }
 }
+/* =========================================
+ * CUSTOM PRODUCTS STYLES
+ * ========================================= */
+
+/* Custom Product Card */
+.yaa-item.yaa-custom {
+    border-bottom-color: var(--yaa-custom, #4CAF50);
+}
+
+.yaa-item.yaa-custom:hover {
+    box-shadow: 
+        0 15px 40px rgba(0, 0, 0, 0.4),
+        0 0 30px color-mix(in srgb, var(--yaa-custom, #4CAF50), transparent 80%);
+}
+
+/* Custom Badge */
+.yaa-custom-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: var(--yaa-custom, #4CAF50);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
+}
+
+/* Wenn Prime UND Custom Badge vorhanden */
+.yaa-item.yaa-custom .yaa-prime-badge {
+    top: 12px;
+    left: auto;
+    right: 12px;
+}
+
+/* Custom Button */
+.yaa-item.yaa-custom .yaa-button {
+    border-color: var(--yaa-custom, #4CAF50);
+    color: var(--yaa-custom, #4CAF50);
+}
+
+.yaa-item.yaa-custom .yaa-button:hover {
+    background-color: var(--yaa-custom, #4CAF50);
+    color: #fff;
+    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-custom, #4CAF50), transparent 30%);
+}
+
+/* Custom Title Hover */
+.yaa-item.yaa-custom .yaa-title a:hover {
+    color: var(--yaa-custom, #4CAF50);
+    text-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
+}
+
+/* Custom Merchant */
+.yaa-item.yaa-custom .yaa-merchant::before {
+    color: var(--yaa-custom, #4CAF50);
+}
+
+/* Custom Price */
+.yaa-item.yaa-custom .yaa-price {
+    background: linear-gradient(135deg, 
+        var(--yaa-custom, #4CAF50) 0%, 
+        #81C784 50%, 
+        var(--yaa-custom, #4CAF50) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
