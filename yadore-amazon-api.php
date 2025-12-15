@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.2.0
+ * Version: 1.1.1
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.1.0');
+define('YAA_VERSION', '1.1.1');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -164,7 +164,7 @@ final class Yadore_Amazon_API_Plugin {
             'redis_database'         => 0,
             
             // Display Settings
-            'disable_default_css'    => 'no', // Default: CSS laden
+            'disable_default_css'    => 'no',
             'grid_columns_desktop'   => 3,
             'grid_columns_tablet'    => 2,
             'grid_columns_mobile'    => 1,
@@ -232,8 +232,10 @@ final class Yadore_Amazon_API_Plugin {
     }
     
     public function load_assets(): void {
-        // Nur laden, wenn CSS nicht deaktiviert ist
-        if (yaa_get_option('disable_default_css', 'no') !== 'yes') {
+        $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
+
+        // 1. Wenn CSS NICHT deaktiviert ist, laden wir das volle Stylesheet
+        if (!$disable_css) {
             wp_enqueue_style(
                 'yaa-frontend-grid',
                 YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
@@ -241,7 +243,7 @@ final class Yadore_Amazon_API_Plugin {
                 YAA_VERSION
             );
             
-            // Dynamic CSS variables
+            // Dynamic Colors & Grid Variables
             $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
             $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
             $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
@@ -262,9 +264,40 @@ final class Yadore_Amazon_API_Plugin {
                 }
             ";
             wp_add_inline_style('yaa-frontend-grid', $custom_css);
+        } 
+        // 2. Wenn CSS deaktiviert IST, laden wir nur ein Minimal-CSS für die Funktionalität
+        else {
+            // Wir registrieren einen "Dummy"-Handle, um Inline-CSS anzuhängen
+            wp_register_style('yaa-minimal-functional', false);
+            wp_enqueue_style('yaa-minimal-functional');
+            
+            // Minimales CSS, damit "Mehr lesen" technisch funktioniert (Einklappen/Ausklappen)
+            $minimal_css = "
+                .yaa-description {
+                    overflow: hidden;
+                    max-height: 4.8em; /* Höhe im eingeklappten Zustand */
+                    transition: max-height 0.4s ease-out;
+                    position: relative;
+                }
+                .yaa-description.expanded {
+                    max-height: 1000px; /* Ausreichende Höhe zum Ausklappen */
+                }
+                .yaa-read-more {
+                    cursor: pointer;
+                    display: inline-block;
+                }
+                /* Optional: Grid Basis-Setup, falls gewünscht, sonst muss das Theme das machen */
+                .yaa-grid-container {
+                    display: grid;
+                    gap: 20px;
+                    /* Default auf 3 Spalten, wenn nichts im Theme definiert ist */
+                    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                }
+            ";
+            wp_add_inline_style('yaa-minimal-functional', $minimal_css);
         }
         
-        // JS immer laden (wichtig für Read More Toggle)
+        // JS immer laden (wichtig für Read More Toggle & Lazy Load)
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
