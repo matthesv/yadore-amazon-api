@@ -2,8 +2,7 @@
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * 
- * Features:
+ * * Features:
  * - Yadore API Configuration
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
  * - Custom Products Management
@@ -101,8 +100,7 @@ final class YAA_Admin {
     
     /**
      * Sanitize settings
-     * 
-     * @param array<string, mixed>|null $input
+     * * @param array<string, mixed>|null $input
      * @return array<string, mixed>
      */
     public function sanitize_settings(?array $input): array {
@@ -142,6 +140,7 @@ final class YAA_Admin {
         $sanitized['redis_database'] = max(0, min(15, (int) ($input['redis_database'] ?? 0)));
         
         // Display settings
+        $sanitized['disable_default_css'] = isset($input['disable_default_css']) ? 'yes' : 'no'; // NEU
         $sanitized['grid_columns_desktop'] = max(1, min(6, (int) ($input['grid_columns_desktop'] ?? 3)));
         $sanitized['grid_columns_tablet'] = max(1, min(4, (int) ($input['grid_columns_tablet'] ?? 2)));
         $sanitized['grid_columns_mobile'] = max(1, min(2, (int) ($input['grid_columns_mobile'] ?? 1)));
@@ -384,8 +383,7 @@ final class YAA_Admin {
     
     /**
      * Render Yadore settings
-     * 
-     * @param array<string, mixed> $options
+     * * @param array<string, mixed> $options
      * @param array<string, string> $markets
      */
     private function render_yadore_settings(array $options, array $markets): void {
@@ -475,8 +473,7 @@ final class YAA_Admin {
     
     /**
      * Render Amazon settings
-     * 
-     * @param array<string, mixed> $options
+     * * @param array<string, mixed> $options
      * @param array<string, string> $marketplaces
      */
     private function render_amazon_settings(array $options, array $marketplaces): void {
@@ -627,8 +624,7 @@ final class YAA_Admin {
     
     /**
      * Render custom products settings
-     * 
-     * @param array<string, mixed> $options
+     * * @param array<string, mixed> $options
      */
     private function render_custom_products_settings(array $options): void {
         $product_count = wp_count_posts(YAA_Custom_Products::get_post_type());
@@ -722,8 +718,7 @@ final class YAA_Admin {
     
     /**
      * Render cache settings
-     * 
-     * @param array<string, mixed> $options
+     * * @param array<string, mixed> $options
      * @param array<string, mixed> $cache_status
      */
     private function render_cache_settings(array $options, array $cache_status): void {
@@ -837,13 +832,29 @@ final class YAA_Admin {
     
     /**
      * Render display settings
-     * 
-     * @param array<string, mixed> $options
+     * * @param array<string, mixed> $options
      */
     private function render_display_settings(array $options): void {
         ?>
         <div class="yaa-card">
+            <h2>🎨 Styling Optionen</h2>
+            
+            <div class="yaa-form-row" style="background: #fff0f0; padding: 15px; border-left: 4px solid #ff4444;">
+                <label>
+                    <input type="checkbox" name="yaa_settings[disable_default_css]" value="yes" 
+                        <?php checked(($options['disable_default_css'] ?? 'no'), 'yes'); ?>>
+                    <strong>Standard-CSS komplett deaktivieren</strong>
+                </label>
+                <p class="description">
+                    Aktivieren Sie diese Option, wenn Sie das Grid-Layout <strong>vollständig über Ihr Theme oder Custom CSS</strong> steuern möchten. 
+                    Das Plugin lädt dann keine Stylesheets mehr im Frontend (nur noch JS für "mehr lesen").
+                </p>
+            </div>
+        </div>
+
+        <div class="yaa-card">
             <h2>📐 Grid-Layout</h2>
+            <p class="description">Diese Einstellungen werden nur angewendet, wenn das Standard-CSS aktiv ist.</p>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
@@ -1100,6 +1111,61 @@ final class YAA_Admin {
         <div class="wrap yaa-admin-wrap">
             <h1><?php esc_html_e('Dokumentation', 'yadore-amazon-api'); ?></h1>
             
+            <div class="yaa-card">
+                <h2>🎨 CSS Klassen Referenz</h2>
+                <p>Nutzen Sie diese Klassen, um das Design über <strong>Custom CSS</strong> in Ihrem Theme anzupassen.</p>
+                <p>Wenn Sie die Option <em>"Standard-CSS deaktivieren"</em> nutzen, müssen Sie das Grid-Layout (z.B. mit Flexbox oder Grid) selbst definieren.</p>
+                
+                <div class="yaa-code-block">
+                    <pre>
+/* Haupt-Container */
+.yaa-grid-container { }
+
+/* Einzelnes Produkt-Element */
+.yaa-item { }
+.yaa-item.yaa-amazon { }  /* Nur Amazon Produkte */
+.yaa-item.yaa-custom { }  /* Nur Eigene Produkte */
+.yaa-item.yaa-yadore { }  /* Nur Yadore Produkte */
+
+/* Badges */
+.yaa-prime-badge { }      /* Prime Label */
+.yaa-custom-badge { }     /* "Empfohlen" Label */
+
+/* Bild-Bereich */
+.yaa-image-wrapper { }
+.yaa-image-wrapper img { }
+.yaa-no-image { }         /* Fallback wenn kein Bild */
+
+/* Inhalt */
+.yaa-content { }
+.yaa-title { }
+.yaa-title a { }
+
+/* Beschreibung & Mehr lesen */
+.yaa-description-wrapper { }
+.yaa-description { }
+.yaa-description.expanded { } /* Wenn aufgeklappt */
+.yaa-read-more { }        /* Button zum Aufklappen */
+.yaa-no-description { }
+
+/* Preis & Meta */
+.yaa-meta { }
+.yaa-price { }            /* Preis-Text */
+.yaa-merchant { }         /* Händler-Name */
+
+/* Buttons */
+.yaa-button-wrapper { }
+.yaa-button { }
+
+/* Status Meldungen */
+.yaa-message { }          /* Fehlermeldungen / Leere Suche */
+.yaa-error { }
+.yaa-empty { }
+.yaa-icon { }
+                    </pre>
+                </div>
+            </div>
+
             <div class="yaa-card">
                 <h2>📝 Shortcodes</h2>
                 

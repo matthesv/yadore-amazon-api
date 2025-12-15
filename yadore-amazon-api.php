@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -11,8 +11,7 @@
  * Requires at least: 6.0
  * Requires PHP: 8.1
  * License: GPL v2 or later
- * 
- * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
+ * * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
  */
 
@@ -64,7 +63,7 @@ function yaa_get_fallback_time(): int {
 require_once YAA_PLUGIN_PATH . 'includes/class-cache-handler.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-yadore-api.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-amazon-paapi.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-custom-products.php';  // NEU
+require_once YAA_PLUGIN_PATH . 'includes/class-custom-products.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-shortcode-renderer.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
 
@@ -98,7 +97,7 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Cache_Handler $cache;
     public readonly YAA_Yadore_API $yadore_api;
     public readonly YAA_Amazon_PAAPI $amazon_api;
-    public readonly YAA_Custom_Products $custom_products;  // NEU
+    public readonly YAA_Custom_Products $custom_products;
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
     
@@ -118,12 +117,12 @@ final class Yadore_Amazon_API_Plugin {
         $this->cache           = new YAA_Cache_Handler();
         $this->yadore_api      = new YAA_Yadore_API($this->cache);
         $this->amazon_api      = new YAA_Amazon_PAAPI($this->cache);
-        $this->custom_products = new YAA_Custom_Products();  // NEU
+        $this->custom_products = new YAA_Custom_Products();
         $this->shortcode       = new YAA_Shortcode_Renderer(
             $this->yadore_api, 
             $this->amazon_api, 
             $this->cache,
-            $this->custom_products  // NEU: Übergeben
+            $this->custom_products
         );
         $this->admin           = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
@@ -165,19 +164,20 @@ final class Yadore_Amazon_API_Plugin {
             'redis_database'         => 0,
             
             // Display Settings
+            'disable_default_css'    => 'no', // Default: CSS laden
             'grid_columns_desktop'   => 3,
             'grid_columns_tablet'    => 2,
             'grid_columns_mobile'    => 1,
             'button_text_yadore'     => 'Zum Angebot',
             'button_text_amazon'     => 'Bei Amazon kaufen',
-            'button_text_custom'     => 'Zum Angebot',  // NEU
+            'button_text_custom'     => 'Zum Angebot',
             'show_prime_badge'       => 'yes',
             'show_merchant'          => 'yes',
             'show_description'       => 'yes',
             'color_primary'          => '#ff00cc',
             'color_secondary'        => '#00ffff',
             'color_amazon'           => '#ff9900',
-            'color_custom'           => '#4CAF50',  // NEU
+            'color_custom'           => '#4CAF50',
             
             // Update Settings
             'github_token'           => '',
@@ -213,8 +213,8 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_products', 
             'amazon_products', 
             'combined_products',
-            'custom_products',      // NEU
-            'all_products',         // NEU
+            'custom_products',
+            'all_products',
         ];
         
         $has_shortcode = false;
@@ -232,35 +232,39 @@ final class Yadore_Amazon_API_Plugin {
     }
     
     public function load_assets(): void {
-        wp_enqueue_style(
-            'yaa-frontend-grid',
-            YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
-            [],
-            YAA_VERSION
-        );
+        // Nur laden, wenn CSS nicht deaktiviert ist
+        if (yaa_get_option('disable_default_css', 'no') !== 'yes') {
+            wp_enqueue_style(
+                'yaa-frontend-grid',
+                YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
+                [],
+                YAA_VERSION
+            );
+            
+            // Dynamic CSS variables
+            $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
+            $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
+            $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
+            $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
+            $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
+            $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
+            $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
+            
+            $custom_css = "
+                .yaa-grid-container {
+                    --yaa-primary: {$primary};
+                    --yaa-secondary: {$secondary};
+                    --yaa-amazon: {$amazon};
+                    --yaa-custom: {$custom};
+                    --yaa-columns-desktop: {$columns_desktop};
+                    --yaa-columns-tablet: {$columns_tablet};
+                    --yaa-columns-mobile: {$columns_mobile};
+                }
+            ";
+            wp_add_inline_style('yaa-frontend-grid', $custom_css);
+        }
         
-        // Dynamic CSS variables
-        $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
-        $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
-        $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
-        $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
-        $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
-        $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
-        $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
-        
-        $custom_css = "
-            .yaa-grid-container {
-                --yaa-primary: {$primary};
-                --yaa-secondary: {$secondary};
-                --yaa-amazon: {$amazon};
-                --yaa-custom: {$custom};
-                --yaa-columns-desktop: {$columns_desktop};
-                --yaa-columns-tablet: {$columns_tablet};
-                --yaa-columns-mobile: {$columns_mobile};
-            }
-        ";
-        wp_add_inline_style('yaa-frontend-grid', $custom_css);
-        
+        // JS immer laden (wichtig für Read More Toggle)
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
