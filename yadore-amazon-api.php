@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
- * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, lokalen Bildern und vollständiger Backend-Konfiguration.
- * Version: 1.2.4
+ * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
+ * Version: 1.2.5
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.2.4');
+define('YAA_VERSION', '1.2.5');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -60,7 +60,6 @@ function yaa_get_fallback_time(): int {
 // =========================================
 // AUTOLOAD CLASSES
 // =========================================
-require_once YAA_PLUGIN_PATH . 'includes/class-image-handler.php'; // NEU: Image Handler zuerst laden
 require_once YAA_PLUGIN_PATH . 'includes/class-cache-handler.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-yadore-api.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-amazon-paapi.php';
@@ -193,12 +192,6 @@ final class Yadore_Amazon_API_Plugin {
             wp_schedule_event(time(), 'twicedaily', 'yaa_cache_refresh_event');
         }
         
-        // Create upload dir on activation
-        $upload_dir = wp_upload_dir();
-        if (!isset($upload_dir['error']) || $upload_dir['error'] === false) {
-             wp_mkdir_p($upload_dir['basedir'] . '/yadore-amazon-api');
-        }
-        
         flush_rewrite_rules();
     }
     
@@ -308,12 +301,6 @@ final class Yadore_Amazon_API_Plugin {
                     gap: 20px;
                     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
                 }
-                
-                /* Einfacher Style für Placeholder wenn CSS aus ist */
-                .yaa-image-wrapper img[src^='data:image/svg'] {
-                    background: #f0f0f0;
-                    width: 100%;
-                }
             ";
             wp_add_inline_style('yaa-minimal-functional', $minimal_css);
         }
@@ -352,8 +339,7 @@ final class Yadore_Amazon_API_Plugin {
                 ]);
             }
             
-            // Kleines Delay um den Server nicht zu überlasten beim Bilderdownload
-            sleep(2);
+            sleep(1);
         }
     }
 }

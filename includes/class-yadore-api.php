@@ -1,6 +1,7 @@
 <?php
 /**
  * Yadore API Handler
+ * PHP 8.3+ compatible
  */
 
 declare(strict_types=1);
@@ -9,143 +10,275 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class YAA_Yadore_API {
-
+final class YAA_Yadore_API {
+    
+    private const API_BASE = 'https://api.yadore.com/v2/offer';
+    
     private YAA_Cache_Handler $cache;
-    private const API_ENDPOINT = 'https://api.yadore.com/v1/search';
-
+    
+    // Yadore supported markets
+    private const MARKETS = [
+        'de' => 'Deutschland',
+        'at' => 'Österreich',
+        'ch' => 'Schweiz',
+        'fr' => 'Frankreich',
+        'it' => 'Italien',
+        'es' => 'Spanien',
+        'nl' => 'Niederlande',
+        'be' => 'Belgien',
+        'pl' => 'Polen',
+        'uk' => 'Großbritannien',
+        'us' => 'USA',
+        'se' => 'Schweden',
+        'dk' => 'Dänemark',
+        'no' => 'Norwegen',
+        'fi' => 'Finnland',
+    ];
+    
     public function __construct(YAA_Cache_Handler $cache) {
         $this->cache = $cache;
     }
-
-    public function is_configured(): bool {
-        $key = defined('YADORE_API_KEY') ? YADORE_API_KEY : yaa_get_option('yadore_api_key');
-        return !empty($key);
-    }
-
-    public function get_markets(): array {
-        return [
-            'de' => 'Deutschland',
-            'at' => 'Österreich',
-            'ch' => 'Schweiz',
-            'uk' => 'Vereinigtes Königreich',
-            'us' => 'USA',
-            'fr' => 'Frankreich',
-            'nl' => 'Niederlande',
-            'es' => 'Spanien',
-            'it' => 'Italien',
-        ];
-    }
-
+    
     /**
-     * Fetch products from Yadore
+     * Check if API is configured
      */
-    public function fetch(array $args): array {
-        if (!$this->is_configured()) {
-            return [];
+    public function is_configured(): bool {
+        return $this->get_api_key() !== '' && yaa_get_option('enable_yadore', 'yes') === 'yes';
+    }
+    
+    /**
+     * Get API Key
+     */
+    private function get_api_key(): string {
+        if (defined('YADORE_API_KEY')) {
+            return (string) YADORE_API_KEY;
         }
-
-        $keyword = $args['keyword'] ?? '';
-        $limit = $args['limit'] ?? 10;
-        $market = $args['market'] ?? 'de';
-        $api_key = defined('YADORE_API_KEY') ? YADORE_API_KEY : yaa_get_option('yadore_api_key');
+        return (string) yaa_get_option('yadore_api_key', '');
+    }
+    
+    /**
+     * Get available markets
+     * 
+     * @return array<string, string>
+     */
+    public function get_markets(): array {
+        return self::MARKETS;
+    }
+    
+    /**
+     * Fetch offers from Yadore API
+     * 
+     * @param array<string, mixed> $atts
+     * @return array<int, array<string, mixed>>|\WP_Error
+     */
+    public function fetch(array $atts): array|\WP_Error {
+        $api_key = $this->get_api_key();
         
-        $cache_key = 'yadore_' . md5($keyword . $market . $limit);
-        
-        // Check cache
-        $cached = $this->cache->get($cache_key);
-        if ($cached !== false) {
-            return $cached;
+        if ($api_key === '') {
+            return new \WP_Error('no_api_key', __('Yadore API-Key nicht konfiguriert.', 'yadore-amazon-api'));
         }
-
-        $params = [
-            'api_key' => $api_key,
-            'q' => $keyword,
-            'limit' => $limit,
-            'market' => $market,
-            'format' => 'json'
+        
+        // Merge with defaults
+        $defaults = [
+            'keyword'   => '',
+            'limit'     => (int) yaa_get_option('yadore_default_limit', 9),
+            'market'    => (string) yaa_get_option('yadore_market', 'de'),
+            'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'sort'      => 'rel_desc',
         ];
+        
+        $atts = wp_parse_args($atts, $defaults);
+        $atts['limit'] = (int) $atts['limit'];
+        
+        $keyword = trim((string) $atts['keyword']);
+        
+        if ($keyword === '') {
+            return new \WP_Error('no_keyword', __('Kein Suchbegriff angegeben.', 'yadore-amazon-api'));
+        }
+        
+        $cache_key = $this->generate_cache_key($atts);
+        $fallback_key = $cache_key . '_fallback';
+        
+        // Try cache first
+        $cached_data = $this->cache->get($cache_key);
+        if ($cached_data !== false && is_array($cached_data)) {
+            return $cached_data;
+        }
+        
+        // Fetch from API
+        $url = add_query_arg([
+            'market'    => $atts['market'],
+            'keyword'   => urlencode($keyword),
+            'limit'     => $atts['limit'],
+            'sort'      => $atts['sort'],
+            'precision' => $atts['precision'],
+        ], self::API_BASE);
 
-        // Precision setting
-        if (yaa_get_option('yadore_precision') === 'strict') {
-            $params['match'] = 'all'; 
+        $response = wp_remote_get($url, [
+            'headers'   => ['API-Key' => $api_key],
+            'timeout'   => 15,
+            'sslverify' => true,
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('Yadore API Error: ' . $response->get_error_message());
+            return $this->get_fallback($fallback_key);
         }
 
-        $url = add_query_arg($params, self::API_ENDPOINT);
-        
-        $response = wp_remote_get($url, ['timeout' => 15]);
-
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            return [];
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            error_log('Yadore API HTTP Error: ' . $status_code);
+            return $this->get_fallback($fallback_key);
         }
 
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
-        $products = [];
-        
-        if (!empty($data['items'])) {
-            foreach ($data['items'] as $item) {
-                // Determine unique ID
-                $ean = $item['ean'] ?? $item['id'] ?? md5($item['url']);
-                $remote_image_url = $item['image_url'] ?? null;
 
-                // --- IMAGE PROCESSING ---
-                // Download image locally or get placeholder
-                $local_image_url = YAA_Image_Handler::process($remote_image_url, (string)$ean);
+        if (!is_array($data) || !isset($data['offers']) || empty($data['offers'])) {
+            return $this->get_fallback($fallback_key);
+        }
 
-                $products[] = [
-                    'source' => 'yadore',
-                    'id' => $ean,
-                    'title' => $item['title'] ?? 'Kein Titel',
-                    'image' => $local_image_url, // Use local URL
-                    'price' => isset($item['price']) ? number_format((float)$item['price'], 2, ',', '.') . ' €' : '',
-                    'url' => $item['url'] ?? '#',
-                    'merchant' => $item['shop_name'] ?? '',
-                    'description' => $item['description'] ?? '',
-                    'is_prime' => false
-                ];
+        // Normalize data
+        $offers = $this->normalize_offers($data['offers']);
+        
+        // Cache results
+        $this->cache->set($cache_key, $offers, yaa_get_cache_time());
+        $this->cache->set($fallback_key, $offers, yaa_get_fallback_time());
+        
+        // Track keyword
+        $this->track_keyword($atts);
+        
+        return $offers;
+    }
+    
+    /**
+     * Normalize offers to standard format
+     * 
+     * @param array<int, array<string, mixed>> $offers
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_offers(array $offers): array {
+        $normalized = [];
+        
+        foreach ($offers as $offer) {
+            $normalized[] = [
+                'id'          => $offer['id'] ?? uniqid('yadore_'),
+                'title'       => $offer['title'] ?? '',
+                'description' => $offer['description'] ?? '',
+                'url'         => $offer['clickUrl'] ?? '#',
+                'image'       => [
+                    'url' => $offer['image']['url'] ?? '',
+                ],
+                'price'       => [
+                    'amount'   => $offer['price']['amount'] ?? '',
+                    'currency' => $offer['price']['currency'] ?? 'EUR',
+                    'display'  => '',
+                ],
+                'merchant'    => [
+                    'name' => $offer['merchant']['name'] ?? '',
+                    'logo' => $offer['merchant']['logo'] ?? '',
+                ],
+                'source'      => 'yadore',
+                'is_prime'    => false,
+            ];
+        }
+        
+        return $normalized;
+    }
+    
+    /**
+     * Generate cache key
+     * 
+     * @param array<string, mixed> $atts
+     */
+    private function generate_cache_key(array $atts): string {
+        return 'yadore_' . md5(serialize($atts));
+    }
+    
+    /**
+     * Get fallback cache
+     * 
+     * @return array<int, array<string, mixed>>|\WP_Error
+     */
+    private function get_fallback(string $fallback_key): array|\WP_Error {
+        $fallback = $this->cache->get($fallback_key);
+        if ($fallback !== false && is_array($fallback)) {
+            return $fallback;
+        }
+        return new \WP_Error('no_data', __('Keine Daten verfügbar.', 'yadore-amazon-api'));
+    }
+    
+    /**
+     * Track keywords for cron preload
+     * 
+     * @param array<string, mixed> $atts
+     */
+    private function track_keyword(array $atts): void {
+        $cached_keywords = get_option('yaa_cached_keywords', []);
+        
+        if (!is_array($cached_keywords)) {
+            $cached_keywords = [];
+        }
+        
+        $new_entry = [
+            'keyword' => $atts['keyword'],
+            'limit'   => $atts['limit'],
+            'market'  => $atts['market'],
+            'source'  => 'yadore',
+        ];
+        
+        foreach ($cached_keywords as $entry) {
+            if (($entry['keyword'] ?? '') === $new_entry['keyword'] 
+                && ($entry['market'] ?? '') === $new_entry['market']
+                && ($entry['source'] ?? 'yadore') === 'yadore') {
+                return;
             }
         }
-
-        // Cache result
-        if (!empty($products)) {
-            $this->cache->set($cache_key, $products, yaa_get_cache_time());
-            $this->cache->track_keyword($keyword, 'yadore', 'All', $limit, $market);
-        }
-
-        return $products;
+        
+        $cached_keywords[] = $new_entry;
+        $cached_keywords = array_slice($cached_keywords, -30);
+        update_option('yaa_cached_keywords', $cached_keywords);
     }
-
+    
     /**
-     * Test connection
+     * Test API connection
+     * 
+     * @return array{success: bool, message: string}
      */
     public function test_connection(?string $api_key = null): array {
-        $key = $api_key ?: (defined('YADORE_API_KEY') ? YADORE_API_KEY : yaa_get_option('yadore_api_key'));
+        $api_key ??= $this->get_api_key();
         
-        if (empty($key)) {
-            return ['success' => false, 'message' => 'API-Key fehlt.'];
+        if ($api_key === '') {
+            return [
+                'success' => false,
+                'message' => __('Kein API-Key angegeben.', 'yadore-amazon-api'),
+            ];
         }
-
+        
         $url = add_query_arg([
-            'api_key' => $key,
-            'q' => 'test',
-            'limit' => 1,
-            'market' => 'de',
-            'format' => 'json'
-        ], self::API_ENDPOINT);
+            'market'  => 'de',
+            'keyword' => 'test',
+            'limit'   => 1,
+        ], self::API_BASE);
 
-        $response = wp_remote_get($url);
-        
+        $response = wp_remote_get($url, [
+            'headers' => ['API-Key' => $api_key],
+            'timeout' => 10,
+        ]);
+
         if (is_wp_error($response)) {
-            return ['success' => false, 'message' => $response->get_error_message()];
+            return [
+                'success' => false,
+                'message' => $response->get_error_message(),
+            ];
         }
 
-        $code = wp_remote_retrieve_response_code($response);
-        if ($code === 200) {
-            return ['success' => true, 'message' => 'Verbindung erfolgreich!'];
-        }
-
-        return ['success' => false, 'message' => 'API Fehler Code: ' . $code];
+        $status_code = wp_remote_retrieve_response_code($response);
+        
+        return match ($status_code) {
+            200 => ['success' => true, 'message' => __('Verbindung erfolgreich!', 'yadore-amazon-api')],
+            401 => ['success' => false, 'message' => __('Ungültiger API-Key.', 'yadore-amazon-api')],
+            default => ['success' => false, 'message' => sprintf(__('HTTP Fehler: %d', 'yadore-amazon-api'), $status_code)],
+        };
     }
 }
