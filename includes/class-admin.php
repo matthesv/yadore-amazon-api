@@ -2,11 +2,15 @@
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * * Features:
+ * Version: 1.2.6
+ *
+ * Features:
  * - Yadore API Configuration
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
  * - Custom Products Management
  * - Redis Cache Configuration
+ * - Local Image Storage Configuration
+ * - Fuzzy Search Configuration
  * - Display Settings
  * - Status & Documentation
  */
@@ -37,6 +41,7 @@ final class YAA_Admin {
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
         add_action('admin_bar_menu', [$this, 'add_admin_bar_button'], 100);
         add_action('admin_post_yaa_clear_cache', [$this, 'handle_clear_cache']);
+        add_action('admin_post_yaa_clear_images', [$this, 'handle_clear_images']);
         add_action('admin_notices', [$this, 'admin_notices']);
         add_action('wp_dashboard_setup', [$this, 'add_dashboard_widget']);
         
@@ -100,7 +105,8 @@ final class YAA_Admin {
     
     /**
      * Sanitize settings
-     * * @param array<string, mixed>|null $input
+     *
+     * @param array<string, mixed>|null $input
      * @return array<string, mixed>
      */
     public function sanitize_settings(?array $input): array {
@@ -139,8 +145,21 @@ final class YAA_Admin {
         $sanitized['redis_password'] = $input['redis_password'] ?? '';
         $sanitized['redis_database'] = max(0, min(15, (int) ($input['redis_database'] ?? 0)));
         
+        // Local Image Storage
+        $sanitized['enable_local_images'] = isset($input['enable_local_images']) ? 'yes' : 'no';
+        
+        // Fuzzy Search settings
+        $sanitized['enable_fuzzy_search'] = isset($input['enable_fuzzy_search']) ? 'yes' : 'no';
+        $sanitized['fuzzy_auto_mix'] = isset($input['fuzzy_auto_mix']) ? 'yes' : 'no';
+        $sanitized['fuzzy_threshold'] = max(0, min(100, (int) ($input['fuzzy_threshold'] ?? 30)));
+        $sanitized['fuzzy_weight_title'] = max(0, min(1, (float) ($input['fuzzy_weight_title'] ?? 0.40)));
+        $sanitized['fuzzy_weight_description'] = max(0, min(1, (float) ($input['fuzzy_weight_description'] ?? 0.25)));
+        $sanitized['fuzzy_weight_category'] = max(0, min(1, (float) ($input['fuzzy_weight_category'] ?? 0.20)));
+        $sanitized['fuzzy_weight_merchant'] = max(0, min(1, (float) ($input['fuzzy_weight_merchant'] ?? 0.10)));
+        $sanitized['fuzzy_weight_keywords'] = max(0, min(1, (float) ($input['fuzzy_weight_keywords'] ?? 0.05)));
+        
         // Display settings
-        $sanitized['disable_default_css'] = isset($input['disable_default_css']) ? 'yes' : 'no'; // NEU
+        $sanitized['disable_default_css'] = isset($input['disable_default_css']) ? 'yes' : 'no';
         $sanitized['grid_columns_desktop'] = max(1, min(6, (int) ($input['grid_columns_desktop'] ?? 3)));
         $sanitized['grid_columns_tablet'] = max(1, min(4, (int) ($input['grid_columns_tablet'] ?? 2)));
         $sanitized['grid_columns_mobile'] = max(1, min(2, (int) ($input['grid_columns_mobile'] ?? 1)));
@@ -200,6 +219,7 @@ final class YAA_Admin {
             .yaa-card h4 { margin: 15px 0 10px; color: #50575e; }
             .yaa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
             .yaa-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+            .yaa-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
             .yaa-status-badge { display: inline-block; padding: 4px 10px; border-radius: 3px; font-size: 12px; font-weight: 600; }
             .yaa-status-success { background: #d4edda; color: #155724; }
             .yaa-status-warning { background: #fff3cd; color: #856404; }
@@ -236,9 +256,15 @@ final class YAA_Admin {
             .yaa-tip strong { color: #826200; }
             .yaa-columns-2 { column-count: 2; column-gap: 30px; }
             .yaa-columns-3 { column-count: 3; column-gap: 20px; }
+            .yaa-feature-box { background: #f0faf0; border: 1px solid #c3e6c3; border-radius: 4px; padding: 15px; margin: 15px 0; }
+            .yaa-feature-box.warning { background: #fff8e5; border-color: #ffcc00; }
+            .yaa-feature-box.info { background: #f0f6fc; border-color: #c8d9e8; }
+            .yaa-stat-box { background: #f6f7f7; padding: 15px; border-radius: 8px; text-align: center; }
+            .yaa-stat-number { font-size: 2rem; font-weight: 700; line-height: 1.2; }
+            .yaa-stat-label { color: #50575e; font-size: 13px; margin-top: 5px; }
             @media (max-width: 782px) { 
                 .yaa-grid { grid-template-columns: 1fr; }
-                .yaa-grid-3 { grid-template-columns: 1fr; }
+                .yaa-grid-3, .yaa-grid-4 { grid-template-columns: 1fr; }
                 .yaa-columns-2, .yaa-columns-3 { column-count: 1; }
             }
         ';
@@ -383,7 +409,8 @@ final class YAA_Admin {
     
     /**
      * Render Yadore settings
-     * * @param array<string, mixed> $options
+     *
+     * @param array<string, mixed> $options
      * @param array<string, string> $markets
      */
     private function render_yadore_settings(array $options, array $markets): void {
@@ -473,7 +500,8 @@ final class YAA_Admin {
     
     /**
      * Render Amazon settings
-     * * @param array<string, mixed> $options
+     *
+     * @param array<string, mixed> $options
      * @param array<string, string> $marketplaces
      */
     private function render_amazon_settings(array $options, array $marketplaces): void {
@@ -624,7 +652,8 @@ final class YAA_Admin {
     
     /**
      * Render custom products settings
-     * * @param array<string, mixed> $options
+     *
+     * @param array<string, mixed> $options
      */
     private function render_custom_products_settings(array $options): void {
         $product_count = wp_count_posts(YAA_Custom_Products::get_post_type());
@@ -643,15 +672,15 @@ final class YAA_Admin {
             </p>
             
             <div class="yaa-grid" style="margin: 20px 0;">
-                <div style="background: #f0f6fc; padding: 20px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 2.5rem; font-weight: 700; color: #0073aa;"><?php echo (int) $published_count; ?></div>
-                    <div style="color: #50575e;">Veröffentlichte Produkte</div>
+                <div class="yaa-stat-box" style="background: #f0f6fc;">
+                    <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $published_count; ?></div>
+                    <div class="yaa-stat-label">Veröffentlichte Produkte</div>
                 </div>
-                <div style="background: #fef8ee; padding: 20px; border-radius: 8px; text-align: center;">
-                    <div style="font-size: 2.5rem; font-weight: 700; color: #996800;"><?php echo (int) $category_count; ?></div>
-                    <div style="color: #50575e;">Kategorien</div>
+                <div class="yaa-stat-box" style="background: #fef8ee;">
+                    <div class="yaa-stat-number" style="color: #996800;"><?php echo (int) $category_count; ?></div>
+                    <div class="yaa-stat-label">Kategorien</div>
                 </div>
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center;">
+                <div class="yaa-stat-box">
                     <a href="<?php echo admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" 
                        class="button button-primary button-hero" style="margin-top: 10px;">
                         ➕ Neues Produkt
@@ -670,6 +699,80 @@ final class YAA_Admin {
         </div>
         
         <div class="yaa-card">
+            <h2>🔍 Fuzzy-Suche Einstellungen</h2>
+            <p class="description">
+                Die Fuzzy-Suche findet eigene Produkte basierend auf ähnlichen Keywords, Titeln und Kategorien.
+            </p>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[enable_fuzzy_search]" value="yes" 
+                        <?php checked(($options['enable_fuzzy_search'] ?? 'yes'), 'yes'); ?>>
+                    <strong>Fuzzy-Suche aktivieren</strong>
+                </label>
+                <p class="description">
+                    Ermöglicht die Nutzung des <code>[fuzzy_products]</code> Shortcodes und der
+                    <code>keyword=""</code> Suche bei eigenen Produkten.
+                </p>
+            </div>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[fuzzy_auto_mix]" value="yes" 
+                        <?php checked(($options['fuzzy_auto_mix'] ?? 'no'), 'yes'); ?>>
+                    <strong>Automatisch eigene Produkte einmischen</strong>
+                </label>
+                <p class="description">
+                    Mischt automatisch passende eigene Produkte in Yadore/Amazon Suchergebnisse ein.
+                    Kann auch per Shortcode mit <code>mix_custom="yes"</code> aktiviert werden.
+                </p>
+            </div>
+            
+            <div class="yaa-form-row">
+                <label for="fuzzy_threshold">Mindest-Übereinstimmung (%)</label>
+                <input type="number" id="fuzzy_threshold" name="yaa_settings[fuzzy_threshold]" 
+                       value="<?php echo esc_attr($options['fuzzy_threshold'] ?? '30'); ?>"
+                       min="0" max="100" step="5" style="max-width: 100px;">
+                <p class="description">
+                    Produkte mit niedrigerem Score werden nicht angezeigt. Empfohlen: 25-40%
+                </p>
+            </div>
+            
+            <h4>Gewichtungen</h4>
+            <p class="description" style="margin-bottom: 15px;">Die Summe sollte ~1.0 (100%) ergeben.</p>
+            
+            <div class="yaa-grid-4">
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_title">Titel</label>
+                    <input type="number" id="fuzzy_weight_title" name="yaa_settings[fuzzy_weight_title]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_title'] ?? '0.40'); ?>"
+                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_description">Beschreibung</label>
+                    <input type="number" id="fuzzy_weight_description" name="yaa_settings[fuzzy_weight_description]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_description'] ?? '0.25'); ?>"
+                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_category">Kategorie</label>
+                    <input type="number" id="fuzzy_weight_category" name="yaa_settings[fuzzy_weight_category]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_category'] ?? '0.20'); ?>"
+                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_keywords">Keywords</label>
+                    <input type="number" id="fuzzy_weight_keywords" name="yaa_settings[fuzzy_weight_keywords]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_keywords'] ?? '0.05'); ?>"
+                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                </div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
             <h2>📝 Shortcodes für eigene Produkte</h2>
             
             <h4>Nach IDs anzeigen:</h4>
@@ -678,8 +781,21 @@ final class YAA_Admin {
             <h4>Nach Kategorie anzeigen:</h4>
             <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
             
+            <h4>Fuzzy-Suche:</h4>
+            <div class="yaa-shortcode-box">[fuzzy_products keyword="Kopfhörer" limit="6"]</div>
+            <div class="yaa-shortcode-box">[custom_products keyword="Smartphone" fuzzy="yes"]</div>
+            
+            <h4>Yadore/Amazon mit eigenen Produkten mischen:</h4>
+            <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" mix_custom="yes" custom_limit="2"]</div>
+            <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" mix_custom="yes" custom_position="alternate"]</div>
+            
             <h4>Kombiniert mit anderen Quellen:</h4>
-            <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" custom_ids="10,15" yadore_limit="4" amazon_limit="2"]</div>
+            <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" custom_fuzzy="yes" custom_limit="3"]</div>
+            
+            <div class="yaa-tip">
+                <strong>Tipp:</strong> Füge bei eigenen Produkten zusätzliche "Fuzzy-Keywords" hinzu, 
+                um die Trefferquote zu verbessern. Diese findest du im Produkt-Bearbeitungsformular.
+            </div>
         </div>
         
         <div class="yaa-card">
@@ -718,10 +834,12 @@ final class YAA_Admin {
     
     /**
      * Render cache settings
-     * * @param array<string, mixed> $options
+     *
+     * @param array<string, mixed> $options
      * @param array<string, mixed> $cache_status
      */
     private function render_cache_settings(array $options, array $cache_status): void {
+        $image_stats = $this->get_local_image_stats();
         ?>
         <div class="yaa-card">
             <h2>⚡ Cache-Einstellungen</h2>
@@ -768,6 +886,59 @@ final class YAA_Admin {
                         <?php endif; ?>
                     </table>
                 </div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🖼️ Lokale Bilderspeicherung</h2>
+            <p class="description">
+                Produktbilder können lokal gespeichert werden, um die Ladezeit zu verbessern und externe Anfragen zu reduzieren.
+            </p>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[enable_local_images]" value="yes" 
+                        <?php checked(($options['enable_local_images'] ?? 'yes'), 'yes'); ?>>
+                    <strong>Produktbilder lokal speichern</strong>
+                </label>
+                <p class="description">
+                    Lädt Produktbilder von Amazon/Yadore herunter und speichert sie unter 
+                    <code>/wp-content/uploads/yadore-amazon-api/</code>.
+                </p>
+            </div>
+            
+            <div class="yaa-feature-box">
+                <h4 style="margin-top: 0;">✅ Vorteile der lokalen Speicherung:</h4>
+                <ul style="margin: 10px 0 0 20px; list-style: disc;">
+                    <li>Schnellere Ladezeiten (keine externen Requests)</li>
+                    <li>Bessere DSGVO-Konformität (keine direkten Aufrufe zu Amazon)</li>
+                    <li>Bilder bleiben verfügbar, auch wenn API-Quellen sie ändern</li>
+                    <li>Kann im Shortcode überschrieben werden: <code>local_images="yes|no"</code></li>
+                </ul>
+            </div>
+            
+            <div class="yaa-grid" style="margin-top: 20px;">
+                <div class="yaa-stat-box" style="background: #f0f6fc;">
+                    <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $image_stats['count']; ?></div>
+                    <div class="yaa-stat-label">Gespeicherte Bilder</div>
+                </div>
+                <div class="yaa-stat-box" style="background: #fef8ee;">
+                    <div class="yaa-stat-number" style="color: #996800;"><?php echo esc_html($image_stats['size']); ?></div>
+                    <div class="yaa-stat-label">Speicherverbrauch</div>
+                </div>
+                <div class="yaa-stat-box">
+                    <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_images'), 'yaa_clear_images_nonce')); ?>" 
+                       class="button" 
+                       onclick="return confirm('Alle lokal gespeicherten Bilder löschen?');">
+                        🗑️ Bilder löschen
+                    </a>
+                </div>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>Shortcode-Override:</strong> Du kannst die Einstellung pro Shortcode überschreiben:<br>
+                <code>[amazon_products keyword="Laptop" local_images="no"]</code> – Bilder nicht lokal speichern<br>
+                <code>[yadore_products keyword="Smartphone" local_images="yes"]</code> – Bilder lokal speichern
             </div>
         </div>
         
@@ -831,8 +1002,48 @@ final class YAA_Admin {
     }
     
     /**
+     * Get local image statistics
+     *
+     * @return array{count: int, size: string}
+     */
+    private function get_local_image_stats(): array {
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+        
+        $count = 0;
+        $total_size = 0;
+        
+        if (is_dir($image_dir)) {
+            $files = glob($image_dir . '/*');
+            if ($files !== false) {
+                $count = count($files);
+                foreach ($files as $file) {
+                    if (is_file($file)) {
+                        $total_size += filesize($file);
+                    }
+                }
+            }
+        }
+        
+        // Format size
+        if ($total_size < 1024) {
+            $size = $total_size . ' B';
+        } elseif ($total_size < 1024 * 1024) {
+            $size = round($total_size / 1024, 1) . ' KB';
+        } else {
+            $size = round($total_size / (1024 * 1024), 2) . ' MB';
+        }
+        
+        return [
+            'count' => $count,
+            'size'  => $size,
+        ];
+    }
+    
+    /**
      * Render display settings
-     * * @param array<string, mixed> $options
+     *
+     * @param array<string, mixed> $options
      */
     private function render_display_settings(array $options): void {
         ?>
@@ -987,6 +1198,8 @@ final class YAA_Admin {
             "SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_%' AND option_name NOT LIKE '_transient_timeout_%'"
         );
         
+        $image_stats = $this->get_local_image_stats();
+        
         ?>
         <div class="wrap yaa-admin-wrap">
             <h1><?php esc_html_e('Cache & Status', 'yadore-amazon-api'); ?></h1>
@@ -1015,12 +1228,21 @@ final class YAA_Admin {
                             <td><strong>Nächster Cron:</strong></td>
                             <td><?php echo $next_cron ? esc_html(date_i18n('d.m.Y H:i', $next_cron)) : 'Nicht geplant'; ?></td>
                         </tr>
+                        <tr>
+                            <td><strong>Lokale Bilder:</strong></td>
+                            <td><?php echo (int) $image_stats['count']; ?> (<?php echo esc_html($image_stats['size']); ?>)</td>
+                        </tr>
                     </table>
                     
                     <p style="margin-top: 15px;">
                         <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_cache'), 'yaa_clear_cache_nonce')); ?>" 
                            class="button button-primary">
                             🗑️ Cache leeren
+                        </a>
+                        <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_images'), 'yaa_clear_images_nonce')); ?>" 
+                           class="button"
+                           onclick="return confirm('Alle lokal gespeicherten Bilder löschen?');">
+                            🖼️ Bilder löschen
                         </a>
                     </p>
                 </div>
@@ -1058,6 +1280,26 @@ final class YAA_Admin {
                                 <?php endif; ?>
                             </td>
                         </tr>
+                        <tr>
+                            <td><strong>Lokale Bilder:</strong></td>
+                            <td>
+                                <?php if (yaa_get_option('enable_local_images', 'yes') === 'yes'): ?>
+                                    <span class="yaa-status-badge yaa-status-success">✅ Aktiviert</span>
+                                <?php else: ?>
+                                    <span class="yaa-status-badge yaa-status-warning">⚠️ Deaktiviert</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Fuzzy-Suche:</strong></td>
+                            <td>
+                                <?php if (yaa_get_option('enable_fuzzy_search', 'yes') === 'yes'): ?>
+                                    <span class="yaa-status-badge yaa-status-success">✅ Aktiviert</span>
+                                <?php else: ?>
+                                    <span class="yaa-status-badge yaa-status-warning">⚠️ Deaktiviert</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
                     </table>
                 </div>
             </div>
@@ -1090,6 +1332,22 @@ final class YAA_Admin {
                                 <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
                             <?php else: ?>
                                 <span class="yaa-status-badge yaa-status-warning">Nicht installiert</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>Bild-Verzeichnis:</strong></td>
+                        <td>
+                            <?php 
+                            $upload_dir = wp_upload_dir();
+                            $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+                            if (is_dir($image_dir) && is_writable($image_dir)): ?>
+                                <span class="yaa-status-badge yaa-status-success">✅ Beschreibbar</span>
+                                <code style="margin-left: 10px;"><?php echo esc_html($image_dir); ?></code>
+                            <?php elseif (is_dir($image_dir)): ?>
+                                <span class="yaa-status-badge yaa-status-error">❌ Nicht beschreibbar</span>
+                            <?php else: ?>
+                                <span class="yaa-status-badge yaa-status-info">📁 Wird bei Bedarf erstellt</span>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1172,18 +1430,44 @@ final class YAA_Admin {
                 <h3>Yadore Produkte</h3>
                 <div class="yaa-shortcode-box">[yadore_products keyword="Smartphone" limit="9"]</div>
                 <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Kopfhörer" local_images="yes"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Monitor" mix_custom="yes" custom_limit="2"]</div>
                 
                 <h3>Amazon Produkte</h3>
                 <div class="yaa-shortcode-box">[amazon_products keyword="Laptop" category="Computers" limit="10"]</div>
                 <div class="yaa-shortcode-box">[amazon_products asins="B08N5WRWNW,B09V3KXJPB"]</div>
+                <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" local_images="no"]</div>
+                <div class="yaa-shortcode-box">[amazon_products keyword="Headset" mix_custom="yes" custom_position="alternate"]</div>
                 
                 <h3>Eigene Produkte</h3>
                 <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
                 <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
+                <div class="yaa-shortcode-box">[custom_products keyword="Kopfhörer" fuzzy="yes"]</div>
+                
+                <h3>Fuzzy-Suche</h3>
+                <div class="yaa-shortcode-box">[fuzzy_products keyword="Kopfhörer" limit="6"]</div>
+                <div class="yaa-shortcode-box">[fuzzy_products keywords="Laptop,Notebook,Computer" limit="9" threshold="25"]</div>
+                <div class="yaa-shortcode-box">[fuzzy_products keyword="Test" show_score="yes"]</div>
                 
                 <h3>Kombinierte Ansicht</h3>
                 <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" yadore_limit="6" amazon_limit="4" custom_ids="10,15"]</div>
+                <div class="yaa-shortcode-box">[combined_products keyword="Gaming" custom_fuzzy="yes" custom_limit="3"]</div>
                 <div class="yaa-shortcode-box">[all_products keyword="Smartphone" total_limit="12" priority="custom,yadore,amazon"]</div>
+                
+                <h3>Lokale Bilder</h3>
+                <div class="yaa-tip">
+                    <strong>local_images Attribut:</strong> Überschreibt die globale Einstellung pro Shortcode.<br>
+                    <code>local_images="yes"</code> – Bilder lokal speichern<br>
+                    <code>local_images="no"</code> – Original-URLs verwenden
+                </div>
+                
+                <h3>Eigene Produkte einmischen</h3>
+                <div class="yaa-tip">
+                    <strong>mix_custom Attribut:</strong> Mischt passende eigene Produkte ein.<br>
+                    <code>mix_custom="yes"</code> – Aktivieren<br>
+                    <code>custom_limit="3"</code> – Anzahl eigener Produkte<br>
+                    <code>custom_position="start|end|shuffle|alternate"</code> – Position
+                </div>
             </div>
             
             <div class="yaa-card">
@@ -1250,6 +1534,47 @@ define('WP_REDIS_PORT', 6379);
         set_transient('yaa_admin_notice', [
             'type'    => 'success', 
             'message' => __('Cache erfolgreich geleert!', 'yadore-amazon-api'),
+        ], 30);
+        
+        $redirect = wp_get_referer() ?: admin_url('admin.php?page=yaa-status');
+        wp_safe_redirect($redirect);
+        exit;
+    }
+    
+    /**
+     * Handle clear images action
+     */
+    public function handle_clear_images(): void {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Keine Berechtigung', 'yadore-amazon-api'));
+        }
+        
+        $nonce = $_GET['_wpnonce'] ?? '';
+        if (!wp_verify_nonce($nonce, 'yaa_clear_images_nonce')) {
+            wp_die(__('Sicherheitscheck fehlgeschlagen', 'yadore-amazon-api'));
+        }
+        
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+        
+        $deleted_count = 0;
+        
+        if (is_dir($image_dir)) {
+            $files = glob($image_dir . '/*');
+            if ($files !== false) {
+                foreach ($files as $file) {
+                    if (is_file($file)) {
+                        if (unlink($file)) {
+                            $deleted_count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        set_transient('yaa_admin_notice', [
+            'type'    => 'success', 
+            'message' => sprintf(__('%d Bilder erfolgreich gelöscht!', 'yadore-amazon-api'), $deleted_count),
         ], 30);
         
         $redirect = wp_get_referer() ?: admin_url('admin.php?page=yaa-status');
@@ -1368,11 +1693,13 @@ define('WP_REDIS_PORT', 6379);
     public function render_dashboard_widget(): void {
         $cache_status = $this->cache->get_status();
         $next_cron = wp_next_scheduled('yaa_cache_refresh_event');
+        $image_stats = $this->get_local_image_stats();
         
         echo '<table class="widefat striped" style="border:none;">';
         echo '<tr><td>Yadore API:</td><td>' . ($this->yadore_api->is_configured() ? '✅ Aktiv' : '❌') . '</td></tr>';
         echo '<tr><td>Amazon PA-API:</td><td>' . ($this->amazon_api->is_configured() ? '✅ Aktiv' : '❌') . '</td></tr>';
         echo '<tr><td>Cache:</td><td>' . esc_html($cache_status['cache_backend']) . '</td></tr>';
+        echo '<tr><td>Lokale Bilder:</td><td>' . (int) $image_stats['count'] . ' (' . esc_html($image_stats['size']) . ')</td></tr>';
         echo '<tr><td>Nächster Cron:</td><td>' . ($next_cron ? esc_html(date_i18n('d.m.Y H:i', $next_cron)) : '-') . '</td></tr>';
         echo '</table>';
         

@@ -1,7 +1,8 @@
 <?php
 /**
- * Shortcode Renderer - Erweitert mit eigenen Produkten & Multi-Keyword Support
+ * Shortcode Renderer - Mit Fuzzy-Suche für eigene Produkte
  * PHP 8.3+ compatible
+ * Version: 1.2.6
  */
 
 declare(strict_types=1);
@@ -17,6 +18,12 @@ final class YAA_Shortcode_Renderer {
     private YAA_Cache_Handler $cache;
     private YAA_Custom_Products $custom_products;
     
+    /** @var bool Ob Bilder lokal gespeichert werden sollen */
+    private bool $use_local_images;
+    
+    /** @var bool Ob Fuzzy-Suche global aktiviert ist */
+    private bool $fuzzy_enabled;
+    
     public function __construct(
         YAA_Yadore_API $yadore_api, 
         YAA_Amazon_PAAPI $amazon_api, 
@@ -28,27 +35,130 @@ final class YAA_Shortcode_Renderer {
         $this->cache = $cache;
         $this->custom_products = $custom_products;
         
+        $this->use_local_images = (yaa_get_option('enable_local_images', 'yes') === 'yes');
+        $this->fuzzy_enabled = (yaa_get_option('enable_fuzzy_search', 'yes') === 'yes');
+        
         // Register shortcodes
         add_shortcode('yaa_products', [$this, 'render_combined']);
         add_shortcode('yadore_products', [$this, 'render_yadore']);
         add_shortcode('amazon_products', [$this, 'render_amazon']);
         add_shortcode('combined_products', [$this, 'render_combined']);
-        add_shortcode('custom_products', [$this, 'render_custom']);      // NEU
-        add_shortcode('all_products', [$this, 'render_all_sources']);    // NEU
+        add_shortcode('custom_products', [$this, 'render_custom']);
+        add_shortcode('all_products', [$this, 'render_all_sources']);
+        add_shortcode('fuzzy_products', [$this, 'render_fuzzy']);  // NEU
     }
     
     /**
-     * Render Yadore products - ERWEITERT mit Multi-Keyword Support
+     * NEU: Render fuzzy search results from custom products
+     */
+    public function render_fuzzy(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'      => '',
+            'keywords'     => '',
+            'limit'        => 10,
+            'threshold'    => '',  // Leer = Plugin-Standard
+            'columns'      => '',
+            'class'        => '',
+            'local_images' => '',
+            'show_score'   => 'no',  // Debug: Score anzeigen
+        ], $atts, 'fuzzy_products');
+        
+        // Keywords ermitteln
+        $keywords = [];
+        
+        if (!empty($atts['keywords'])) {
+            $keywords = array_map('trim', explode(',', (string) $atts['keywords']));
+            $keywords = array_filter($keywords);
+        } elseif (!empty($atts['keyword'])) {
+            $keywords = [trim((string) $atts['keyword'])];
+        }
+        
+        if (empty($keywords)) {
+            return $this->render_error(__('Bitte keyword oder keywords angeben.', 'yadore-amazon-api'));
+        }
+        
+        $total_limit = (int) $atts['limit'];
+        $threshold = (string) $atts['threshold'] !== '' ? (int) $atts['threshold'] : null;
+        
+        $all_items = [];
+        
+        // Für jedes Keyword Fuzzy-Suche durchführen
+        if (count($keywords) === 1) {
+            $all_items = $this->custom_products->search_products_fuzzy(
+                $keywords[0],
+                $total_limit,
+                $threshold
+            );
+        } else {
+            // Multi-Keyword: Limit aufteilen
+            $per_keyword = (int) ceil($total_limit / count($keywords));
+            $collected = [];
+            
+            foreach ($keywords as $keyword) {
+                $results = $this->custom_products->search_products_fuzzy(
+                    $keyword,
+                    $per_keyword,
+                    $threshold
+                );
+                
+                // Duplikate vermeiden (basierend auf post_id)
+                foreach ($results as $item) {
+                    $pid = $item['post_id'] ?? 0;
+                    if (!isset($collected[$pid])) {
+                        $collected[$pid] = $item;
+                    } else {
+                        // Höheren Score behalten
+                        if (($item['_fuzzy_score'] ?? 0) > ($collected[$pid]['_fuzzy_score'] ?? 0)) {
+                            $collected[$pid] = $item;
+                        }
+                    }
+                }
+            }
+            
+            // Nach Score sortieren
+            $all_items = array_values($collected);
+            usort($all_items, fn($a, $b) => ($b['_fuzzy_score'] ?? 0) <=> ($a['_fuzzy_score'] ?? 0));
+            
+            // Limit anwenden
+            $all_items = array_slice($all_items, 0, $total_limit);
+        }
+        
+        if (empty($all_items)) {
+            return $this->render_empty();
+        }
+        
+        // Debug: Score in Beschreibung anzeigen
+        if ((string) $atts['show_score'] === 'yes') {
+            foreach ($all_items as &$item) {
+                $score = $item['_fuzzy_score'] ?? 0;
+                $item['description'] = sprintf(
+                    '[Score: %.1f%%] %s',
+                    $score,
+                    $item['description'] ?? ''
+                );
+            }
+            unset($item);
+        }
+        
+        return $this->render_grid($all_items, $atts);
+    }
+    
+    /**
+     * Render Yadore products - Mit optionalem Fuzzy-Mixing
      */
     public function render_yadore(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'    => '',
-            'keywords'   => '',  // NEU: Mehrere Keywords komma-separiert
-            'limit'      => (int) yaa_get_option('yadore_default_limit', 9),
-            'market'     => (string) yaa_get_option('yadore_market', 'de'),
-            'precision'  => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-            'columns'    => '',
-            'class'      => '',
+            'keyword'         => '',
+            'keywords'        => '',
+            'limit'           => (int) yaa_get_option('yadore_default_limit', 9),
+            'market'          => (string) yaa_get_option('yadore_market', 'de'),
+            'precision'       => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'columns'         => '',
+            'class'           => '',
+            'local_images'    => '',
+            'mix_custom'      => '',  // NEU: 'yes' = Fuzzy-Produkte einmischen
+            'custom_position' => 'start',  // NEU: 'start', 'end', 'shuffle'
+            'custom_limit'    => 2,   // NEU: Max. eigene Produkte
         ], $atts, 'yadore_products');
         
         if (!$this->yadore_api->is_configured()) {
@@ -59,11 +169,9 @@ final class YAA_Shortcode_Renderer {
         $keywords = [];
         
         if (!empty($atts['keywords'])) {
-            // Mehrere Keywords
             $keywords = array_map('trim', explode(',', (string) $atts['keywords']));
             $keywords = array_filter($keywords);
         } elseif (!empty($atts['keyword'])) {
-            // Einzelnes Keyword
             $keywords = [trim((string) $atts['keyword'])];
         }
         
@@ -75,7 +183,6 @@ final class YAA_Shortcode_Renderer {
         $items = [];
         
         if (count($keywords) === 1) {
-            // Einzelnes Keyword - normales Verhalten
             $result = $this->yadore_api->fetch([
                 'keyword'   => $keywords[0],
                 'limit'     => $total_limit,
@@ -87,9 +194,11 @@ final class YAA_Shortcode_Renderer {
                 $items = $result;
             }
         } else {
-            // Mehrere Keywords - Limit aufteilen
             $items = $this->fetch_multi_keywords($keywords, $total_limit, $atts);
         }
+        
+        // === NEU: Fuzzy Custom Products einmischen ===
+        $items = $this->maybe_mix_fuzzy_products($items, $keywords, $atts);
         
         if (empty($items)) {
             return $this->render_empty();
@@ -99,88 +208,24 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Fetch products for multiple keywords with distributed limit
-     * 
-     * @param array<string> $keywords
-     * @param array<string, mixed> $atts
-     * @return array<int, array<string, mixed>>
-     */
-    private function fetch_multi_keywords(array $keywords, int $total_limit, array $atts): array {
-        $keyword_count = count($keywords);
-        
-        // Gleichmäßig aufteilen, Rest dem ersten Keyword
-        $base_per_keyword = (int) floor($total_limit / $keyword_count);
-        $remainder = $total_limit % $keyword_count;
-        
-        $all_items = [];
-        $items_per_keyword = [];
-        
-        // Erst alle Anfragen durchführen
-        foreach ($keywords as $index => $keyword) {
-            $limit_for_this = $base_per_keyword;
-            
-            // Rest auf die ersten Keywords verteilen
-            if ($index < $remainder) {
-                $limit_for_this++;
-            }
-            
-            if ($limit_for_this <= 0) {
-                continue;
-            }
-            
-            $result = $this->yadore_api->fetch([
-                'keyword'   => $keyword,
-                'limit'     => $limit_for_this,
-                'market'    => (string) $atts['market'],
-                'precision' => (string) $atts['precision'],
-            ]);
-            
-            if (!is_wp_error($result) && !empty($result)) {
-                $items_per_keyword[$keyword] = $result;
-            }
-            
-            // Kleine Pause um API nicht zu überlasten
-            if ($index < $keyword_count - 1) {
-                usleep(200000); // 200ms
-            }
-        }
-        
-        // Wenn ein Keyword weniger liefert als erwartet, 
-        // können andere Keywords mehr bekommen
-        $collected = 0;
-        
-        foreach ($items_per_keyword as $keyword => $items) {
-            $remaining_slots = $total_limit - $collected;
-            $to_add = min(count($items), $remaining_slots);
-            
-            for ($i = 0; $i < $to_add; $i++) {
-                $all_items[] = $items[$i];
-                $collected++;
-            }
-            
-            if ($collected >= $total_limit) {
-                break;
-            }
-        }
-        
-        return $all_items;
-    }
-    
-    /**
-     * Render Amazon products
+     * Render Amazon products - Mit optionalem Fuzzy-Mixing
      */
     public function render_amazon(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'    => '',
-            'category'   => (string) yaa_get_option('amazon_default_category', 'All'),
-            'limit'      => 10,
-            'min_price'  => '',
-            'max_price'  => '',
-            'brand'      => '',
-            'sort'       => '',
-            'asins'      => '',
-            'columns'    => '',
-            'class'      => '',
+            'keyword'         => '',
+            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
+            'limit'           => 10,
+            'min_price'       => '',
+            'max_price'       => '',
+            'brand'           => '',
+            'sort'            => '',
+            'asins'           => '',
+            'columns'         => '',
+            'class'           => '',
+            'local_images'    => '',
+            'mix_custom'      => '',  // NEU
+            'custom_position' => 'start',
+            'custom_limit'    => 2,
         ], $atts, 'amazon_products');
         
         if (!$this->amazon_api->is_configured()) {
@@ -223,6 +268,12 @@ final class YAA_Shortcode_Renderer {
             return $this->render_error($items->get_error_message());
         }
         
+        // === NEU: Fuzzy Custom Products einmischen ===
+        $keyword = trim((string) $atts['keyword']);
+        if ($keyword !== '') {
+            $items = $this->maybe_mix_fuzzy_products($items, [$keyword], $atts);
+        }
+        
         if (empty($items)) {
             return $this->render_empty();
         }
@@ -231,16 +282,108 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
+     * NEU: Optionales Einmischen von Fuzzy-Produkten
+     * 
+     * @param array<int, array<string, mixed>> $items Bestehende Produkte
+     * @param array<string> $keywords Suchbegriffe
+     * @param array<string, mixed> $atts Shortcode Attribute
+     * @return array<int, array<string, mixed>>
+     */
+    private function maybe_mix_fuzzy_products(array $items, array $keywords, array $atts): array {
+        // Prüfen ob Mixing aktiviert ist
+        $mix_custom = $atts['mix_custom'] ?? '';
+        
+        // Global oder per Shortcode aktiviert?
+        $should_mix = ($mix_custom === 'yes') || 
+                      ($mix_custom === '' && $this->fuzzy_enabled && yaa_get_option('fuzzy_auto_mix', 'no') === 'yes');
+        
+        if (!$should_mix || empty($keywords)) {
+            return $items;
+        }
+        
+        $custom_limit = (int) ($atts['custom_limit'] ?? 2);
+        $position = $atts['custom_position'] ?? 'start';
+        
+        // Fuzzy-Suche für jeden Keyword
+        $fuzzy_items = [];
+        $per_keyword = (int) ceil($custom_limit / count($keywords));
+        
+        foreach ($keywords as $keyword) {
+            $results = $this->custom_products->search_products_fuzzy($keyword, $per_keyword);
+            $fuzzy_items = array_merge($fuzzy_items, $results);
+        }
+        
+        // Duplikate entfernen
+        $unique_fuzzy = [];
+        $seen_ids = [];
+        foreach ($fuzzy_items as $item) {
+            $pid = $item['post_id'] ?? 0;
+            if (!in_array($pid, $seen_ids, true)) {
+                $unique_fuzzy[] = $item;
+                $seen_ids[] = $pid;
+            }
+        }
+        
+        // Auf Limit beschränken
+        $unique_fuzzy = array_slice($unique_fuzzy, 0, $custom_limit);
+        
+        if (empty($unique_fuzzy)) {
+            return $items;
+        }
+        
+        // Position bestimmen
+        switch ($position) {
+            case 'start':
+                $items = array_merge($unique_fuzzy, $items);
+                break;
+            case 'end':
+                $items = array_merge($items, $unique_fuzzy);
+                break;
+            case 'shuffle':
+                $items = array_merge($items, $unique_fuzzy);
+                shuffle($items);
+                break;
+            case 'alternate':
+                // Abwechselnd einfügen
+                $result = [];
+                $fuzzy_index = 0;
+                $interval = max(1, (int) floor(count($items) / (count($unique_fuzzy) + 1)));
+                
+                foreach ($items as $i => $item) {
+                    if ($fuzzy_index < count($unique_fuzzy) && $i > 0 && $i % $interval === 0) {
+                        $result[] = $unique_fuzzy[$fuzzy_index];
+                        $fuzzy_index++;
+                    }
+                    $result[] = $item;
+                }
+                
+                // Restliche Fuzzy-Items am Ende
+                while ($fuzzy_index < count($unique_fuzzy)) {
+                    $result[] = $unique_fuzzy[$fuzzy_index];
+                    $fuzzy_index++;
+                }
+                
+                $items = $result;
+                break;
+        }
+        
+        return $items;
+    }
+    
+    /**
      * Render custom products
-     * NEU: Shortcode für eigene Produkte
      */
     public function render_custom(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'ids'      => '',      // Komma-separierte Post-IDs
-            'category' => '',      // Kategorie-Slug
-            'limit'    => 10,
-            'columns'  => '',
-            'class'    => '',
+            'ids'          => '',
+            'category'     => '',
+            'keyword'      => '',  // NEU: Fuzzy-Suche Keyword
+            'limit'        => 10,
+            'columns'      => '',
+            'class'        => '',
+            'local_images' => '',
+            'fuzzy'        => '',  // NEU: 'yes' für Fuzzy-Suche
+            'threshold'    => '',  // NEU: Fuzzy Threshold
         ], $atts, 'custom_products');
         
         $items = [];
@@ -250,6 +393,15 @@ final class YAA_Shortcode_Renderer {
             $ids = array_map('intval', explode(',', (string) $atts['ids']));
             $ids = array_filter($ids);
             $items = $this->custom_products->get_products_by_ids($ids);
+        }
+        // NEU: Fuzzy-Suche
+        elseif (!empty($atts['keyword']) && ($atts['fuzzy'] === 'yes' || $this->fuzzy_enabled)) {
+            $threshold = (string) $atts['threshold'] !== '' ? (int) $atts['threshold'] : null;
+            $items = $this->custom_products->search_products_fuzzy(
+                (string) $atts['keyword'],
+                (int) $atts['limit'],
+                $threshold
+            );
         }
         // Nach Kategorie laden
         elseif (!empty($atts['category'])) {
@@ -272,22 +424,23 @@ final class YAA_Shortcode_Renderer {
     
     /**
      * Render combined products (Yadore + Amazon + Custom)
-     * ERWEITERT mit eigenen Produkten
      */
     public function render_combined(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'       => '',
-            'keywords'      => '',  // NEU: Mehrere Yadore-Keywords
-            'yadore_limit'  => 6,
-            'amazon_limit'  => 4,
-            'custom_ids'    => '',  // NEU: IDs eigener Produkte
-            'custom_category' => '', // NEU: Kategorie eigener Produkte
-            'custom_limit'  => 0,   // NEU: Anzahl eigener Produkte
-            'market'        => (string) yaa_get_option('yadore_market', 'de'),
-            'category'      => (string) yaa_get_option('amazon_default_category', 'All'),
-            'shuffle'       => 'yes',
-            'columns'       => '',
-            'class'         => '',
+            'keyword'         => '',
+            'keywords'        => '',
+            'yadore_limit'    => 6,
+            'amazon_limit'    => 4,
+            'custom_ids'      => '',
+            'custom_category' => '',
+            'custom_limit'    => 0,
+            'custom_fuzzy'    => 'no',  // NEU: Fuzzy-Suche für eigene Produkte
+            'market'          => (string) yaa_get_option('yadore_market', 'de'),
+            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
+            'shuffle'         => 'yes',
+            'columns'         => '',
+            'class'           => '',
+            'local_images'    => '',
         ], $atts, 'combined_products');
         
         $combined = [];
@@ -295,11 +448,10 @@ final class YAA_Shortcode_Renderer {
         $amazon_limit = (int) $atts['amazon_limit'];
         $custom_limit = (int) $atts['custom_limit'];
         
-        // Keyword ermitteln
         $keyword = trim((string) $atts['keyword']);
         $keywords_string = trim((string) $atts['keywords']);
         
-        // 1. Eigene Produkte laden (haben Priorität)
+        // 1. Eigene Produkte laden
         if (!empty($atts['custom_ids'])) {
             $ids = array_map('intval', explode(',', (string) $atts['custom_ids']));
             $ids = array_filter($ids);
@@ -311,6 +463,15 @@ final class YAA_Shortcode_Renderer {
                 $custom_limit > 0 ? $custom_limit : 5
             );
             $combined = array_merge($combined, $custom_items);
+        } 
+        // NEU: Fuzzy-Suche für eigene Produkte
+        elseif ($atts['custom_fuzzy'] === 'yes' && ($keyword !== '' || $keywords_string !== '')) {
+            $search_term = $keyword !== '' ? $keyword : explode(',', $keywords_string)[0];
+            $custom_items = $this->custom_products->search_products_fuzzy(
+                trim($search_term),
+                $custom_limit > 0 ? $custom_limit : 3
+            );
+            $combined = array_merge($combined, $custom_items);
         } elseif ($custom_limit > 0) {
             $custom_items = $this->custom_products->get_all_products($custom_limit);
             $combined = array_merge($combined, $custom_items);
@@ -319,7 +480,6 @@ final class YAA_Shortcode_Renderer {
         // 2. Yadore Produkte laden
         if ($this->yadore_api->is_configured() && $yadore_limit > 0 && ($keyword !== '' || $keywords_string !== '')) {
             if ($keywords_string !== '') {
-                // Multi-Keyword
                 $keywords = array_map('trim', explode(',', $keywords_string));
                 $keywords = array_filter($keywords);
                 $yadore_items = $this->fetch_multi_keywords($keywords, $yadore_limit, [
@@ -327,7 +487,6 @@ final class YAA_Shortcode_Renderer {
                     'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'),
                 ]);
             } else {
-                // Single Keyword
                 $yadore_items = $this->yadore_api->fetch([
                     'keyword' => $keyword,
                     'limit'   => $yadore_limit,
@@ -361,7 +520,6 @@ final class YAA_Shortcode_Renderer {
             return $this->render_empty();
         }
         
-        // Shuffle wenn aktiviert
         if ((string) $atts['shuffle'] === 'yes') {
             shuffle($combined);
         }
@@ -371,28 +529,28 @@ final class YAA_Shortcode_Renderer {
     
     /**
      * Render all sources combined
-     * NEU: Shortcode der alle Quellen intelligent kombiniert
      */
     public function render_all_sources(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'       => '',
-            'keywords'      => '',
-            'total_limit'   => 12,
-            'custom_ids'    => '',
+            'keyword'         => '',
+            'keywords'        => '',
+            'total_limit'     => 12,
+            'custom_ids'      => '',
             'custom_category' => '',
-            'market'        => (string) yaa_get_option('yadore_market', 'de'),
-            'category'      => (string) yaa_get_option('amazon_default_category', 'All'),
-            'priority'      => 'custom,yadore,amazon', // Reihenfolge der Quellen
-            'shuffle'       => 'no',
-            'columns'       => '',
-            'class'         => '',
+            'custom_fuzzy'    => 'no',  // NEU
+            'market'          => (string) yaa_get_option('yadore_market', 'de'),
+            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
+            'priority'        => 'custom,yadore,amazon',
+            'shuffle'         => 'no',
+            'columns'         => '',
+            'class'           => '',
+            'local_images'    => '',
         ], $atts, 'all_products');
         
         $total_limit = (int) $atts['total_limit'];
         $combined = [];
         $remaining = $total_limit;
         
-        // Priority-Reihenfolge parsen
         $priorities = array_map('trim', explode(',', (string) $atts['priority']));
         
         foreach ($priorities as $source) {
@@ -412,6 +570,13 @@ final class YAA_Shortcode_Renderer {
                             (string) $atts['custom_category'],
                             $remaining
                         );
+                    } 
+                    // NEU: Fuzzy
+                    elseif ($atts['custom_fuzzy'] === 'yes') {
+                        $keyword = trim((string) $atts['keyword']);
+                        if ($keyword !== '') {
+                            $items = $this->custom_products->search_products_fuzzy($keyword, $remaining);
+                        }
                     } else {
                         $items = $this->custom_products->get_all_products($remaining);
                     }
@@ -469,7 +634,6 @@ final class YAA_Shortcode_Renderer {
             return $this->render_empty();
         }
         
-        // Shuffle wenn aktiviert
         if ((string) $atts['shuffle'] === 'yes') {
             shuffle($combined);
         }
@@ -478,7 +642,107 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
+     * Fetch products for multiple keywords with distributed limit
+     * 
+     * @param array<string> $keywords
+     * @param array<string, mixed> $atts
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetch_multi_keywords(array $keywords, int $total_limit, array $atts): array {
+        $keyword_count = count($keywords);
+        $base_per_keyword = (int) floor($total_limit / $keyword_count);
+        $remainder = $total_limit % $keyword_count;
+        
+        $all_items = [];
+        $items_per_keyword = [];
+        
+        foreach ($keywords as $index => $keyword) {
+            $limit_for_this = $base_per_keyword;
+            
+            if ($index < $remainder) {
+                $limit_for_this++;
+            }
+            
+            if ($limit_for_this <= 0) {
+                continue;
+            }
+            
+            $result = $this->yadore_api->fetch([
+                'keyword'   => $keyword,
+                'limit'     => $limit_for_this,
+                'market'    => (string) $atts['market'],
+                'precision' => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+            ]);
+            
+            if (!is_wp_error($result) && !empty($result)) {
+                $items_per_keyword[$keyword] = $result;
+            }
+            
+            if ($index < $keyword_count - 1) {
+                usleep(200000);
+            }
+        }
+        
+        $collected = 0;
+        
+        foreach ($items_per_keyword as $keyword => $items) {
+            $remaining_slots = $total_limit - $collected;
+            $to_add = min(count($items), $remaining_slots);
+            
+            for ($i = 0; $i < $to_add; $i++) {
+                $all_items[] = $items[$i];
+                $collected++;
+            }
+            
+            if ($collected >= $total_limit) {
+                break;
+            }
+        }
+        
+        return $all_items;
+    }
+    
+    /**
+     * Process image URL
+     */
+    private function process_image_url(string $remote_url, string $unique_id, string $source, array $atts = []): string {
+        if ($remote_url === '') {
+            return '';
+        }
+        
+        $local_images_override = $atts['local_images'] ?? '';
+        
+        $use_local = $this->use_local_images;
+        
+        if ($local_images_override === 'yes') {
+            $use_local = true;
+        } elseif ($local_images_override === 'no') {
+            $use_local = false;
+        }
+        
+        if ($source === 'custom') {
+            $upload_dir = wp_upload_dir();
+            $site_url = get_site_url();
+            
+            if (str_starts_with($remote_url, $upload_dir['baseurl']) || str_starts_with($remote_url, $site_url)) {
+                return $remote_url;
+            }
+        }
+        
+        if (!$use_local) {
+            return $remote_url;
+        }
+        
+        $file_id = $source . '_' . sanitize_file_name($unique_id);
+        
+        return YAA_Image_Handler::process($remote_url, $file_id);
+    }
+    
+    /**
      * Render the product grid
+     * 
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string, mixed> $atts
      */
     private function render_grid(array $items, array $atts): string {
         $widget_id = 'yaa-' . uniqid();
@@ -498,6 +762,8 @@ final class YAA_Shortcode_Renderer {
         $show_prime = yaa_get_option('show_prime_badge', 'yes') === 'yes';
         $show_merchant = yaa_get_option('show_merchant', 'yes') === 'yes';
         $show_description = yaa_get_option('show_description', 'yes') === 'yes';
+        $show_custom_badge = yaa_get_option('show_custom_badge', 'yes') === 'yes';
+        $custom_badge_text = (string) yaa_get_option('custom_badge_text', 'Empfohlen');
         $button_yadore = (string) yaa_get_option('button_text_yadore', 'Zum Angebot');
         $button_amazon = (string) yaa_get_option('button_text_amazon', 'Bei Amazon kaufen');
         $button_custom = (string) yaa_get_option('button_text_custom', 'Zum Angebot');
@@ -514,7 +780,19 @@ final class YAA_Shortcode_Renderer {
                 $is_amazon = $source === 'amazon';
                 $is_custom = $source === 'custom';
                 $url = $item['url'] ?? '#';
-                $image_url = $item['image']['url'] ?? '';
+                
+                // Bild-Verarbeitung
+                $raw_image_url = $item['image']['url'] ?? '';
+                
+                $image_unique_id = match($source) {
+                    'amazon' => $item['asin'] ?? $item['id'] ?? uniqid('amz_'),
+                    'custom' => (string) ($item['post_id'] ?? $item['id'] ?? uniqid('cst_')),
+                    'yadore' => $item['id'] ?? uniqid('ydr_'),
+                    default  => $item['id'] ?? uniqid('img_'),
+                };
+                
+                $image_url = $this->process_image_url($raw_image_url, $image_unique_id, $source, $atts);
+                
                 $title = $item['title'] ?? '';
                 $description = $item['description'] ?? '';
                 $price_amount = $item['price']['amount'] ?? '';
@@ -523,7 +801,6 @@ final class YAA_Shortcode_Renderer {
                 $merchant_name = $item['merchant']['name'] ?? '';
                 $is_prime = !empty($item['is_prime']);
                 
-                // Button-Text ermitteln
                 $custom_button = $item['button_text'] ?? '';
                 if ($custom_button !== '') {
                     $button_text = $custom_button;
@@ -535,7 +812,6 @@ final class YAA_Shortcode_Renderer {
                     $button_text = $button_yadore;
                 }
                 
-                // CSS-Klasse basierend auf Quelle
                 $source_class = 'yaa-' . $source;
             ?>
                 <div class="yaa-item <?php echo esc_attr($source_class); ?>">
@@ -544,8 +820,8 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-prime-badge">Prime</span>
                     <?php endif; ?>
                     
-                    <?php if ($is_custom): ?>
-                        <span class="yaa-custom-badge"><?php esc_html_e('Empfohlen', 'yadore-amazon-api'); ?></span>
+                    <?php if ($is_custom && $show_custom_badge): ?>
+                        <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
                     <div class="yaa-image-wrapper">
@@ -575,7 +851,12 @@ final class YAA_Shortcode_Renderer {
                                 <div class="yaa-description" id="desc-<?php echo esc_attr($widget_id . '-' . $index); ?>">
                                     <?php echo esc_html($description); ?>
                                 </div>
-                                <button type="button" class="yaa-read-more" data-target="<?php echo esc_attr($widget_id . '-' . $index); ?>">
+                                <button type="button" class="yaa-read-more" 
+                                        data-target="<?php echo esc_attr($widget_id . '-' . $index); ?>"
+                                        data-expand-text="<?php esc_attr_e('mehr lesen', 'yadore-amazon-api'); ?>"
+                                        data-collapse-text="<?php esc_attr_e('weniger', 'yadore-amazon-api'); ?>"
+                                        aria-expanded="false"
+                                        role="button">
                                     <?php esc_html_e('mehr lesen', 'yadore-amazon-api'); ?>
                                 </button>
                             </div>
@@ -590,7 +871,7 @@ final class YAA_Shortcode_Renderer {
                                     if ($price_display !== '') {
                                         echo esc_html($price_display);
                                     } else {
-                                        echo number_format((float) $price_amount, 2, ',', '.') . ' ' . esc_html($price_currency);
+                                        echo esc_html(number_format((float) $price_amount, 2, ',', '.') . ' ' . $price_currency);
                                     }
                                     ?>
                                 </span>
