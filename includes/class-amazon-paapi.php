@@ -2,6 +2,7 @@
 /**
  * Amazon Product Advertising API 5.0 Handler
  * PHP 8.3+ compatible with ALL marketplaces
+ * Version: 1.2.7
  * 
  * @see https://webservices.amazon.com/paapi5/documentation/
  */
@@ -227,7 +228,7 @@ final class YAA_Amazon_PAAPI {
     ];
     
     /**
-     * Search indexes for DE marketplace (example - varies by marketplace)
+     * Search indexes for DE marketplace
      */
     private const SEARCH_INDEXES_DE = [
         'All'                     => 'Alle Kategorien',
@@ -276,7 +277,7 @@ final class YAA_Amazon_PAAPI {
     ];
     
     /**
-     * Generic search indexes (available in most marketplaces)
+     * Generic search indexes
      */
     private const SEARCH_INDEXES_GENERIC = [
         'All', 'Apparel', 'Appliances', 'Automotive', 'Baby', 'Beauty', 'Books',
@@ -322,7 +323,6 @@ final class YAA_Amazon_PAAPI {
             $this->region = self::ENDPOINTS[$marketplace]['region'];
             $this->marketplace = $marketplace;
         } else {
-            // Default to Germany
             $this->host = self::ENDPOINTS['de']['host'];
             $this->region = self::ENDPOINTS['de']['region'];
             $this->marketplace = 'de';
@@ -399,12 +399,10 @@ final class YAA_Amazon_PAAPI {
      * @return array<string, string>
      */
     public function get_search_indexes(): array {
-        // Return German-specific indexes if German marketplace
         if ($this->marketplace === 'de') {
             return self::SEARCH_INDEXES_DE;
         }
         
-        // Return generic indexes for other marketplaces
         $indexes = [];
         foreach (self::SEARCH_INDEXES_GENERIC as $index) {
             $indexes[$index] = $index;
@@ -450,7 +448,7 @@ final class YAA_Amazon_PAAPI {
             return $cached;
         }
         
-        // Build payload
+        // Build payload - Request ALL image sizes for fallback
         $payload = [
             'Keywords'    => $keyword,
             'SearchIndex' => $category,
@@ -458,8 +456,13 @@ final class YAA_Amazon_PAAPI {
             'PartnerTag'  => $this->partner_tag,
             'PartnerType' => 'Associates',
             'Resources'   => [
+                // Request all image sizes for fallback chain
                 'Images.Primary.Large',
                 'Images.Primary.Medium',
+                'Images.Primary.Small',
+                'Images.Variants.Large',
+                'Images.Variants.Medium',
+                'Images.Variants.Small',
                 'ItemInfo.Title',
                 'ItemInfo.Features',
                 'ItemInfo.ProductInfo',
@@ -544,6 +547,9 @@ final class YAA_Amazon_PAAPI {
             'Resources'   => [
                 'Images.Primary.Large',
                 'Images.Primary.Medium',
+                'Images.Primary.Small',
+                'Images.Variants.Large',
+                'Images.Variants.Medium',
                 'ItemInfo.Title',
                 'ItemInfo.Features',
                 'ItemInfo.ProductInfo',
@@ -636,7 +642,6 @@ final class YAA_Amazon_PAAPI {
         $content_type = 'application/json; charset=utf-8';
         $amz_target = 'com.amazon.paapi5.v1.ProductAdvertisingAPIv1.' . $operation;
         
-        // Canonical headers (must be sorted)
         $canonical_headers = 
             'content-encoding:amz-1.0' . "\n" .
             'content-type:' . $content_type . "\n" .
@@ -646,18 +651,16 @@ final class YAA_Amazon_PAAPI {
         
         $signed_headers = 'content-encoding;content-type;host;x-amz-date;x-amz-target';
         
-        // Canonical request
         $payload_hash = hash('sha256', $payload);
         $canonical_request = implode("\n", [
             $method,
             $path,
-            '', // Query string
+            '',
             $canonical_headers,
             $signed_headers,
             $payload_hash,
         ]);
         
-        // String to sign
         $algorithm = 'AWS4-HMAC-SHA256';
         $credential_scope = $date . '/' . $this->region . '/' . $service . '/aws4_request';
         $string_to_sign = implode("\n", [
@@ -667,11 +670,9 @@ final class YAA_Amazon_PAAPI {
             hash('sha256', $canonical_request),
         ]);
         
-        // Signing key
         $signing_key = $this->get_signature_key($date, $service);
         $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
         
-        // Authorization header
         $authorization = $algorithm . ' ' .
             'Credential=' . $this->access_key . '/' . $credential_scope . ', ' .
             'SignedHeaders=' . $signed_headers . ', ' .
@@ -737,12 +738,56 @@ final class YAA_Amazon_PAAPI {
     
     /**
      * Normalize item to standard format
+     * INCLUDES: Fallback image chain (Large → Medium → Small → Variants)
      * 
      * @param array<string, mixed> $item
      * @return array<string, mixed>
      */
     private function normalize_item(array $item): array {
         $marketplace_info = self::ENDPOINTS[$this->marketplace] ?? self::ENDPOINTS['de'];
+        
+        // === FALLBACK-BILDERKETTE ===
+        // Versuche verschiedene Bildgrößen in Reihenfolge
+        $image_url = '';
+        $image_width = 0;
+        $image_height = 0;
+        
+        // 1. Primary Large
+        if (!empty($item['Images']['Primary']['Large']['URL'])) {
+            $image_url = $item['Images']['Primary']['Large']['URL'];
+            $image_width = $item['Images']['Primary']['Large']['Width'] ?? 0;
+            $image_height = $item['Images']['Primary']['Large']['Height'] ?? 0;
+        }
+        // 2. Primary Medium
+        elseif (!empty($item['Images']['Primary']['Medium']['URL'])) {
+            $image_url = $item['Images']['Primary']['Medium']['URL'];
+            $image_width = $item['Images']['Primary']['Medium']['Width'] ?? 0;
+            $image_height = $item['Images']['Primary']['Medium']['Height'] ?? 0;
+        }
+        // 3. Primary Small
+        elseif (!empty($item['Images']['Primary']['Small']['URL'])) {
+            $image_url = $item['Images']['Primary']['Small']['URL'];
+            $image_width = $item['Images']['Primary']['Small']['Width'] ?? 0;
+            $image_height = $item['Images']['Primary']['Small']['Height'] ?? 0;
+        }
+        // 4. First Variant Large
+        elseif (!empty($item['Images']['Variants'][0]['Large']['URL'])) {
+            $image_url = $item['Images']['Variants'][0]['Large']['URL'];
+            $image_width = $item['Images']['Variants'][0]['Large']['Width'] ?? 0;
+            $image_height = $item['Images']['Variants'][0]['Large']['Height'] ?? 0;
+        }
+        // 5. First Variant Medium
+        elseif (!empty($item['Images']['Variants'][0]['Medium']['URL'])) {
+            $image_url = $item['Images']['Variants'][0]['Medium']['URL'];
+            $image_width = $item['Images']['Variants'][0]['Medium']['Width'] ?? 0;
+            $image_height = $item['Images']['Variants'][0]['Medium']['Height'] ?? 0;
+        }
+        // 6. First Variant Small
+        elseif (!empty($item['Images']['Variants'][0]['Small']['URL'])) {
+            $image_url = $item['Images']['Variants'][0]['Small']['URL'];
+            $image_width = $item['Images']['Variants'][0]['Small']['Width'] ?? 0;
+            $image_height = $item['Images']['Variants'][0]['Small']['Height'] ?? 0;
+        }
         
         $normalized = [
             'id'          => $item['ASIN'] ?? uniqid('amazon_'),
@@ -751,11 +796,9 @@ final class YAA_Amazon_PAAPI {
             'description' => '',
             'url'         => $item['DetailPageURL'] ?? '',
             'image'       => [
-                'url'    => $item['Images']['Primary']['Large']['URL'] 
-                         ?? $item['Images']['Primary']['Medium']['URL'] 
-                         ?? '',
-                'width'  => $item['Images']['Primary']['Large']['Width'] ?? 0,
-                'height' => $item['Images']['Primary']['Large']['Height'] ?? 0,
+                'url'    => $image_url,
+                'width'  => $image_width,
+                'height' => $image_height,
             ],
             'price'       => [
                 'amount'   => '',

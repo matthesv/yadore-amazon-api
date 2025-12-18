@@ -1,7 +1,13 @@
 /**
  * Yadore-Amazon-API Frontend JavaScript
  * Version 1.2.7 - PHP 8.3+ compatible
- * Added: Image 404 Error Handling
+ * 
+ * Features:
+ * - Read More/Less Toggle
+ * - Lazy Load Fallback
+ * - Accessibility Enhancements
+ * - Image 404 Error Handling
+ * - Public API
  */
 
 (function() {
@@ -14,7 +20,7 @@
         initReadMoreButtons();
         initLazyLoadImages();
         initAccessibilityEnhancements();
-        initImageErrorHandling(); // NEU: 404-Bilder abfangen
+        initImageErrorHandling();
     });
 
     /**
@@ -123,17 +129,27 @@
     }
 
     /**
-     * NEU: Initialize image error handling for 404 images
-     * Replaces broken images with a CSS placeholder
+     * Initialize image error handling for 404/broken images
+     * Creates CSS placeholder when image fails to load
      */
     function initImageErrorHandling() {
         const images = document.querySelectorAll('.yaa-image-wrapper img');
         
         images.forEach(function(img) {
             // Handle images that are already broken (cached or immediate 404)
-            if (img.complete && img.naturalWidth === 0) {
-                handleBrokenImage(img);
+            if (img.complete) {
+                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+                    handleBrokenImage(img);
+                } else {
+                    // Image loaded successfully
+                    img.classList.add('yaa-img-loaded');
+                }
             }
+            
+            // Handle future load events
+            img.addEventListener('load', function() {
+                img.classList.add('yaa-img-loaded');
+            });
             
             // Handle future errors (async loading)
             img.addEventListener('error', function() {
@@ -143,7 +159,7 @@
     }
 
     /**
-     * NEU: Handle a broken/404 image
+     * Handle a broken/404 image
      * Hides the image and shows a CSS placeholder
      * @param {HTMLImageElement} img
      */
@@ -164,6 +180,7 @@
         
         // Hide the broken image
         img.style.display = 'none';
+        img.style.visibility = 'hidden';
         
         // Check if placeholder already exists
         if (wrapper.querySelector('.yaa-placeholder')) {
@@ -174,6 +191,20 @@
         const placeholder = document.createElement('div');
         placeholder.className = 'yaa-placeholder';
         placeholder.setAttribute('aria-hidden', 'true');
+        placeholder.setAttribute('role', 'img');
+        placeholder.setAttribute('aria-label', 'Bild nicht verfügbar');
+        
+        // Determine source type for colored placeholder
+        const item = wrapper.closest('.yaa-item');
+        if (item) {
+            if (item.classList.contains('yaa-amazon')) {
+                placeholder.classList.add('yaa-placeholder-amazon');
+            } else if (item.classList.contains('yaa-custom')) {
+                placeholder.classList.add('yaa-placeholder-custom');
+            } else if (item.classList.contains('yaa-yadore')) {
+                placeholder.classList.add('yaa-placeholder-yadore');
+            }
+        }
         
         // Insert placeholder (inside the link if exists, otherwise directly)
         const link = wrapper.querySelector('a');
@@ -181,6 +212,11 @@
             link.appendChild(placeholder);
         } else {
             wrapper.appendChild(placeholder);
+        }
+        
+        // Log error for debugging (optional)
+        if (window.console && img.src) {
+            console.warn('YAA: Image failed to load:', img.src);
         }
     }
 
@@ -196,6 +232,9 @@
             }
             if (!button.hasAttribute('role')) {
                 button.setAttribute('role', 'button');
+            }
+            if (!button.hasAttribute('tabindex')) {
+                button.setAttribute('tabindex', '0');
             }
         });
 
@@ -233,21 +272,33 @@
     };
 
     /**
-     * Refresh all read more buttons (useful after AJAX content load)
+     * Refresh all components (useful after AJAX content load)
      */
     window.YAA.refresh = function() {
         initReadMoreButtons();
         initLazyLoadImages();
         initAccessibilityEnhancements();
-        initImageErrorHandling(); // NEU: Auch Error Handling neu initialisieren
+        initImageErrorHandling();
     };
 
     /**
-     * NEU: Manually check all images for errors
+     * Manually check all images for errors
      * Useful after dynamically loading content
      */
     window.YAA.checkImages = function() {
         initImageErrorHandling();
+    };
+
+    /**
+     * Force re-check of a specific image
+     * @param {HTMLImageElement} img - The image element to check
+     */
+    window.YAA.recheckImage = function(img) {
+        if (img && img.tagName === 'IMG') {
+            if (img.complete && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
+                handleBrokenImage(img);
+            }
+        }
     };
 
     /**
@@ -273,9 +324,49 @@
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
             isAmazon: item.classList.contains('yaa-amazon'),
+            isCustom: item.classList.contains('yaa-custom'),
+            isYadore: item.classList.contains('yaa-yadore'),
             isPrime: item.querySelector('.yaa-prime-badge') !== null,
-            hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false // NEU
+            hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
+            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false
         };
+    };
+
+    /**
+     * Get all products in a container
+     * @param {string|HTMLElement} container - Container selector or element
+     * @returns {Array} Array of product data objects
+     */
+    window.YAA.getAllProducts = function(container) {
+        let containerEl = container;
+        
+        if (typeof container === 'string') {
+            containerEl = document.querySelector(container);
+        }
+        
+        if (!containerEl) {
+            containerEl = document;
+        }
+        
+        const items = containerEl.querySelectorAll('.yaa-item');
+        const products = [];
+        
+        items.forEach(function(item) {
+            const data = window.YAA.getProductData(item);
+            if (data) {
+                products.push(data);
+            }
+        });
+        
+        return products;
+    };
+
+    /**
+     * Get count of broken images
+     * @returns {number}
+     */
+    window.YAA.getBrokenImageCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper.yaa-image-error').length;
     };
 
 })();

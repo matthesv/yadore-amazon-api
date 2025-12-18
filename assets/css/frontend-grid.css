@@ -1,6 +1,14 @@
 /**
  * Yadore-Amazon-API Frontend Grid Styles
- * Version 1.0.0 - PHP 8.3+ compatible
+ * Version 1.2.7 - PHP 8.3+ compatible
+ * 
+ * Features:
+ * - CSS Custom Properties
+ * - Responsive Grid
+ * - Glassmorphism Design
+ * - Image Error Placeholders
+ * - Accessibility Support
+ * - Dark/Light Mode
  */
 
 /* =========================================
@@ -10,6 +18,7 @@
     --yaa-primary: #ff00cc;
     --yaa-secondary: #00ffff;
     --yaa-amazon: #ff9900;
+    --yaa-custom: #4CAF50;
     --yaa-dark-bg: #0a0a0a;
     --yaa-glass-bg: rgba(255, 255, 255, 0.05);
     --yaa-glass-border: rgba(255, 255, 255, 0.1);
@@ -56,6 +65,10 @@
     border-bottom-color: var(--yaa-amazon);
 }
 
+.yaa-item.yaa-custom {
+    border-bottom-color: var(--yaa-custom);
+}
+
 /* Hover Effects */
 .yaa-item:hover {
     transform: translateY(-8px);
@@ -77,6 +90,12 @@
         0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 80%);
 }
 
+.yaa-item.yaa-custom:hover {
+    box-shadow: 
+        0 15px 40px rgba(0, 0, 0, 0.4),
+        0 0 30px color-mix(in srgb, var(--yaa-custom), transparent 80%);
+}
+
 /* =========================================
  * PRIME BADGE
  * ========================================= */
@@ -94,6 +113,32 @@
     letter-spacing: 0.5px;
     z-index: 10;
     box-shadow: 0 2px 8px rgba(255, 153, 0, 0.4);
+}
+
+/* =========================================
+ * CUSTOM BADGE
+ * ========================================= */
+.yaa-custom-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: var(--yaa-custom);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
+}
+
+/* When Prime AND Custom Badge exist */
+.yaa-item.yaa-custom .yaa-prime-badge {
+    top: 12px;
+    left: auto;
+    right: 12px;
 }
 
 /* =========================================
@@ -129,6 +174,11 @@
     filter: brightness(0.95) saturate(0.95) drop-shadow(0 4px 20px rgba(0, 0, 0, 0.5));
 }
 
+/* Image loaded state */
+.yaa-image-wrapper img.yaa-img-loaded {
+    opacity: 1;
+}
+
 .yaa-item:hover .yaa-image-wrapper img {
     transform: scale(1.08);
     filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 0, 204, 0.3));
@@ -138,7 +188,11 @@
     filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 153, 0, 0.3));
 }
 
-/* No Image Placeholder */
+.yaa-item.yaa-custom:hover .yaa-image-wrapper img {
+    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(76, 175, 80, 0.3));
+}
+
+/* No Image Placeholder (static - when no URL provided) */
 .yaa-no-image {
     position: absolute;
     top: 0;
@@ -154,6 +208,77 @@
 .yaa-no-image span {
     font-size: 4rem;
     opacity: 0.3;
+}
+
+/* =========================================
+ * IMAGE ERROR / 404 PLACEHOLDER (JavaScript-generated)
+ * ========================================= */
+
+/* Wrapper with broken image */
+.yaa-image-wrapper.yaa-image-error {
+    background: linear-gradient(135deg, 
+        rgba(30, 30, 30, 0.6) 0%, 
+        rgba(20, 20, 20, 0.8) 100%);
+}
+
+/* CSS-only Placeholder (inserted by JS) */
+.yaa-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, 
+        rgba(30, 30, 30, 0.95) 0%, 
+        rgba(20, 20, 20, 0.98) 100%);
+    border-radius: inherit;
+}
+
+/* Placeholder Icon (CSS-generated SVG) */
+.yaa-placeholder::before {
+    content: "";
+    width: 80px;
+    height: 80px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='20' width='70' height='50' rx='6' stroke='%23555' stroke-width='3'/%3E%3Ccircle cx='35' cy='38' r='8' stroke='%23555' stroke-width='2'/%3E%3Cpath d='M20 60 L38 45 L52 55 L72 35 L85 50 L85 65 L15 65 Z' fill='%23444' opacity='0.8'/%3E%3Cline x1='50' y1='75' x2='50' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3Cline x1='40' y1='85' x2='60' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+/* Placeholder Text */
+.yaa-placeholder::after {
+    content: "Bild nicht verfügbar";
+    margin-top: 15px;
+    font-size: 0.7rem;
+    color: var(--yaa-text-muted, #666);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    white-space: nowrap;
+    opacity: 0.4;
+}
+
+/* Hover effect on placeholder */
+.yaa-item:hover .yaa-placeholder::before {
+    opacity: 0.7;
+}
+
+/* Source-specific placeholder colors */
+.yaa-placeholder-amazon::before {
+    filter: sepia(100%) saturate(300%) hue-rotate(350deg);
+}
+
+.yaa-placeholder-custom::before {
+    filter: sepia(100%) saturate(300%) hue-rotate(80deg);
+}
+
+.yaa-placeholder-yadore::before {
+    filter: sepia(100%) saturate(300%) hue-rotate(280deg);
 }
 
 /* =========================================
@@ -199,6 +324,11 @@
 .yaa-item.yaa-amazon .yaa-title a:hover {
     color: var(--yaa-amazon);
     text-shadow: 0 0 15px rgba(255, 153, 0, 0.5);
+}
+
+.yaa-item.yaa-custom .yaa-title a:hover {
+    color: var(--yaa-custom);
+    text-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
 }
 
 /* =========================================
@@ -276,6 +406,10 @@
     color: var(--yaa-amazon);
 }
 
+.yaa-item.yaa-custom .yaa-read-more {
+    color: var(--yaa-custom);
+}
+
 .yaa-no-description {
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.3);
@@ -317,6 +451,16 @@
     background-clip: text;
 }
 
+.yaa-item.yaa-custom .yaa-price {
+    background: linear-gradient(135deg, 
+        var(--yaa-custom) 0%, 
+        #81C784 50%, 
+        var(--yaa-custom) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
 @keyframes yaa-price-glow {
     0%, 100% { background-position: 0% center; }
     50% { background-position: 100% center; }
@@ -337,6 +481,10 @@
 
 .yaa-item.yaa-amazon .yaa-merchant::before {
     color: var(--yaa-amazon);
+}
+
+.yaa-item.yaa-custom .yaa-merchant::before {
+    color: var(--yaa-custom);
 }
 
 /* =========================================
@@ -398,336 +546,13 @@
     box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 30%);
 }
 
-/* =========================================
- * MESSAGE STATES (Error/Empty)
- * ========================================= */
-.yaa-message {
-    text-align: center;
-    padding: 50px 30px;
-    background: var(--yaa-glass-bg);
-    border: 1px solid var(--yaa-glass-border);
-    border-radius: 12px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-}
-
-.yaa-message .yaa-icon {
-    display: block;
-    font-size: 3rem;
-    margin-bottom: 15px;
-    filter: drop-shadow(0 0 15px var(--yaa-primary));
-    animation: yaa-pulse 2s infinite ease-in-out;
-}
-
-.yaa-message p {
-    margin: 0;
-    font-size: 1.1rem;
-    color: var(--yaa-text-main);
-}
-
-.yaa-error .yaa-icon {
-    filter: drop-shadow(0 0 15px #ff4444);
-}
-
-@keyframes yaa-pulse {
-    0%, 100% { 
-        filter: drop-shadow(0 0 10px var(--yaa-primary)); 
-        transform: scale(1);
-    }
-    50% { 
-        filter: drop-shadow(0 0 20px var(--yaa-secondary)); 
-        transform: scale(1.05);
-    }
-}
-
-/* =========================================
- * RESPONSIVE DESIGN
- * ========================================= */
-@media (max-width: 1400px) {
-    .yaa-grid-container {
-        grid-template-columns: repeat(var(--yaa-columns-desktop), 1fr);
-    }
-}
-
-@media (max-width: 1024px) {
-    .yaa-grid-container {
-        grid-template-columns: repeat(var(--yaa-columns-tablet), 1fr);
-        gap: 20px;
-    }
-}
-
-@media (max-width: 600px) {
-    .yaa-grid-container {
-        grid-template-columns: repeat(var(--yaa-columns-mobile), 1fr);
-        gap: 20px;
-    }
-    
-    .yaa-title {
-        font-size: 1rem;
-    }
-    
-    .yaa-price {
-        font-size: 1.4rem;
-    }
-    
-    .yaa-content {
-        padding: 15px;
-    }
-    
-    .yaa-button {
-        padding: 12px 18px;
-        font-size: 0.75rem;
-    }
-    
-    .yaa-description {
-        font-size: 0.8rem;
-    }
-    
-    .yaa-prime-badge {
-        top: 8px;
-        left: 8px;
-        font-size: 0.6rem;
-        padding: 3px 8px;
-    }
-}
-
-/* Large screens */
-@media (min-width: 1600px) {
-    .yaa-grid-container {
-        gap: 30px;
-    }
-    
-    .yaa-title {
-        font-size: 1.15rem;
-    }
-    
-    .yaa-price {
-        font-size: 1.8rem;
-    }
-}
-
-/* =========================================
- * ACCESSIBILITY
- * ========================================= */
-@media (prefers-reduced-motion: reduce) {
-    .yaa-item,
-    .yaa-image-wrapper img,
-    .yaa-button,
-    .yaa-description,
-    .yaa-read-more::after {
-        transition: none;
-    }
-    
-    .yaa-price,
-    .yaa-message .yaa-icon {
-        animation: none;
-    }
-}
-
-/* Focus styles for keyboard navigation */
-.yaa-button:focus,
-.yaa-read-more:focus,
-.yaa-title a:focus,
-.yaa-image-wrapper a:focus {
-    outline: 2px solid var(--yaa-secondary);
-    outline-offset: 2px;
-}
-
-/* High contrast mode */
-@media (prefers-contrast: high) {
-    .yaa-item {
-        border-width: 2px;
-    }
-    
-    .yaa-button {
-        border-width: 3px;
-    }
-}
-
-/* Dark mode support (if system prefers) */
-@media (prefers-color-scheme: light) {
-    .yaa-grid-container {
-        --yaa-glass-bg: rgba(0, 0, 0, 0.03);
-        --yaa-glass-border: rgba(0, 0, 0, 0.1);
-        --yaa-text-main: #1a1a1a;
-        --yaa-text-muted: #666666;
-    }
-    
-    .yaa-description::after {
-        background: linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.95) 100%);
-    }
-}
-/* =========================================
- * CUSTOM PRODUCTS STYLES
- * ========================================= */
-
-/* Custom Product Card */
-.yaa-item.yaa-custom {
-    border-bottom-color: var(--yaa-custom, #4CAF50);
-}
-
-.yaa-item.yaa-custom:hover {
-    box-shadow: 
-        0 15px 40px rgba(0, 0, 0, 0.4),
-        0 0 30px color-mix(in srgb, var(--yaa-custom, #4CAF50), transparent 80%);
-}
-
-/* Custom Badge */
-.yaa-custom-badge {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    background: var(--yaa-custom, #4CAF50);
-    color: #fff;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    z-index: 10;
-    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
-}
-
-/* Wenn Prime UND Custom Badge vorhanden */
-.yaa-item.yaa-custom .yaa-prime-badge {
-    top: 12px;
-    left: auto;
-    right: 12px;
-}
-
 /* Custom Button */
 .yaa-item.yaa-custom .yaa-button {
-    border-color: var(--yaa-custom, #4CAF50);
-    color: var(--yaa-custom, #4CAF50);
+    border-color: var(--yaa-custom);
+    color: var(--yaa-custom);
 }
 
 .yaa-item.yaa-custom .yaa-button:hover {
-    background-color: var(--yaa-custom, #4CAF50);
+    background-color: var(--yaa-custom);
     color: #fff;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-custom, #4CAF50), transparent 30%);
-}
-
-/* Custom Title Hover */
-.yaa-item.yaa-custom .yaa-title a:hover {
-    color: var(--yaa-custom, #4CAF50);
-    text-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
-}
-
-/* Custom Merchant */
-.yaa-item.yaa-custom .yaa-merchant::before {
-    color: var(--yaa-custom, #4CAF50);
-}
-
-/* Custom Price */
-.yaa-item.yaa-custom .yaa-price {
-    background: linear-gradient(135deg, 
-        var(--yaa-custom, #4CAF50) 0%, 
-        #81C784 50%, 
-        var(--yaa-custom, #4CAF50) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-/* =========================================
- * IMAGE ERROR / 404 PLACEHOLDER
- * ========================================= */
-
-/* Wrapper with broken image */
-.yaa-image-wrapper.yaa-image-error {
-    background: linear-gradient(135deg, 
-        rgba(255, 255, 255, 0.03) 0%, 
-        rgba(255, 255, 255, 0.01) 100%);
-}
-
-/* CSS-only Placeholder */
-.yaa-placeholder {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, 
-        rgba(30, 30, 30, 0.8) 0%, 
-        rgba(20, 20, 20, 0.9) 100%);
-    border-radius: inherit;
-}
-
-/* Placeholder Icon (CSS-generated) */
-.yaa-placeholder::before {
-    content: "";
-    width: 80px;
-    height: 80px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='25' width='70' height='50' rx='4' stroke='%23555' stroke-width='3'/%3E%3Ccircle cx='35' cy='42' r='8' stroke='%23555' stroke-width='2'/%3E%3Cpath d='M20 65 L40 50 L55 60 L75 40 L85 55 L85 70 L15 70 L15 65 Z' fill='%23444'/%3E%3Cline x1='50' y1='80' x2='50' y2='90' stroke='%23555' stroke-width='3'/%3E%3Cline x1='40' y1='90' x2='60' y2='90' stroke='%23555' stroke-width='3'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
-    opacity: 0.6;
-    transition: opacity 0.3s ease;
-}
-
-/* Placeholder Text */
-.yaa-placeholder::after {
-    content: "Bild nicht verfügbar";
-    position: absolute;
-    bottom: 20%;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 0.7rem;
-    color: var(--yaa-text-muted, #666);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    white-space: nowrap;
-    opacity: 0.5;
-}
-
-/* Hover effect on placeholder */
-.yaa-item:hover .yaa-placeholder::before {
-    opacity: 0.8;
-}
-
-/* Light mode support */
-@media (prefers-color-scheme: light) {
-    .yaa-image-wrapper.yaa-image-error {
-        background: linear-gradient(135deg, 
-            rgba(0, 0, 0, 0.02) 0%, 
-            rgba(0, 0, 0, 0.04) 100%);
-    }
-    
-    .yaa-placeholder {
-        background: linear-gradient(135deg, 
-            rgba(240, 240, 240, 0.95) 0%, 
-            rgba(230, 230, 230, 0.98) 100%);
-    }
-    
-    .yaa-placeholder::before {
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='25' width='70' height='50' rx='4' stroke='%23bbb' stroke-width='3'/%3E%3Ccircle cx='35' cy='42' r='8' stroke='%23bbb' stroke-width='2'/%3E%3Cpath d='M20 65 L40 50 L55 60 L75 40 L85 55 L85 70 L15 70 L15 65 Z' fill='%23ddd'/%3E%3Cline x1='50' y1='80' x2='50' y2='90' stroke='%23bbb' stroke-width='3'/%3E%3Cline x1='40' y1='90' x2='60' y2='90' stroke='%23bbb' stroke-width='3'/%3E%3C/svg%3E");
-    }
-    
-    .yaa-placeholder::after {
-        color: #999;
-    }
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-    .yaa-placeholder::before {
-        transition: none;
-    }
-}
-
-/* Responsive adjustments */
-@media (max-width: 600px) {
-    .yaa-placeholder::before {
-        width: 60px;
-        height: 60px;
-    }
-    
-    .yaa-placeholder::after {
-        font-size: 0.6rem;
-        bottom: 15%;
-    }
-}
+    box-shadow: 0 0 30px color-mix(in
