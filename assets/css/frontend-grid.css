@@ -629,3 +629,105 @@
     -webkit-background-clip: text;
     background-clip: text;
 }
+/* =========================================
+ * IMAGE ERROR / 404 PLACEHOLDER
+ * ========================================= */
+
+/* Wrapper with broken image */
+.yaa-image-wrapper.yaa-image-error {
+    background: linear-gradient(135deg, 
+        rgba(255, 255, 255, 0.03) 0%, 
+        rgba(255, 255, 255, 0.01) 100%);
+}
+
+/* CSS-only Placeholder */
+.yaa-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, 
+        rgba(30, 30, 30, 0.8) 0%, 
+        rgba(20, 20, 20, 0.9) 100%);
+    border-radius: inherit;
+}
+
+/* Placeholder Icon (CSS-generated) */
+.yaa-placeholder::before {
+    content: "";
+    width: 80px;
+    height: 80px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='25' width='70' height='50' rx='4' stroke='%23555' stroke-width='3'/%3E%3Ccircle cx='35' cy='42' r='8' stroke='%23555' stroke-width='2'/%3E%3Cpath d='M20 65 L40 50 L55 60 L75 40 L85 55 L85 70 L15 70 L15 65 Z' fill='%23444'/%3E%3Cline x1='50' y1='80' x2='50' y2='90' stroke='%23555' stroke-width='3'/%3E%3Cline x1='40' y1='90' x2='60' y2='90' stroke='%23555' stroke-width='3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+}
+
+/* Placeholder Text */
+.yaa-placeholder::after {
+    content: "Bild nicht verfügbar";
+    position: absolute;
+    bottom: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--yaa-text-muted, #666);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    opacity: 0.5;
+}
+
+/* Hover effect on placeholder */
+.yaa-item:hover .yaa-placeholder::before {
+    opacity: 0.8;
+}
+
+/* Light mode support */
+@media (prefers-color-scheme: light) {
+    .yaa-image-wrapper.yaa-image-error {
+        background: linear-gradient(135deg, 
+            rgba(0, 0, 0, 0.02) 0%, 
+            rgba(0, 0, 0, 0.04) 100%);
+    }
+    
+    .yaa-placeholder {
+        background: linear-gradient(135deg, 
+            rgba(240, 240, 240, 0.95) 0%, 
+            rgba(230, 230, 230, 0.98) 100%);
+    }
+    
+    .yaa-placeholder::before {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='25' width='70' height='50' rx='4' stroke='%23bbb' stroke-width='3'/%3E%3Ccircle cx='35' cy='42' r='8' stroke='%23bbb' stroke-width='2'/%3E%3Cpath d='M20 65 L40 50 L55 60 L75 40 L85 55 L85 70 L15 70 L15 65 Z' fill='%23ddd'/%3E%3Cline x1='50' y1='80' x2='50' y2='90' stroke='%23bbb' stroke-width='3'/%3E%3Cline x1='40' y1='90' x2='60' y2='90' stroke='%23bbb' stroke-width='3'/%3E%3C/svg%3E");
+    }
+    
+    .yaa-placeholder::after {
+        color: #999;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .yaa-placeholder::before {
+        transition: none;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .yaa-placeholder::before {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .yaa-placeholder::after {
+        font-size: 0.6rem;
+        bottom: 15%;
+    }
+}

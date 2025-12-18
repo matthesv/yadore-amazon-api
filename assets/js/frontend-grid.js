@@ -1,6 +1,7 @@
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.0.0 - PHP 8.3+ compatible
+ * Version 1.2.7 - PHP 8.3+ compatible
+ * Added: Image 404 Error Handling
  */
 
 (function() {
@@ -13,6 +14,7 @@
         initReadMoreButtons();
         initLazyLoadImages();
         initAccessibilityEnhancements();
+        initImageErrorHandling(); // NEU: 404-Bilder abfangen
     });
 
     /**
@@ -121,6 +123,68 @@
     }
 
     /**
+     * NEU: Initialize image error handling for 404 images
+     * Replaces broken images with a CSS placeholder
+     */
+    function initImageErrorHandling() {
+        const images = document.querySelectorAll('.yaa-image-wrapper img');
+        
+        images.forEach(function(img) {
+            // Handle images that are already broken (cached or immediate 404)
+            if (img.complete && img.naturalWidth === 0) {
+                handleBrokenImage(img);
+            }
+            
+            // Handle future errors (async loading)
+            img.addEventListener('error', function() {
+                handleBrokenImage(img);
+            });
+        });
+    }
+
+    /**
+     * NEU: Handle a broken/404 image
+     * Hides the image and shows a CSS placeholder
+     * @param {HTMLImageElement} img
+     */
+    function handleBrokenImage(img) {
+        const wrapper = img.closest('.yaa-image-wrapper');
+        
+        if (!wrapper) {
+            return;
+        }
+        
+        // Prevent multiple executions
+        if (wrapper.classList.contains('yaa-image-error')) {
+            return;
+        }
+        
+        // Mark wrapper as having an error
+        wrapper.classList.add('yaa-image-error');
+        
+        // Hide the broken image
+        img.style.display = 'none';
+        
+        // Check if placeholder already exists
+        if (wrapper.querySelector('.yaa-placeholder')) {
+            return;
+        }
+        
+        // Create CSS placeholder element
+        const placeholder = document.createElement('div');
+        placeholder.className = 'yaa-placeholder';
+        placeholder.setAttribute('aria-hidden', 'true');
+        
+        // Insert placeholder (inside the link if exists, otherwise directly)
+        const link = wrapper.querySelector('a');
+        if (link) {
+            link.appendChild(placeholder);
+        } else {
+            wrapper.appendChild(placeholder);
+        }
+    }
+
+    /**
      * Initialize accessibility enhancements
      */
     function initAccessibilityEnhancements() {
@@ -175,6 +239,15 @@
         initReadMoreButtons();
         initLazyLoadImages();
         initAccessibilityEnhancements();
+        initImageErrorHandling(); // NEU: Auch Error Handling neu initialisieren
+    };
+
+    /**
+     * NEU: Manually check all images for errors
+     * Useful after dynamically loading content
+     */
+    window.YAA.checkImages = function() {
+        initImageErrorHandling();
     };
 
     /**
@@ -191,6 +264,7 @@
         const priceElement = item.querySelector('.yaa-price');
         const merchantElement = item.querySelector('.yaa-merchant');
         const imageElement = item.querySelector('.yaa-image-wrapper img');
+        const wrapper = item.querySelector('.yaa-image-wrapper');
 
         return {
             title: titleElement ? titleElement.textContent.trim() : '',
@@ -199,7 +273,8 @@
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
             isAmazon: item.classList.contains('yaa-amazon'),
-            isPrime: item.querySelector('.yaa-prime-badge') !== null
+            isPrime: item.querySelector('.yaa-prime-badge') !== null,
+            hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false // NEU
         };
     };
 
