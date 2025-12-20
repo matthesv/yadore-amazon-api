@@ -4,12 +4,10 @@
  * Handles downloading remote images and serving local versions.
  * Includes validation, retry mechanism, SEO filenames, and admin logging.
  * 
- * Version: 1.2.9
+ * Version: 1.3.1
  * PHP 8.3+ compatible
  * 
- * NEU in 1.2.9:
- * - SEO-optimierte Dateinamen (erste 30 Zeichen Produktname + Timestamp)
- * - Einstellung für Dateiname-Format (SEO oder ID)
+ * FIX 1.3.1: Fehlende Methoden get_image_library() und can_resize_images() hinzugefügt
  */
 
 declare(strict_types=1);
@@ -39,6 +37,53 @@ class YAA_Image_Handler {
      * Max characters for SEO filename (product name part)
      */
     private const SEO_NAME_MAX_LENGTH = 30;
+    
+    /**
+     * Image size limits for resizing
+     */
+    private const IMAGE_SIZES = [
+        'Large'  => 500,
+        'Medium' => 160,
+        'Small'  => 75,
+    ];
+
+    /**
+     * Check if image resizing is available
+     * 
+     * @return bool True if GD or Imagick is available
+     */
+    public static function can_resize_images(): bool {
+        return self::get_image_library() !== 'None';
+    }
+
+    /**
+     * Get the available image processing library
+     * 
+     * @return string 'Imagick', 'GD', or 'None'
+     */
+    public static function get_image_library(): string {
+        // Check for Imagick first (generally better quality)
+        if (extension_loaded('imagick') && class_exists('Imagick')) {
+            return 'Imagick';
+        }
+        
+        // Check for GD
+        if (extension_loaded('gd') && function_exists('imagecreatetruecolor')) {
+            return 'GD';
+        }
+        
+        return 'None';
+    }
+
+    /**
+     * Get the max dimension for a given size setting
+     * 
+     * @param string $size 'Large', 'Medium', or 'Small'
+     * @return int Max dimension in pixels
+     */
+    public static function get_max_dimension(string $size = 'Large'): int {
+        return self::IMAGE_SIZES[$size] ?? self::IMAGE_SIZES['Large'];
+    }
 
     /**
      * Process an image: Download if not exists, return local URL.
@@ -170,10 +215,156 @@ class YAA_Image_Handler {
             return self::get_placeholder_url();
         }
 
-        // 13. Clear retry counter on success
+        // 13. Optional: Resize image if enabled
+        $resize_enabled = function_exists('yaa_get_option') 
+            ? yaa_get_option('image_resize_enabled', 'yes') === 'yes' 
+            : false;
+        
+        if ($resize_enabled && self::can_resize_images()) {
+            $preferred_size = function_exists('yaa_get_option') 
+                ? yaa_get_option('preferred_image_size', 'Large') 
+                : 'Large';
+            
+            self::resize_image($file_path, $preferred_size);
+        }
+
+        // 14. Clear retry counter on success
         self::clear_retry_counter($remote_url);
 
         return $file_url;
+    }
+
+    /**
+     * Resize an image to fit within max dimensions
+     * 
+     * @param string $file_path Path to the image file
+     * @param string $size_setting Size setting ('Large', 'Medium', 'Small')
+     * @return bool True on success
+     */
+    public static function resize_image(string $file_path, string $size_setting = 'Large'): bool {
+        if (!file_exists($file_path)) {
+            return false;
+        }
+
+        $max_dimension = self::get_max_dimension($size_setting);
+        $library = self::get_image_library();
+
+        if ($library === 'None') {
+            return false;
+        }
+
+        // Get current dimensions
+        $image_info = @getimagesize($file_path);
+        if ($image_info === false) {
+            return false;
+        }
+
+        $width = $image_info[0];
+        $height = $image_info[1];
+        $mime = $image_info['mime'] ?? '';
+
+        // Check if resize is needed
+        if ($width <= $max_dimension && $height <= $max_dimension) {
+            return true; // Already small enough
+        }
+
+        // Calculate new dimensions (maintain aspect ratio)
+        if ($width > $height) {
+            $new_width = $max_dimension;
+            $new_height = (int) round(($height / $width) * $max_dimension);
+        } else {
+            $new_height = $max_dimension;
+            $new_width = (int) round(($width / $height) * $max_dimension);
+        }
+
+        // Resize based on available library
+        if ($library === 'Imagick') {
+            return self::resize_with_imagick($file_path, $new_width, $new_height);
+        } else {
+            return self::resize_with_gd($file_path, $new_width, $new_height, $mime);
+        }
+    }
+
+    /**
+     * Resize image using Imagick
+     */
+    private static function resize_with_imagick(string $file_path, int $width, int $height): bool {
+        try {
+            $imagick = new \Imagick($file_path);
+            $imagick->resizeImage($width, $height, \Imagick::FILTER_LANCZOS, 1);
+            $imagick->setImageCompressionQuality(85);
+            $imagick->stripImage(); // Remove metadata
+            $result = $imagick->writeImage($file_path);
+            $imagick->destroy();
+            return $result;
+        } catch (\Exception $e) {
+            error_log('YAA Imagick resize error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Resize image using GD
+     */
+    private static function resize_with_gd(string $file_path, int $width, int $height, string $mime): bool {
+        try {
+            // Create image resource based on type
+            $source = match($mime) {
+                'image/jpeg' => @imagecreatefromjpeg($file_path),
+                'image/png'  => @imagecreatefrompng($file_path),
+                'image/gif'  => @imagecreatefromgif($file_path),
+                'image/webp' => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($file_path) : false,
+                default      => false,
+            };
+
+            if ($source === false) {
+                return false;
+            }
+
+            $source_width = imagesx($source);
+            $source_height = imagesy($source);
+
+            // Create destination image
+            $dest = imagecreatetruecolor($width, $height);
+            
+            if ($dest === false) {
+                imagedestroy($source);
+                return false;
+            }
+
+            // Handle transparency for PNG and GIF
+            if ($mime === 'image/png' || $mime === 'image/gif') {
+                imagealphablending($dest, false);
+                imagesavealpha($dest, true);
+                $transparent = imagecolorallocatealpha($dest, 0, 0, 0, 127);
+                imagefill($dest, 0, 0, $transparent);
+            }
+
+            // Resample
+            imagecopyresampled(
+                $dest, $source,
+                0, 0, 0, 0,
+                $width, $height,
+                $source_width, $source_height
+            );
+
+            // Save based on type
+            $result = match($mime) {
+                'image/jpeg' => imagejpeg($dest, $file_path, 85),
+                'image/png'  => imagepng($dest, $file_path, 6),
+                'image/gif'  => imagegif($dest, $file_path),
+                'image/webp' => function_exists('imagewebp') ? imagewebp($dest, $file_path, 85) : false,
+                default      => false,
+            };
+
+            imagedestroy($source);
+            imagedestroy($dest);
+
+            return $result;
+        } catch (\Exception $e) {
+            error_log('YAA GD resize error: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**

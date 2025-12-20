@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.2.10
+ * Version: 1.4.0
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -11,7 +11,7 @@
  * Requires at least: 6.0
  * Requires PHP: 8.1
  * License: GPL v2 or later
- * * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
+ * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
  */
 
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.2.10');
+define('YAA_VERSION', '1.4.0');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -58,17 +58,47 @@ function yaa_get_fallback_time(): int {
 }
 
 // =========================================
-// AUTOLOAD CLASSES
+// AUTOLOADER
 // =========================================
-require_once YAA_PLUGIN_PATH . 'includes/class-cache-handler.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-image-handler.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-fuzzy-matcher.php'; 
-require_once YAA_PLUGIN_PATH . 'includes/class-yadore-api.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-amazon-paapi.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-custom-products.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-shortcode-renderer.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
-require_once YAA_PLUGIN_PATH . 'includes/class-merchant-filter.php';
+
+// Autoloader zuerst laden (manuell, da er sich nicht selbst laden kann)
+require_once YAA_PLUGIN_PATH . 'includes/class-autoloader.php';
+
+// Autoloader registrieren
+YAA_Autoloader::register(YAA_PLUGIN_PATH);
+
+// Admin-Verzeichnis zum Autoloader hinzufügen
+YAA_Autoloader::add_directory('includes/admin');
+
+// =========================================
+// LEGACY REQUIRES (für Klassen die noch nicht migriert wurden)
+// Diese können nach und nach entfernt werden, sobald der Autoloader greift
+// =========================================
+
+// Core-Klassen die immer benötigt werden
+// Der Autoloader lädt diese automatisch, aber wir können sie auch explizit laden
+// für bessere Kontrolle über die Ladereihenfolge
+
+// Hinweis: Die folgenden require_once Statements sind optional
+// wenn der Autoloader korrekt funktioniert. Sie dienen als Fallback.
+
+/*
+ * Liste der Kern-Klassen (werden durch Autoloader geladen):
+ * - YAA_Cache_Handler
+ * - YAA_Image_Handler
+ * - YAA_Fuzzy_Matcher
+ * - YAA_Yadore_API
+ * - YAA_Amazon_PAAPI
+ * - YAA_Custom_Products
+ * - YAA_Shortcode_Renderer
+ * - YAA_Merchant_Filter
+ * - YAA_Admin (Koordinator)
+ * - YAA_Admin_Settings
+ * - YAA_Admin_Ajax
+ * - YAA_Admin_Status
+ * - YAA_Admin_Docs
+ * - YAA_Admin_Merchants (NEU: Händlerübersicht mit CPC)
+ */
 
 // =========================================
 // PLUGIN UPDATE CHECKER (GitHub)
@@ -92,6 +122,7 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
+ * Version 1.4.0 - Mit Autoloader Support
  */
 final class Yadore_Amazon_API_Plugin {
     
@@ -117,6 +148,7 @@ final class Yadore_Amazon_API_Plugin {
     }
     
     private function init_components(): void {
+        // Core Components (werden durch Autoloader geladen)
         $this->cache           = new YAA_Cache_Handler();
         $this->yadore_api      = new YAA_Yadore_API($this->cache);
         $this->amazon_api      = new YAA_Amazon_PAAPI($this->cache);
@@ -127,7 +159,9 @@ final class Yadore_Amazon_API_Plugin {
             $this->cache,
             $this->custom_products
         );
-        $this->admin           = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
+        
+        // Admin Component (koordiniert alle Admin-Submodule)
+        $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
     
     private function register_hooks(): void {
@@ -156,7 +190,7 @@ final class Yadore_Amazon_API_Plugin {
             'amazon_marketplace'     => 'de',
             'amazon_default_category'=> 'All',
             'amazon_language'        => '',
-            'amazon_image_size'      => 'Large', // NEU: Bildgröße
+            'amazon_image_size'      => 'Large',
             
             // Cache Settings
             'cache_duration'         => 6,
@@ -169,7 +203,7 @@ final class Yadore_Amazon_API_Plugin {
             
             // Local Image Storage
             'enable_local_images'    => 'yes',
-            'image_filename_format'  => 'seo', // NEU: 'seo' oder 'id'
+            'image_filename_format'  => 'seo',
             
             // Fuzzy Search settings
             'enable_fuzzy_search'    => 'yes',
@@ -207,6 +241,12 @@ final class Yadore_Amazon_API_Plugin {
         $merged = array_merge($defaults, $existing);
         update_option('yaa_settings', $merged);
         
+        // Admin-Verzeichnis erstellen
+        $admin_dir = YAA_PLUGIN_PATH . 'includes/admin';
+        if (!is_dir($admin_dir)) {
+            wp_mkdir_p($admin_dir);
+        }
+        
         // Schedule cron
         if (!wp_next_scheduled('yaa_cache_refresh_event')) {
             wp_schedule_event(time(), 'twicedaily', 'yaa_cache_refresh_event');
@@ -227,7 +267,6 @@ final class Yadore_Amazon_API_Plugin {
             return;
         }
         
-        // Erweiterte Shortcode-Liste
         $shortcodes = [
             'yaa_products', 
             'yadore_products', 
@@ -255,7 +294,6 @@ final class Yadore_Amazon_API_Plugin {
     public function load_assets(): void {
         $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
 
-        // 1. Wenn CSS NICHT deaktiviert ist, laden wir das volle Stylesheet
         if (!$disable_css) {
             wp_enqueue_style(
                 'yaa-frontend-grid',
@@ -264,7 +302,6 @@ final class Yadore_Amazon_API_Plugin {
                 YAA_VERSION
             );
             
-            // Dynamic Colors & Grid Variables
             $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
             $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
             $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
@@ -285,38 +322,25 @@ final class Yadore_Amazon_API_Plugin {
                 }
             ";
             wp_add_inline_style('yaa-frontend-grid', $custom_css);
-        } 
-        // 2. Wenn CSS deaktiviert IST, laden wir nur ein Minimal-CSS für die Funktionalität
-        else {
-            // Wir registrieren einen "Dummy"-Handle, um Inline-CSS anzuhängen
+        } else {
             wp_register_style('yaa-minimal-functional', false);
             wp_enqueue_style('yaa-minimal-functional');
             
-            // Minimales CSS, damit "Mehr lesen" technisch funktioniert
-            // WICHTIG: Die .expanded Regeln nutzen !important, um Custom CSS (wie line-clamp) zu überschreiben
             $minimal_css = "
                 .yaa-description {
                     overflow: hidden;
                     position: relative;
-                    /* Fallback für Themes ohne eigenes CSS */
                     max-height: 4.8em; 
                     transition: max-height 0.4s ease-out;
                 }
-                
                 .yaa-description.expanded {
-                    max-height: none !important; /* Maximale Höhe aufheben */
-                    -webkit-line-clamp: unset !important; /* Line-Clamp aufheben */
+                    max-height: none !important;
+                    -webkit-line-clamp: unset !important;
                     line-clamp: unset !important;
-                    display: block !important; /* -webkit-box aufheben */
+                    display: block !important;
                     overflow: visible !important;
                 }
-                
-                .yaa-read-more {
-                    cursor: pointer;
-                    display: inline-block;
-                }
-                
-                /* Basis-Grid, falls vom Theme nicht definiert */
+                .yaa-read-more { cursor: pointer; display: inline-block; }
                 .yaa-grid-container {
                     display: grid;
                     gap: 20px;
@@ -326,7 +350,6 @@ final class Yadore_Amazon_API_Plugin {
             wp_add_inline_style('yaa-minimal-functional', $minimal_css);
         }
         
-        // JS immer laden (wichtig für Read More Toggle & Lazy Load)
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',

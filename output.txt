@@ -2761,20 +2761,22 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * Version: 1.3.0
+ * Version: 1.3.1
  *
  * Features:
  * - Yadore API Configuration
- * - Yadore Merchant Filter (Whitelist/Blacklist) - NEU
+ * - Yadore Merchant Filter (Whitelist/Blacklist)
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
- * - Image Size Selection - NEU
- * - SEO Filename Configuration - NEU
+ * - Image Size Selection
+ * - SEO Filename Configuration
  * - Custom Products Management
  * - Redis Cache Configuration
  * - Local Image Storage Configuration
  * - Fuzzy Search Configuration
  * - Display Settings
  * - Status & Documentation
+ * 
+ * FIX 1.3.1: Tab-Navigation unabhängig von wp-color-picker
  */
 
 declare(strict_types=1);
@@ -2811,7 +2813,7 @@ final class YAA_Admin {
         add_action('wp_ajax_yaa_test_yadore', [$this, 'ajax_test_yadore']);
         add_action('wp_ajax_yaa_test_amazon', [$this, 'ajax_test_amazon']);
         add_action('wp_ajax_yaa_test_redis', [$this, 'ajax_test_redis']);
-        add_action('wp_ajax_yaa_refresh_merchants', [$this, 'ajax_refresh_merchants']); // NEU
+        add_action('wp_ajax_yaa_refresh_merchants', [$this, 'ajax_refresh_merchants']);
     }
     
     /**
@@ -2887,7 +2889,7 @@ final class YAA_Admin {
             ? $input['yadore_precision'] : 'fuzzy';
         $sanitized['yadore_default_limit'] = max(1, min(50, (int) ($input['yadore_default_limit'] ?? 9)));
         
-        // NEU: Merchant Filter
+        // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
         $sanitized['yadore_merchant_blacklist'] = $this->sanitize_merchant_list($input['yadore_merchant_blacklist'] ?? '');
         
@@ -2915,7 +2917,7 @@ final class YAA_Admin {
         // Local Image Storage
         $sanitized['enable_local_images'] = isset($input['enable_local_images']) ? 'yes' : 'no';
         
-        // NEU: Bildgröße und SEO-Dateinamen
+        // Bildgröße und SEO-Dateinamen
         $sanitized['preferred_image_size'] = in_array($input['preferred_image_size'] ?? '', ['Large', 'Medium', 'Small'], true) 
             ? $input['preferred_image_size'] : 'Large';
         $sanitized['image_filename_format'] = in_array($input['image_filename_format'] ?? '', ['seo', 'id'], true) 
@@ -2957,7 +2959,7 @@ final class YAA_Admin {
     }
     
     /**
-     * NEU: Sanitize merchant list (comma-separated)
+     * Sanitize merchant list (comma-separated)
      */
     private function sanitize_merchant_list(string $input): string {
         $list = array_map('trim', explode(',', $input));
@@ -2967,27 +2969,44 @@ final class YAA_Admin {
     
     /**
      * Enqueue admin assets
+     * FIX: Tab-JavaScript unabhängig von wp-color-picker laden
      */
     public function enqueue_admin_assets(string $hook): void {
-        if (!str_contains($hook, 'yaa-') && $hook !== 'toplevel_page_yaa-settings') {
+        // Prüfen ob dies eine YAA Admin-Seite ist
+        $is_yaa_page = str_contains($hook, 'yaa-') 
+                    || str_contains($hook, 'yaa_') 
+                    || $hook === 'toplevel_page_yaa-settings';
+        
+        if (!$is_yaa_page) {
             return;
         }
         
-        wp_enqueue_style('wp-color-picker');
-        wp_enqueue_script('wp-color-picker');
+        // 1. Admin CSS - eigenes Handle registrieren
+        wp_register_style('yaa-admin', false, [], YAA_VERSION);
+        wp_enqueue_style('yaa-admin');
+        wp_add_inline_style('yaa-admin', $this->get_admin_css());
         
-        // Inline admin styles
-        $admin_css = $this->get_admin_css();
-        wp_add_inline_style('wp-color-picker', $admin_css);
+        // 2. Tab-JavaScript - UNABHÄNGIG von wp-color-picker
+        wp_register_script('yaa-admin-tabs', false, ['jquery'], YAA_VERSION, true);
+        wp_enqueue_script('yaa-admin-tabs');
+        wp_add_inline_script('yaa-admin-tabs', $this->get_tab_js());
         
-        // Admin JS
-        $admin_js = $this->get_admin_js();
-        wp_add_inline_script('wp-color-picker', $admin_js);
-        
-        wp_localize_script('wp-color-picker', 'yaaAdmin', [
+        // 3. AJAX-Funktionalität (an Tab-Script hängen)
+        wp_localize_script('yaa-admin-tabs', 'yaaAdmin', [
             'nonce' => wp_create_nonce('yaa_admin_nonce'),
             'ajaxurl' => admin_url('admin-ajax.php'),
         ]);
+        
+        // 4. Color Picker und erweiterte JS nur auf Settings-Seite
+        if ($hook === 'toplevel_page_yaa-settings' || str_ends_with($hook, '_page_yaa-settings')) {
+            wp_enqueue_style('wp-color-picker');
+            wp_enqueue_script('wp-color-picker');
+            
+            // Erweitertes JS (Color Picker, Test-Buttons, etc.)
+            wp_register_script('yaa-admin-extended', false, ['jquery', 'wp-color-picker', 'yaa-admin-tabs'], YAA_VERSION, true);
+            wp_enqueue_script('yaa-admin-extended');
+            wp_add_inline_script('yaa-admin-extended', $this->get_extended_admin_js());
+        }
     }
     
     /**
@@ -3056,38 +3075,65 @@ final class YAA_Admin {
     }
     
     /**
-     * Get admin JavaScript
+     * Get Tab JavaScript (unabhängig lauffähig)
+     * FIX: Separates Script ohne Abhängigkeit von wp-color-picker
      */
-    private function get_admin_js(): string {
+    private function get_tab_js(): string {
         return '
             jQuery(document).ready(function($) {
-                // Color pickers
-                $(".yaa-color-picker").wpColorPicker();
-                
-                // Tabs
+                // Tab-Navigation
                 $(".yaa-tab").on("click", function() {
                     var tab = $(this).data("tab");
+                    if (!tab) return;
+                    
                     $(".yaa-tab").removeClass("active");
                     $(this).addClass("active");
                     $(".yaa-tab-content").removeClass("active");
                     $("#yaa-tab-" + tab).addClass("active");
-                    localStorage.setItem("yaa_active_tab", tab);
+                    
+                    try {
+                        localStorage.setItem("yaa_active_tab", tab);
+                    } catch(e) {
+                        // localStorage nicht verfügbar
+                    }
                 });
                 
-                // Restore active tab
-                var savedTab = localStorage.getItem("yaa_active_tab");
-                if (savedTab && $(".yaa-tab[data-tab=\"" + savedTab + "\"]").length) {
-                    $(".yaa-tab[data-tab=\"" + savedTab + "\"]").click();
+                // Gespeicherten Tab wiederherstellen
+                try {
+                    var savedTab = localStorage.getItem("yaa_active_tab");
+                    if (savedTab) {
+                        var $savedTabEl = $(".yaa-tab[data-tab=\"" + savedTab + "\"]");
+                        if ($savedTabEl.length) {
+                            $savedTabEl.trigger("click");
+                        }
+                    }
+                } catch(e) {
+                    // localStorage nicht verfügbar
+                }
+            });
+        ';
+    }
+    
+    /**
+     * Get extended Admin JavaScript (Color Picker, AJAX Tests, etc.)
+     * Wird nur auf der Settings-Seite geladen
+     */
+    private function get_extended_admin_js(): string {
+        return '
+            jQuery(document).ready(function($) {
+                // Color pickers initialisieren
+                if ($.fn.wpColorPicker) {
+                    $(".yaa-color-picker").wpColorPicker();
                 }
                 
-                // Marketplace change
+                // Marketplace Dropdown
                 $("select[name=\'yaa_settings[amazon_marketplace]\']").on("change", function() {
                     var marketplace = $(this).val();
                     $(".yaa-marketplace-detail").hide();
                     $("#marketplace-info-" + marketplace.replace(/\\./g, "-")).show();
                 });
                 
-                // Test buttons
+                // Test Buttons
                 $(".yaa-test-btn").on("click", function(e) {
                     e.preventDefault();
                     var $btn = $(this);
@@ -3125,7 +3171,7 @@ final class YAA_Admin {
                     });
                 });
                 
-                // NEU: Merchant list refresh
+                // Merchant list refresh
                 $("#yaa-refresh-merchants").on("click", function() {
                     var $btn = $(this);
                     var $status = $("#yaa-merchant-refresh-status");
@@ -3152,7 +3198,7 @@ final class YAA_Admin {
                     });
                 });
                 
-                // NEU: Multi-Select zu Text synchronisieren
+                // Multi-Select zu Text synchronisieren
                 $("select.yaa-merchant-select").on("change", function() {
                     var $select = $(this);
                     var $input = $select.closest(".yaa-form-row").find("input[type=\'text\']");
@@ -3344,7 +3390,7 @@ final class YAA_Admin {
             </div>
         </div>
         
-        <!-- NEU: Merchant Filter -->
+        <!-- Merchant Filter -->
         <div class="yaa-card">
             <h2>🏪 Händler-Filter (Whitelist / Blacklist)</h2>
             <p class="description">
@@ -3865,7 +3911,7 @@ final class YAA_Admin {
                 </p>
             </div>
             
-            <!-- NEU: Bildgrößen-Einstellung -->
+            <!-- Bildgrößen-Einstellung -->
             <div class="yaa-feature-box info" style="margin-top: 20px;">
                 <h4 style="margin-top: 0;">🖼️ Bevorzugte Bildgröße</h4>
                 <p class="description" style="margin-bottom: 15px;">
@@ -3933,7 +3979,7 @@ final class YAA_Admin {
                 </table>
             </div>
             
-            <!-- NEU: SEO-Dateinamen -->
+            <!-- SEO-Dateinamen -->
             <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
                 <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
                 <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
@@ -4690,7 +4736,7 @@ define('WP_REDIS_PORT', 6379);
     }
     
     /**
-     * NEU: AJAX: Refresh merchant list
+     * AJAX: Refresh merchant list
      */
     public function ajax_refresh_merchants(): void {
         check_ajax_referer('yaa_admin_nonce', 'nonce');
@@ -7262,12 +7308,10 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Handles downloading remote images and serving local versions.
  * Includes validation, retry mechanism, SEO filenames, and admin logging.
  * 
- * Version: 1.2.9
+ * Version: 1.3.1
  * PHP 8.3+ compatible
  * 
- * NEU in 1.2.9:
- * - SEO-optimierte Dateinamen (erste 30 Zeichen Produktname + Timestamp)
- * - Einstellung für Dateiname-Format (SEO oder ID)
+ * FIX 1.3.1: Fehlende Methoden get_image_library() und can_resize_images() hinzugefügt
  */
 
 declare(strict_types=1);
@@ -7297,6 +7341,53 @@ class YAA_Image_Handler {
      * Max characters for SEO filename (product name part)
      */
     private const SEO_NAME_MAX_LENGTH = 30;
+    
+    /**
+     * Image size limits for resizing
+     */
+    private const IMAGE_SIZES = [
+        'Large'  => 500,
+        'Medium' => 160,
+        'Small'  => 75,
+    ];
+
+    /**
+     * Check if image resizing is available
+     * 
+     * @return bool True if GD or Imagick is available
+     */
+    public static function can_resize_images(): bool {
+        return self::get_image_library() !== 'None';
+    }
+
+    /**
+     * Get the available image processing library
+     * 
+     * @return string 'Imagick', 'GD', or 'None'
+     */
+    public static function get_image_library(): string {
+        // Check for Imagick first (generally better quality)
+        if (extension_loaded('imagick') && class_exists('Imagick')) {
+            return 'Imagick';
+        }
+        
+        // Check for GD
+        if (extension_loaded('gd') && function_exists('imagecreatetruecolor')) {
+            return 'GD';
+        }
+        
+        return 'None';
+    }
+
+    /**
+     * Get the max dimension for a given size setting
+     * 
+     * @param string $size 'Large', 'Medium', or 'Small'
+     * @return int Max dimension in pixels
+     */
+    public static function get_max_dimension(string $size = 'Large'): int {
+        return self::IMAGE_SIZES[$size] ?? self::IMAGE_SIZES['Large'];
+    }
 
     /**
      * Process an image: Download if not exists, return local URL.
@@ -7428,10 +7519,156 @@ class YAA_Image_Handler {
             return self::get_placeholder_url();
         }
 
-        // 13. Clear retry counter on success
+        // 13. Optional: Resize image if enabled
+        $resize_enabled = function_exists('yaa_get_option') 
+            ? yaa_get_option('image_resize_enabled', 'yes') === 'yes' 
+            : false;
+        
+        if ($resize_enabled && self::can_resize_images()) {
+            $preferred_size = function_exists('yaa_get_option') 
+                ? yaa_get_option('preferred_image_size', 'Large') 
+                : 'Large';
+            
+            self::resize_image($file_path, $preferred_size);
+        }
+
+        // 14. Clear retry counter on success
         self::clear_retry_counter($remote_url);
 
         return $file_url;
+    }
+
+    /**
+     * Resize an image to fit within max dimensions
+     * 
+     * @param string $file_path Path to the image file
+     * @param string $size_setting Size setting ('Large', 'Medium', 'Small')
+     * @return bool True on success
+     */
+    public static function resize_image(string $file_path, string $size_setting = 'Large'): bool {
+        if (!file_exists($file_path)) {
+            return false;
+        }
+
+        $max_dimension = self::get_max_dimension($size_setting);
+        $library = self::get_image_library();
+
+        if ($library === 'None') {
+            return false;
+        }
+
+        // Get current dimensions
+        $image_info = @getimagesize($file_path);
+        if ($image_info === false) {
+            return false;
+        }
+
+        $width = $image_info[0];
+        $height = $image_info[1];
+        $mime = $image_info['mime'] ?? '';
+
+        // Check if resize is needed
+        if ($width <= $max_dimension && $height <= $max_dimension) {
+            return true; // Already small enough
+        }
+
+        // Calculate new dimensions (maintain aspect ratio)
+        if ($width > $height) {
+            $new_width = $max_dimension;
+            $new_height = (int) round(($height / $width) * $max_dimension);
+        } else {
+            $new_height = $max_dimension;
+            $new_width = (int) round(($width / $height) * $max_dimension);
+        }
+
+        // Resize based on available library
+        if ($library === 'Imagick') {
+            return self::resize_with_imagick($file_path, $new_width, $new_height);
+        } else {
+            return self::resize_with_gd($file_path, $new_width, $new_height, $mime);
+        }
+    }
+
+    /**
+     * Resize image using Imagick
+     */
+    private static function resize_with_imagick(string $file_path, int $width, int $height): bool {
+        try {
+            $imagick = new \Imagick($file_path);
+            $imagick->resizeImage($width, $height, \Imagick::FILTER_LANCZOS, 1);
+            $imagick->setImageCompressionQuality(85);
+            $imagick->stripImage(); // Remove metadata
+            $result = $imagick->writeImage($file_path);
+            $imagick->destroy();
+            return $result;
+        } catch (\Exception $e) {
+            error_log('YAA Imagick resize error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Resize image using GD
+     */
+    private static function resize_with_gd(string $file_path, int $width, int $height, string $mime): bool {
+        try {
+            // Create image resource based on type
+            $source = match($mime) {
+                'image/jpeg' => @imagecreatefromjpeg($file_path),
+                'image/png'  => @imagecreatefrompng($file_path),
+                'image/gif'  => @imagecreatefromgif($file_path),
+                'image/webp' => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($file_path) : false,
+                default      => false,
+            };
+
+            if ($source === false) {
+                return false;
+            }
+
+            $source_width = imagesx($source);
+            $source_height = imagesy($source);
+
+            // Create destination image
+            $dest = imagecreatetruecolor($width, $height);
+            
+            if ($dest === false) {
+                imagedestroy($source);
+                return false;
+            }
+
+            // Handle transparency for PNG and GIF
+            if ($mime === 'image/png' || $mime === 'image/gif') {
+                imagealphablending($dest, false);
+                imagesavealpha($dest, true);
+                $transparent = imagecolorallocatealpha($dest, 0, 0, 0, 127);
+                imagefill($dest, 0, 0, $transparent);
+            }
+
+            // Resample
+            imagecopyresampled(
+                $dest, $source,
+                0, 0, 0, 0,
+                $width, $height,
+                $source_width, $source_height
+            );
+
+            // Save based on type
+            $result = match($mime) {
+                'image/jpeg' => imagejpeg($dest, $file_path, 85),
+                'image/png'  => imagepng($dest, $file_path, 6),
+                'image/gif'  => imagegif($dest, $file_path),
+                'image/webp' => function_exists('imagewebp') ? imagewebp($dest, $file_path, 85) : false,
+                default      => false,
+            };
+
+            imagedestroy($source);
+            imagedestroy($dest);
+
+            return $result;
+        } catch (\Exception $e) {
+            error_log('YAA GD resize error: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**
