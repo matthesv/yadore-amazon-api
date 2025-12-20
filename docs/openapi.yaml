@@ -1,0 +1,1423 @@
+openapi: 3.0.1
+info:
+  title: Yadore Publisher API
+  version: 2.0.0
+  description: |
+    This is an overview of all the available API endpoints.
+    Each API is grouped and you can unfold the different endpoints to get detailed information on how to use them.
+    
+    You can use this actionable documentation or an application of your choice (e.g. [Postman](https://www.postman.com/)) to browse the API.
+
+    ## Endpoints
+    The API servers are available under the URL: `https://api.yadore.com/`. You must use this URL for all API requests.
+    For example to search for offers, you must send your request to `https://api.yadore.com/v2/offer`.
+    
+    This doesn't concern you when you are using this documentation. You can use the endpoints here by clicking on `Try it out`.
+
+    ## Authentication
+    You must add your API-Key as header `API-Key` to all requests in the application of your choice.
+    
+    For authorizing your requests in this actionable documentation, you must use the `Authorize` button below and enter your API-Key.
+    
+    ## FAQ
+    
+    1. What Yadore understands as **offer** – for us an offer is a product offer from a specific merchant, example would be a specific washing machine from e.g. _Mediamarkt.de_.
+    
+    2. What Yadore understands as **deeplink** – for us a deeplink is a specific product landing page from a merchant, so the deep link request must look like `shopdomain.de/category/specific_product.html`.
+    
+    3. What Yadore understands as **smartlink** – for us a smartlink merchant is a merchant, where the publisher can send the user anywhere, means home page, category page, product page, etc. However, you must specify exactly where you want to send the user (i.e. homepage, category, ..) as the API will not automatically generate this for you.
+    
+    4. All monetary values are always in **Euro**.
+    
+    5. All dates returned from any endpoint are in **UTC time**.
+    
+    6. All API parameters are **case sensitive**.
+    
+    7. The estimated CPC in all APIs is 100% Yadore, to calculate your revenue you have to adapt your share.
+    
+    8. We classify publishers in _“no couponing”_, _“couponing”_ and _“mixed”_. This is important as _“mixed”_ publishers need to use a parameter to inform if a click is couponing or not. If you feel wrongly classified just speak to your account manager.
+    
+    9. If there are any further questions, please contact your account manager or send an email to [mail@yadore.com](mailto:mail@yadore.com).
+
+servers:
+  - url: https://api.yadore.com/
+
+tags:
+  - name: Offer
+    description: The following endpoints are needed to get product offer results from Yadore.
+
+  - name: Deeplink and Smartlink
+    description: The following endpoints are needed to get deeplink and smartlink results from Yadore.
+
+  - name: Direct Redirect
+    description: The following endpoint is needed to let Yadore redirect the user for you with a fixed link structure. You tell us where to send the user and we do the rest.
+
+  - name: Report
+    description: Use following endpoints to get all the necessary reporting data.
+
+  - name: Conversion
+    description: The following endpoints support you to receive useful information about the quality of your traffic.
+
+  - name: Markets
+    description: Use the following endpoint to check which markets you are allowed to send traffic to.
+
+paths:
+  /v2/offer:
+    get:
+      tags:
+        - Offer
+      operationId: getOffer
+      summary: Search for offers
+      description: |
+        You can search for offers here, filter by several parameters and precision types to get your desired results.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/EAN'
+        - $ref: '#/components/parameters/MerchantId'
+        - $ref: '#/components/parameters/OfferId'
+        - $ref: '#/components/parameters/PlacementId'
+        - $ref: '#/components/parameters/Precision'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/IsCouponing'
+      responses:
+        "200":
+          description: Offer Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferErrorResponse'
+
+  /v2/offer/bulk:
+    get:
+      tags:
+        - Offer
+      operationId: getOffersByEan
+      summary: Search for offers by multiple EANs
+      description: |
+        You can search for offers by multiple EANs from a specific market here. 
+        For each EAN there will be a limit of 50 offer results.
+        Access to this endpoint must be enabled for your account, please contact us.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/EANs'
+        - $ref: '#/components/parameters/MerchantId'
+        - $ref: '#/components/parameters/PlacementId'
+        - $ref: '#/components/parameters/IsCouponing'
+      responses:
+        "200":
+          description: Offer Ean Bulk Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferEanBulkResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferBulkErrorResponse'
+
+  /v2/merchant:
+    get:
+      tags:
+        - Offer
+      operationId: getMerchant
+      summary: Get a list of active merchants
+      description: |
+        You can search for active merchants here, use this to filter your offer request by a specific `merchantId`
+        or use it just to check which merchants are available.
+        
+        The merchant availability can change every few minutes.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/IsCouponingMerchantFilter'
+      responses:
+        "200":
+          description: Merchant Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MerchantResponse'
+
+  /v2/deeplink:
+    post:
+      tags:
+        - Deeplink and Smartlink
+      operationId: postDeeplink
+      summary: Get click URLs for given deeplinks and smartlinks
+      description: |
+        You can search for specific deeplinks here by adding the landing pages or smartlink merchant you want to get a click URL for.
+        You can send up to 20 URLs at a time. Replace the `string` with your desired input.
+        E.g. `"market": "de"` instead of `"market": "string"`.
+        
+        The optional parameter `placementId` is your own subID for your click-tracking.
+        
+        The `isCouponing` parameter is required if your project has mixed traffic. You must use this parameter to define if you are sending couponing traffic.
+        
+        _Each clickUrl is only valid for 14 days._
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/Deeplink'
+      responses:
+        "200":
+          description: Deeplink Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeeplinkResponse'
+
+  /v2/deeplink/merchant:
+    get:
+      tags:
+        - Deeplink and Smartlink
+      operationId: getDeeplinkMerchant
+      summary: Get a list of active deeplink merchants
+      description: |
+        You can search for active deeplink and smartlink merchants here.
+        You can specify if you want to get both or just smartlink merchants in the response.
+        Smartlink means an advertiser where you can link anywhere, including the homepage, category pages, sales pages etc.
+        
+        Deeplink and smartlink merchant availability can change every few minutes.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/isSmartlink'
+        - $ref: '#/components/parameters/hasHomepage'
+        - $ref: '#/components/parameters/IsCouponingMerchantFilter'
+      responses:
+        "200":
+          description: Deeplink Merchant Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeeplinkMerchantResponse'
+
+  /v2/d:
+    get:
+      tags:
+        - Direct Redirect
+      operationId: doDirectRedirect
+      summary: Direct redirect to the URL set in the "url" parameter
+      description: |
+        Add the URL you want to redirect the user to, the market and projectId of your API key.
+        
+        If you execute the request in this documentation, you will get the monetizable Yadore URL under `Responses > Request URL`.
+        Be aware that the response of the redirect target cannot be shown under `Responses > Server response` (instead an error will be shown).
+        But you can call the request URL in your browser as it will redirect you to the target shop website.
+        If you call the request URL in an application like Postman and you want to see the response of the redirect target, the application must be able to follow redirects (check the settings).
+        If you get a `404` response status, the API could not find a matching shop to redirect to.
+        
+        The URL structure is always the same, only change URL or market if you want to redirect elsewhere.
+        You don't have to get a link for every advertiser by using this documentation.
+        
+        We recommend to also set a callback URL, so we can send you the user back, if something is wrong with the link or the advertiser.
+        The callback URL needs to be whitelisted before you can use it.
+        
+        If your project has mixed traffic, you must use the `isCouponing` parameter to define if you are sending couponing traffic.
+        
+        Only works for deeplink and smartlink merchants (`/v2/deeplink/merchant`).
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SingleUrl'
+        - $ref: '#/components/parameters/CallbackUrl'
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/MerchantId'
+        - $ref: '#/components/parameters/PlacementId'
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/IsCouponing'
+      responses:
+        "302":
+          description: A redirect to the target shop website.
+        "404":
+          description: An error occured and there was no callbackUrl.
+
+  /v2/report/status:
+    get:
+      tags:
+        - Report
+      operationId: getReportStatus
+      summary: Shows you if the reports for a given day are completely available
+      description: |
+        Very useful to understand if data for a specific day is complete or not. Updates are excluded from this.
+        When the reports incomplete, you may only receive partial results for your report and should try again later.
+        
+        We only allow to pull reports for a specific day, so you can't pull "per month" or similar.
+        For this you can use your publisher dashboard. Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Date'
+      responses:
+        "200":
+          description: Report Status Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportStatusResponse'
+
+  /v2/report/general:
+    get:
+      tags:
+        - Report
+      operationId: getReportGeneral
+      summary: Grouped report for clicks and revenue for each market
+      description: |
+        Shows you accumulated numbers for each market you have sent traffic to.
+        
+        It is important to use the Report Status endpoint before to check if the data is complete.
+        To ensure data accuracy go back three days to pull data, as the revenue can change retrospectively.
+        
+        We only allow to pull reports for a specific day, so you can't pull "per month" or similar.
+        For this you can use your publisher dashboard. Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Date'
+        - $ref: '#/components/parameters/Format'
+      responses:
+        "200":
+          description: Report General Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportGeneralResponse'
+            text/csv:
+              schema:
+                type: string
+                example: |
+                  "date","market","clicks","revenue","currency"
+                  "2018-01-01","de","1000","100.1234","EUR"
+                  "2018-01-01","fr","2000","150.5678","EUR"
+                  "2018-01-01","it","1500","125.6542","EUR"
+
+  /v2/report/detail:
+    get:
+      tags:
+        - Report
+      operationId: getReportDetail
+      summary: Detail report for each click
+      description: |
+        This endpoint generates a click level report. This helps you to track your traffic as granular as possible.
+        Makes the most sense to use a `placementId` for each click, so you can allocate all your traffic properly.
+        Otherwise, you will just get our Yadore clickId, which might not be very helpful.
+        You must specify the market you want the report from, means if you are sending traffic to multiple markets,
+        you must call each market separately.
+        
+        It is important to use the Report Status endpoint before to check if the data is complete.
+        To ensure data accuracy go back three days to pull data, as the revenue can change retrospectively.
+        
+        We only allow to pull reports for a specific day, so you can't pull "per month" or similar.
+        For this you can use your publisher dashboard. Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Date'
+        - $ref: '#/components/parameters/Format'
+        - $ref: '#/components/parameters/ReportMarket'
+      responses:
+        "200":
+          description: Report Detail Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportDetailResponse'
+            text/csv:
+              schema:
+                example: |
+                  "clickId","date","placementId","market","merchantId","merchantName","revenue","currency"
+                  "532f889fd3ba56f628f3234647d9854650534789938b7fdaafddf1d75081fadc","2018-01-01T00:00:01+00:00","your-custom-placement-id-1","de","583c1b14c50391777b40ee033a04cef033271e35307f7276125b2ba760d4b48e","example.com","0.142898","EUR"
+                  "ae7facb00d557e7d92e1d2ee31bc05cc9787bc6802e636ccb284cfbaeb6680b8","2018-01-01T00:00:02+00:00","your-custom-placement-id-2","de","583c1b14c50391777b40ee033a04cef033271e35307f7276125b2ba760d4b48e","example.com","0.142825","EUR"
+                  "8bc875e7f5260fa14b21797508b9e47ee2df2c2fe0351b88edded847ee59bb1f","2018-01-01T00:00:03+00:00","your-custom-placement-id-3","de","583c1b14c50391777b40ee033a04cef033271e35307f7276125b2ba760d4b48e","example.com","0.120417","EUR"
+
+  /v2/report/modified:
+    get:
+      tags:
+        - Report
+      operationId: getReportModifiedDetail
+      summary: Daily based list of report modified dates
+      description: |
+        Endpoint for the dates of the latest changes of a report on a daily basis.
+        All dates returned from this endpoint are in UTC time.
+        If no market is specified, data for all available markets will be displayed.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: from
+          description: Starting date for which to generate list of modified reports dates. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          description: Ending date for which to generate list of modified reports dates. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: market
+          description: Market to search. You will receive a list with valid Markets along with your account information and keys.
+          in: query
+          required: false
+          schema:
+            type: string
+            format: ISO 3166 Alpha-2
+      responses:
+        "200":
+          description: Report Modified Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportModifiedResponse'
+
+
+  /v2/conversion/status:
+    get:
+      tags:
+        - Conversion
+      operationId: getConversionStatus
+      summary: Shows you if the conversions for a given day are completely available
+      description: |
+        Very useful to check if data for a specific day is complete or not. When the conversion reports are incomplete,
+        you may get only partial results for your conversion report and should try again later.
+        
+        We recommend going back two days in the past, as sales will often be reported late.
+        Hence, we don’t have all the information the next day.
+        The number of clicks can differ from the Report API, because just the tracked clicks are included in the conversion reports.
+        Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Date'
+      responses:
+        "200":
+          description: Conversion Report Status Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversionStatusResponse'
+
+  /v2/conversion/general:
+    get:
+      tags:
+        - Conversion
+      operationId: getConversionGeneral
+      summary: Grouped conversion report for clicks and revenue for each market
+      description: |
+        Choose a start and end date and you will get the accumulated number of clicks and sales for each market you are sending traffic to,
+        good for a quick overview on how you perform with your traffic.
+        
+        We recommend going back two days in the past, as sales will often be reported late.
+        Hence, we don’t have all the information the next day.
+        The number of clicks can differ from the Report API, because just the tracked clicks are included in the conversion reports.
+        Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: [ ]
+      parameters:
+        - name: from
+          description: Starting date for which to generate the report. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          description: Ending date for which to generate the report. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/Format'
+      responses:
+        "200":
+          description: Report General Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversionGeneralResponse'
+            text/csv:
+              schema:
+                example: |
+                  "market","sales"
+                  "de","432"
+                  "br","23"
+
+  /v2/conversion/detail:
+    get:
+      tags:
+        - Conversion
+      operationId: getConversionDetail
+      summary: Conversion report for each click
+      description: |
+        Similar to the Detail Report, but you can just check one day at a time and must specify a market.
+        You get a report for every trackable click that got paid.
+        
+        We recommend going back two days in the past, as sales will often be reported late.
+        Hence, we don’t have all the information the next day.
+        The number of clicks can differ from the Report API, because just the tracked clicks are included in the conversion reports.
+        Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Date'
+        - $ref: '#/components/parameters/Format'
+        - $ref: '#/components/parameters/ReportMarket'
+      responses:
+        "200":
+          description: Report Detail Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversionDetailResponse'
+            text/csv:
+              schema:
+                example: |
+                  "clickId","date","placementId","market","merchantId","merchantName","sales"
+                  "0003a6ba2712bf1eb0bbd1f67846bf70483989b14e9bfe3dfc96596e880d24ec","2022-08-28T11:12:33+00:00","cc3a69ebe06e41ec91c4c60e6de59b604682ca5489464a0ca00ab919497ce8ad","de","ec8408fbcc2f7523b596dec3e9462b50c4511d381780a7c0511e0e603a0c4327","sanicare.de","0"
+                  "00193d37300edc9eee8abe91912a214bc5ba5123e17d65ed5ae28c3810cc47ce","2022-08-28T15:56:32+00:00","preisvergleich-de-o-wl","de","ec8408fbcc2f7523b596dec3e9462b50c4511d381780a7c0511e0e603a0c4327","sanicare.de","0"
+                  "00358068c1e0a8372cd48445b47652e457b658f22050e5b9b2830b919a569636","2022-08-28T12:24:54+00:00","v03040001006029c697c39f3a4a2c8f3b3c277ed44467","de", "218a1593ddb9bec9b5566a97efd5d9bf98f9eb10781d5aed06f4ebb1749f2ee9","aboutyou.de","0"
+
+  /v2/conversion/detail/merchant:
+    get:
+      tags:
+        - Conversion
+      operationId: getConversionDetailMerchant
+      summary: Detailed conversion report grouped by merchant
+      description: |
+        Set a start and end date and specify the market and you will get an overview of the quality by merchant.
+        
+        We recommend going back two days in the past, as sales will often be reported late.
+        Hence, we don’t have all the information the next day.
+        The number of clicks can differ from the Report API, because just the tracked clicks are included in the conversion reports.
+        Output can be JSON or CSV.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: market
+          description: Market to search. You will receive a list with valid Markets along with your account information and keys.
+          in: query
+          required: false
+          schema:
+            type: string
+            format: ISO 3166 Alpha-2
+        - name: from
+          description: Starting date for which to generate the report. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          description: Ending date for which to generate the report. This parameter has to be in format `YYYY-mm-dd`
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/Format'
+      responses:
+        "200":
+          description: Conversion Detail Merchant Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversionDetailMerchantResponse'
+            text/csv:
+              schema:
+                example: |
+                  merchant_id,merchant_name,sales
+                  0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff,example.com,1337
+                  1000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff,example.com,163
+
+  /v2/markets:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsList
+      summary: List markets you are allowed to send traffic to
+      description: |
+        Find out which markets you are approved for, if any market is missing, just ask your account manager if they can activate that market.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Market List Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  markets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+
+components:
+  parameters:
+    Market:
+      name: market
+      description: Market to search. You can get the markets you are activated for with the Markets API.
+      in: query
+      required: true
+      schema:
+        type: string
+
+    ReportMarket:
+      name: market
+      description: Market to search. You can get the markets you are activated for with the Markets API.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    ProjectId:
+      name: projectId
+      description: Your project ID, ask your account manager for your specific project ID.
+      in: query
+      required: true
+      schema:
+        type: string
+
+    isSmartlink:
+      name: isSmartlink
+      description: Set to 1 to limit results to smartlink merchants only. If omitted, you will get results for all merchants.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    hasHomepage:
+      name: hasHomepage
+      description: Set to 1 to limit results to homepage merchants only. If omitted, you will get results for all merchants.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    CombinationId:
+      name: cmb
+      description: Combination ID as given in the `GET /v2/offer` response.
+      in: query
+      required: true
+      schema:
+        type: string
+
+    RedirectOfferId:
+      name: offerId
+      description: Offer ID as given in the `GET /v2/offer` response.
+      in: query
+      required: true
+      schema:
+        type: string
+
+    RoutingId:
+      name: routingId
+      description: All links will be valid without this parameter for backwards compatibility. Althought we encourage you to use the link given in the `GET /v2/offer` response where this parameter has been added. This parameter will be marked as required in future versions.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    PlacementId:
+      name: placementId
+      description: Your own subID for your click-tracking. Must be at most 128 characters long. Only printable ASCII-characters are allowed. Defaults to `null`.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    Date:
+      name: date
+      description: Date for which to generate a report. This date is in the UTC timezone. This parameter has to be in format `YYYY-mm-dd`, for example `2018-01-31`.
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+
+    Format:
+      name: format
+      description: A format to generate the reports. Available formats are `json` and `csv`.
+      in: query
+      required: true
+      schema:
+        type: string
+        enum:
+          - json
+          - csv
+
+    MerchantId:
+      name: merchantId
+      description: Merchant ID to filter the offers. You can use this parameter to narrow the results. If omitted, you will get offers for all merchants.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    Keyword:
+      name: keyword
+      description: Keyword to search. Must be at least one character long.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    EAN:
+      name: ean
+      description: Filter the results by this EAN. Must be `8`, `13` or `14` characters long. When omitted, you will get offers regardless of an ean.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    EANs:
+      name: eans
+      description: The EANs to search (max. 50). Must be an comma seperated list of valid EANs. Each EAN must be `8`, `13` or `14` characters long.
+      in: query
+      required: true
+      schema:
+        type: string
+        example: '12345678,87654321'
+
+    OfferId:
+      name: offerId
+      description: Offer ID to filter the offers. If set you will only get this one offer, if it is found and active.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    Sort:
+      name: sort
+      description: Sort the results by relevance or price. Allowed values are `rel_desc`, `price_asc`, `price_desc`. Defaults to `rel_desc`. It is only possible to sort the results by relevance if you also specify a keyword. Without the keyword, the sort order is undefined.
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - rel_desc
+          - price_asc
+          - price_desc
+        default: rel_desc
+
+    Limit:
+      name: limit
+      description: Limit of results, must be between `1` and `100`. Defaults to `20`.
+      in: query
+      required: false
+      schema:
+        type: integer
+
+    Precision:
+      name: precision
+      description: Precision for the fulltext search. `strict` uses a more strict approach to get more relevant results. `fuzzy` uses a less strict approach to get more results.
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - strict
+          - fuzzy
+        default: fuzzy
+
+    SingleUrl:
+      name: url
+      description: URL of shop to redirect to. Please copy & paste the URL in this field exactly how it is displayed in the browser.
+      in: query
+      required: true
+      schema:
+        type: string
+
+    CallbackUrl:
+      name: callbackUrl
+      description: The URL to where requests with errors will be redirected to. The callbackUrl has to be whitelisted. If you want to use a callbackUrl please send your URL to your Yadore contact. Omitting this parameter will result in a 404 for results with errors.
+      in: query
+      required: false
+      schema:
+        type: string
+
+    IsCouponing:
+      name: isCouponing
+      description: >
+        If your project has in parts couponing traffic, you must use this parameter to tell the API if the click is a couponing click or not. If you don’t use this parameter when your project is labeled _“mixed”_ your traffic will not get paid. If you want to find out the label, please ask your account manager.
+        You only must use this parameter if you have mixed traffic. If you have either couponing or no couponing traffic, this parameter is not important for you.
+      in: query
+      required: false
+      schema:
+        type: boolean
+
+    IsCouponingMerchantFilter:
+        name: isCouponing
+        description: If your project has mixed traffic, you can filter the merchants by using this parameter.
+        in: query
+        required: false
+        schema:
+            type: boolean
+
+  requestBodies:
+
+    Deeplink:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Deeplink'
+
+  schemas:
+    # Common Values
+    Date:
+      type: string
+      format: date
+
+    DateRange:
+      type: object
+      properties:
+        from:
+          $ref: '#/components/schemas/Date'
+        to:
+          $ref: '#/components/schemas/Date'
+
+    Currency:
+      type: string
+      format: ISO 4217
+      pattern: '[A-Z]{3}'
+      example: 'EUR'
+      description: Three character form of a currency, in all caps
+
+    Market:
+      type: string
+      format: ISO 3166 Alpha-2
+      pattern: '[A-Z]{2}'
+      example: 'de'
+      description: Two character form of a country, in all lower-case
+
+    MerchantId:
+      type: string
+      minLength: 64
+      maxLength: 64
+      pattern: '[a-z0-9]{64}'
+      description: 64 characters, hexadecimal
+      example: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+
+    Merchant:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/MerchantId'
+        name:
+          type: string
+          example: example.com
+
+    Offer:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        promoText:
+          type: string
+          nullable: true
+        brand:
+          type: string
+          nullable: true
+        clickUrl:
+          type: string
+        availability:
+          type: string
+          enum:
+            - AVAILABLE
+            - UNAVAILABLE
+            - UNKNOWN
+            - SOON
+            - PREORDER
+            - AVAILABLE ON ORDER
+            - STOCK ON ORDER
+            - BACKORDER
+        eer:
+          type: string
+          nullable: true
+        shippingTime:
+          type: object
+          properties:
+            text:
+              type: string
+        merchant:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            logo:
+              type: object
+              properties:
+                url:
+                  type: string
+                exists:
+                  type: boolean
+        price:
+          type: object
+          properties:
+            amount:
+              type: string
+            currency:
+              type: string
+        originalPrice:
+          type: object
+          properties:
+            amount:
+              type: string
+            currency:
+              type: string
+        shippingPrice:
+          type: object
+          properties:
+            amount:
+              type: string
+            currency:
+              type: string
+        estimatedCpc:
+          description: |
+            estimatedCPC means the gross revenue per click Yadore gets from its merchants,
+            you have to use your revenue share to get your estimatedCPC.
+            Be aware, the CPC paid can still differ from the estimated CPC
+          type: object
+          properties:
+            amount:
+              type: string
+            currency:
+              type: string
+        unitPrice:
+          type: object
+          properties:
+            text:
+              type: string
+              nullable: true
+        image:
+          type: object
+          properties:
+            url:
+              type: string
+        thumbnail:
+          type: object
+          properties:
+            url:
+              type: string
+
+    #    CostOfSale:
+    #      type: string
+    #      format: number
+    #      example: '0.001234567890'
+    #      description: Cost of Sale. Given as a relative value (1.0 ≙ 100%)
+
+    Deeplink:
+      type: object
+      properties:
+        market:
+          description: The market to query.
+          required: true
+          type: string
+        placementId:
+          description: Your own subID for your click-tracking. Must be at most 128 characters long. Only printable ASCII-characters are allowed. Defaults to null.
+          required: false
+          type: string
+        isCouponing:
+          name: isCouponing
+          description: >
+            If your project has in parts couponing traffic, you must use this parameter to tell the API if the click is a couponing click or not. If you don’t use this parameter when your project is labeled _“mixed”_ your traffic will not get paid. If you want to find out the label, please ask your account manager.
+            You only must use this parameter if you have mixed traffic. If you have either couponing or no couponing traffic, this parameter is not important for you.
+          required: false
+          type: boolean
+        urls:
+          description: An array of URLs
+          required: true
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+
+    # Responses
+    DeeplinkResponse:
+      type: object
+      properties:
+        result:
+          type: object
+          properties:
+            found:
+              type: integer
+            total:
+              type: integer
+            deeplinks:
+              type: array
+              items:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  found:
+                    type: boolean
+                  clickUrl:
+                    type: string
+                    nullable: true
+                    description: The clickUrl is only valid for 14 days.
+                  merchant:
+                    type: object
+                    nullable: true
+                    properties:
+                      logo:
+                        type: object
+                        properties:
+                          url:
+                            type: string
+                          exists:
+                            type: boolean
+                  estimatedCpc:
+                    type: object
+                    properties:
+                      amount:
+                        type: string
+                        nullable: true
+                      currency:
+                        type: string
+                        nullable: true
+
+    MerchantResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        merchants:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              offerCount:
+                type: integer
+              logo:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  exists:
+                    type: boolean
+              trafficTypes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    permission:
+                      type: string
+                      enum:
+                        - not_allowed
+                        - allowed
+
+    DeeplinkMerchantResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        merchants:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              isSmartlink:
+                type: boolean
+                description: If the merchant has one or more smartlinks.
+              hasSmartlinkHomepage:
+                type: boolean
+                description: If the merchant accept homepage smartlinks.
+              hasExternalHomepage:
+                type: boolean
+                description: If the merchant accept homepage deeplinks.
+              deeplinkCount:
+                type: integer
+                description: Even when a merchant has no deeplinks, it might still have smartlinks.
+              logo:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  exists:
+                    type: boolean
+              estimatedCpc:
+                type: object
+                properties:
+                  amount:
+                    type: string
+                    nullable: true
+                  currency:
+                    type: string
+                    nullable: true
+              trafficTypes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    permission:
+                      type: string
+                      enum:
+                        - not_allowed
+                        - allowed
+
+    OfferErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: object
+          properties:
+            isCouponing:
+              $ref: '#/components/schemas/isCouponingError'
+            market:
+              $ref: '#/components/schemas/marketError'
+
+    OfferBulkErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: object
+          properties:
+            isCouponing:
+              $ref: '#/components/schemas/isCouponingError'
+            market:
+              $ref: '#/components/schemas/marketError'
+            ean:
+              $ref: '#/components/schemas/eanError'
+
+    eanError:
+        type: array
+        items:
+          oneOf:
+            - type: string
+              example: "EAN list cant be empty"
+            - type: string
+              example: "Cant request offers for more then 50 EANs at once"
+
+    marketError:
+      type: array
+      items:
+        oneOf:
+          - type: string
+            example: "Field is required"
+          - type: string
+            example: "Market 'xy' not found"
+
+    isCouponingError:
+      type: array
+      items:
+        oneOf:
+          - type: string
+            example: "Field is required when mixed traffic is allowed"
+          - type: string
+            example: "Field must be a boolean"
+
+    OfferResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        total:
+          type: integer
+        offers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Offer'
+
+    OfferEanBulkResponse:
+      type: object
+      properties:
+        ean:
+          type: object
+          properties:
+            count:
+              type: integer
+            offers:
+              type: array
+              items:
+                $ref: '#/components/schemas/Offer'
+
+    ReportStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - complete
+            - incomplete
+
+    ConversionStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - complete
+            - incomplete
+
+    ReportGeneralResponse:
+      type: object
+      properties:
+        date:
+          type: object
+          properties:
+            from:
+              type: string
+            to:
+              type: string
+        total:
+          type: object
+          properties:
+            clicks:
+              type: integer
+            revenue:
+              type: integer
+            currency:
+              type: string
+        market:
+          type: object
+          properties:
+            de:
+              type: object
+              properties:
+                total:
+                  type: object
+                  properties:
+                    clicks:
+                      type: integer
+                    revenue:
+                      type: number
+                      example: 0
+                    currency:
+                      type: string
+
+    ReportDetailResponse:
+      type: object
+      properties:
+        totalClicks:
+          type: integer
+        clicks:
+          type: array
+          items:
+            type: object
+            properties:
+              clickId:
+                type: string
+              date:
+                type: string
+                format: date-time
+              placementId:
+                type: string
+              market:
+                type: string
+              merchant:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+              revenue:
+                type: number
+              currency:
+                type: string
+                example: EUR
+
+    ReportModifiedResponse:
+      type: object
+      properties:
+        market:
+          type: object
+          properties:
+            date:
+              type: string
+              format: date
+            modifiedDate:
+              type: string
+              format: date-time
+
+    ConversionDetailResponse:
+      type: object
+      properties:
+        totalClicks:
+          type: integer
+        clicks:
+          type: array
+          items:
+            type: object
+            properties:
+              clickId:
+                type: string
+              date:
+                type: string
+                format: date-time
+              placementId:
+                type: string
+              market:
+                type: string
+              merchant:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+              sales:
+                type: number
+                example: 42
+    #              shoppingCart:
+    #                type: number
+    #                example: 4.20
+    #              cos:
+    #                $ref: '#/components/schemas/CostOfSale'
+
+    ConversionDetailMerchantResponse:
+      type: object
+      properties:
+        date:
+          $ref: '#/components/schemas/DateRange'
+        total:
+          type: object
+          properties:
+            sales:
+              type: integer
+              example: 42
+            #            shoppingCart:
+            #              type: number
+            #              example: 4.20
+            #            cos:
+            #              $ref: '#/components/schemas/CostOfSale'
+            clicks:
+              type: integer
+              example: 16
+        salesByMerchant:
+          type: array
+          minItems: 0
+          items:
+            type: object
+            properties:
+              market:
+                $ref: '#/components/schemas/Market'
+              merchant:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+              sales:
+                type: integer
+                example: 42
+              #              shoppingCart:
+              #                type: number
+              #                example: 4.20
+              #                description: The worth of the purchase
+              #              cos:
+              #                $ref: '#/components/schemas/CostOfSale'
+              clicks:
+                type: integer
+                example: 16
+
+    ConversionGeneralResponse:
+      type: object
+      properties:
+        date:
+          $ref: '#/components/schemas/DateRange'
+        total:
+          type: object
+          properties:
+            sales:
+              type: integer
+              example: '42'
+            clickCount:
+              type: integer
+              example: '123'
+        #            shoppingCart:
+        #              type: number
+        #              example: 4.20
+        #              description: The worth of the purchase
+        #            cos:
+        #              type: string
+        #              format: number
+        #              example: '0.000001203940'
+        #              description: Cost of Sale
+        market:
+          type: object
+          properties:
+            de:
+              type: object
+              properties:
+                total:
+                  type: object
+                  properties:
+                    sales:
+                      type: integer
+                      example: '42'
+                    clickCount:
+                      type: integer
+                      example: '123'
+            #                    shoppingCart:
+            #                      type: number
+            #                      example: 4.20
+            #                      description: The worth of the purchase
+            ch:
+              type: object
+              properties:
+                total:
+                  type: object
+                  properties:
+                    sales:
+                      type: integer
+                      example: '42'
+                    clickCount:
+                      type: integer
+                      example: '123'
+  #                    shoppingCart:
+  #                      type: number
+  #                      example: 4.20
+  #                      description: The worth of the purchase
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: API-Key
+      description: Your project's API-Key.
