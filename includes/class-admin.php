@@ -2,14 +2,15 @@
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * Version: 1.2.6
+ * Version: 1.2.9
  *
  * Features:
  * - Yadore API Configuration
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
+ * - Amazon Image Size Selection (NEU)
  * - Custom Products Management
  * - Redis Cache Configuration
- * - Local Image Storage Configuration
+ * - Local Image Storage Configuration with SEO Filenames (NEU)
  * - Fuzzy Search Configuration
  * - Display Settings
  * - Status & Documentation
@@ -133,6 +134,10 @@ final class YAA_Admin {
         $sanitized['amazon_default_category'] = sanitize_text_field($input['amazon_default_category'] ?? 'All');
         $sanitized['amazon_language'] = sanitize_text_field($input['amazon_language'] ?? '');
         
+        // NEU: Amazon Bildgröße
+        $sanitized['amazon_image_size'] = in_array($input['amazon_image_size'] ?? '', ['Large', 'Medium', 'Small'], true) 
+            ? $input['amazon_image_size'] : 'Large';
+        
         // Cache settings
         $sanitized['cache_duration'] = max(1, min(168, (int) ($input['cache_duration'] ?? 6)));
         $sanitized['fallback_duration'] = max(1, min(720, (int) ($input['fallback_duration'] ?? 24)));
@@ -147,6 +152,10 @@ final class YAA_Admin {
         
         // Local Image Storage
         $sanitized['enable_local_images'] = isset($input['enable_local_images']) ? 'yes' : 'no';
+        
+        // NEU: Dateiname-Format für Bilder
+        $sanitized['image_filename_format'] = in_array($input['image_filename_format'] ?? '', ['seo', 'id'], true) 
+            ? $input['image_filename_format'] : 'seo';
         
         // Fuzzy Search settings
         $sanitized['enable_fuzzy_search'] = isset($input['enable_fuzzy_search']) ? 'yes' : 'no';
@@ -262,6 +271,7 @@ final class YAA_Admin {
             .yaa-stat-box { background: #f6f7f7; padding: 15px; border-radius: 8px; text-align: center; }
             .yaa-stat-number { font-size: 2rem; font-weight: 700; line-height: 1.2; }
             .yaa-stat-label { color: #50575e; font-size: 13px; margin-top: 5px; }
+            .yaa-seo-example { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px; padding: 10px 15px; margin-top: 10px; font-family: monospace; font-size: 12px; }
             @media (max-width: 782px) { 
                 .yaa-grid { grid-template-columns: 1fr; }
                 .yaa-grid-3, .yaa-grid-4 { grid-template-columns: 1fr; }
@@ -372,7 +382,7 @@ final class YAA_Admin {
                     <div class="yaa-tab active" data-tab="yadore">📦 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
                     <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
-                    <div class="yaa-tab" data-tab="cache">⚡ Cache & Redis</div>
+                    <div class="yaa-tab" data-tab="cache">⚡ Cache & Bilder</div>
                     <div class="yaa-tab" data-tab="display">🎨 Darstellung</div>
                 </div>
                 
@@ -610,6 +620,25 @@ final class YAA_Admin {
                             </option>
                         <?php endforeach; ?>
                     </select>
+                </div>
+                
+                <!-- NEU: Bildgröße Auswahl -->
+                <div class="yaa-form-row">
+                    <label for="amazon_image_size">🖼️ Bevorzugte Bildgröße</label>
+                    <select id="amazon_image_size" name="yaa_settings[amazon_image_size]">
+                        <option value="Large" <?php selected(($options['amazon_image_size'] ?? 'Large'), 'Large'); ?>>
+                            Large (max. 500px) – Empfohlen
+                        </option>
+                        <option value="Medium" <?php selected(($options['amazon_image_size'] ?? 'Large'), 'Medium'); ?>>
+                            Medium (max. 160px)
+                        </option>
+                        <option value="Small" <?php selected(($options['amazon_image_size'] ?? 'Large'), 'Small'); ?>>
+                            Small (max. 75px)
+                        </option>
+                    </select>
+                    <p class="description">
+                        Größe der Amazon-Produktbilder. Bei Nicht-Verfügbarkeit wird automatisch die nächstbeste Größe verwendet.
+                    </p>
                 </div>
             </div>
             
@@ -907,12 +936,33 @@ final class YAA_Admin {
                 </p>
             </div>
             
+            <!-- NEU: Dateiname-Format -->
+            <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
+                <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
+                <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
+                    <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
+                        🔍 SEO-optimiert (Produktname + Timestamp)
+                    </option>
+                    <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
+                        🔢 Technisch (Produkt-ID)
+                    </option>
+                </select>
+                <p class="description" style="margin-top: 8px;">
+                    <strong>SEO-optimiert:</strong> Die ersten 30 Zeichen des Produktnamens + Timestamp für bessere Suchmaschinen-Indexierung.
+                </p>
+                <div class="yaa-seo-example">
+                    <strong>Beispiel SEO:</strong> samsung-galaxy-s24-ultra-smart_1734686220.jpg<br>
+                    <strong>Beispiel ID:</strong> amazon_B0CXYZ12345.jpg
+                </div>
+            </div>
+            
             <div class="yaa-feature-box">
                 <h4 style="margin-top: 0;">✅ Vorteile der lokalen Speicherung:</h4>
                 <ul style="margin: 10px 0 0 20px; list-style: disc;">
                     <li>Schnellere Ladezeiten (keine externen Requests)</li>
                     <li>Bessere DSGVO-Konformität (keine direkten Aufrufe zu Amazon)</li>
                     <li>Bilder bleiben verfügbar, auch wenn API-Quellen sie ändern</li>
+                    <li><strong>NEU:</strong> SEO-freundliche Dateinamen für bessere Indexierung</li>
                     <li>Kann im Shortcode überschrieben werden: <code>local_images="yes|no"</code></li>
                 </ul>
             </div>
@@ -1232,6 +1282,15 @@ final class YAA_Admin {
                             <td><strong>Lokale Bilder:</strong></td>
                             <td><?php echo (int) $image_stats['count']; ?> (<?php echo esc_html($image_stats['size']); ?>)</td>
                         </tr>
+                        <tr>
+                            <td><strong>Bildformat:</strong></td>
+                            <td>
+                                <?php 
+                                $format = yaa_get_option('image_filename_format', 'seo');
+                                echo $format === 'seo' ? '🔍 SEO-optimiert' : '🔢 Technisch (ID)';
+                                ?>
+                            </td>
+                        </tr>
                     </table>
                     
                     <p style="margin-top: 15px;">
@@ -1269,6 +1328,10 @@ final class YAA_Admin {
                                     <span class="yaa-status-badge yaa-status-error">❌ Nicht konfiguriert</span>
                                 <?php endif; ?>
                             </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Amazon Bildgröße:</strong></td>
+                            <td><?php echo esc_html(yaa_get_option('amazon_image_size', 'Large')); ?></td>
                         </tr>
                         <tr>
                             <td><strong>Redis:</strong></td>

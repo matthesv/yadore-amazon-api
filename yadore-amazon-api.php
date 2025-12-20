@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.2.8
+ * Version: 1.2.9
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.2.8');
+define('YAA_VERSION', '1.2.9');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -155,6 +155,7 @@ final class Yadore_Amazon_API_Plugin {
             'amazon_marketplace'     => 'de',
             'amazon_default_category'=> 'All',
             'amazon_language'        => '',
+            'amazon_image_size'      => 'Large', // NEU: Bildgröße
             
             // Cache Settings
             'cache_duration'         => 6,
@@ -164,6 +165,20 @@ final class Yadore_Amazon_API_Plugin {
             'redis_port'             => 6379,
             'redis_password'         => '',
             'redis_database'         => 0,
+            
+            // Local Image Storage
+            'enable_local_images'    => 'yes',
+            'image_filename_format'  => 'seo', // NEU: 'seo' oder 'id'
+            
+            // Fuzzy Search settings
+            'enable_fuzzy_search'    => 'yes',
+            'fuzzy_auto_mix'         => 'no',
+            'fuzzy_threshold'        => 30,
+            'fuzzy_weight_title'     => 0.40,
+            'fuzzy_weight_description' => 0.25,
+            'fuzzy_weight_category'  => 0.20,
+            'fuzzy_weight_merchant'  => 0.10,
+            'fuzzy_weight_keywords'  => 0.05,
             
             // Display Settings
             'disable_default_css'    => 'no',
@@ -176,6 +191,8 @@ final class Yadore_Amazon_API_Plugin {
             'show_prime_badge'       => 'yes',
             'show_merchant'          => 'yes',
             'show_description'       => 'yes',
+            'show_custom_badge'      => 'yes',
+            'custom_badge_text'      => 'Empfohlen',
             'color_primary'          => '#ff00cc',
             'color_secondary'        => '#00ffff',
             'color_amazon'           => '#ff9900',
@@ -217,6 +234,7 @@ final class Yadore_Amazon_API_Plugin {
             'combined_products',
             'custom_products',
             'all_products',
+            'fuzzy_products',
         ];
         
         $has_shortcode = false;
