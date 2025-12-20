@@ -3,7 +3,7 @@
  * Admin Coordinator Class
  * Koordiniert alle Admin-Submodule
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.4.1
  */
 
 declare(strict_types=1);
@@ -24,6 +24,7 @@ final class YAA_Admin {
     private ?YAA_Admin_Status $status = null;
     private ?YAA_Admin_Docs $docs = null;
     private ?YAA_Admin_Merchants $merchants = null;
+    private ?YAA_Admin_Revenue $revenue = null;
     
     public function __construct(
         YAA_Cache_Handler $cache, 
@@ -64,8 +65,11 @@ final class YAA_Admin {
         // Dokumentation-Modul
         $this->docs = new YAA_Admin_Docs();
         
-        // NEU: Händler-Modul mit CPC
+        // Händler-Modul
         $this->merchants = new YAA_Admin_Merchants($this->yadore_api, $this->cache);
+        
+        // NEU: Revenue-Kalkulator
+        $this->revenue = new YAA_Admin_Revenue($this->yadore_api, $this->cache);
     }
     
     /**
@@ -85,6 +89,10 @@ final class YAA_Admin {
     
     public function get_merchants(): YAA_Admin_Merchants {
         return $this->merchants;
+    }
+    
+    public function get_revenue(): YAA_Admin_Revenue {
+        return $this->revenue;
     }
     
     /**
@@ -112,11 +120,21 @@ final class YAA_Admin {
             [$this->settings, 'render_page']
         );
         
-        // Untermenü: Händlerübersicht (NEU)
+        // Untermenü: Revenue-Kalkulator (NEU)
+        add_submenu_page(
+            'yaa-settings',
+            __('Revenue-Kalkulator', 'yadore-amazon-api'),
+            __('💰 Revenue-Kalkulator', 'yadore-amazon-api'),
+            'manage_options',
+            'yaa-revenue',
+            [$this->revenue, 'render_page']
+        );
+        
+        // Untermenü: Händlerübersicht
         add_submenu_page(
             'yaa-settings',
             __('Händlerübersicht', 'yadore-amazon-api'),
-            __('🏪 Händler & CPC', 'yadore-amazon-api'),
+            __('🏪 Händler', 'yadore-amazon-api'),
             'manage_options',
             'yaa-merchants',
             [$this->merchants, 'render_page']
@@ -197,6 +215,13 @@ final class YAA_Admin {
             wp_register_script('yaa-admin-merchants', false, ['jquery', 'yaa-admin-tabs'], YAA_VERSION, true);
             wp_enqueue_script('yaa-admin-merchants');
             wp_add_inline_script('yaa-admin-merchants', $this->merchants->get_page_js());
+        }
+        
+        // NEU: Revenue-Kalkulator JS
+        if (str_ends_with($hook, '_page_yaa-revenue')) {
+            wp_register_script('yaa-admin-revenue', false, ['jquery', 'yaa-admin-tabs'], YAA_VERSION, true);
+            wp_enqueue_script('yaa-admin-revenue');
+            wp_add_inline_script('yaa-admin-revenue', $this->revenue->get_page_js());
         }
     }
     
@@ -377,10 +402,6 @@ final class YAA_Admin {
             .yaa-merchant-table td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
             .yaa-merchant-table tr:hover { background: #f9f9f9; }
             .yaa-merchant-logo { width: 40px; height: 40px; object-fit: contain; border-radius: 4px; }
-            .yaa-cpc-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 12px; }
-            .yaa-cpc-high { background: #d4edda; color: #155724; }
-            .yaa-cpc-medium { background: #fff3cd; color: #856404; }
-            .yaa-cpc-low { background: #f8d7da; color: #721c24; }
             .yaa-filter-bar { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; padding: 15px; background: #f6f7f7; border-radius: 4px; }
             .yaa-filter-bar input, .yaa-filter-bar select { padding: 8px 12px; border: 1px solid #ccd0d4; border-radius: 4px; }
             .yaa-pagination { display: flex; gap: 5px; margin-top: 20px; justify-content: center; }

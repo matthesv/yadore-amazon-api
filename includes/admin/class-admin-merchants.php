@@ -1,12 +1,15 @@
 <?php
 /**
- * Admin Merchants Page - Händlerübersicht mit CPC
+ * Admin Merchants Page - Händlerübersicht
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.4.1
  * 
  * Zeigt alle Händler aus beiden Yadore APIs:
  * - /v2/merchant (Offer-Händler)
- * - /v2/deeplink/merchant (Deeplink-Händler mit CPC)
+ * - /v2/deeplink/merchant (Deeplink-Händler)
+ * 
+ * HINWEIS: CPC wird pro Produkt berechnet, nicht pro Händler.
+ * Für CPC-Daten nutze den Revenue-Kalkulator.
  */
 
 declare(strict_types=1);
@@ -70,7 +73,7 @@ final class YAA_Admin_Merchants {
         
         ?>
         <div class="wrap yaa-admin-wrap">
-            <h1>🏪 <?php esc_html_e('Händlerübersicht mit CPC', 'yadore-amazon-api'); ?></h1>
+            <h1>🏪 <?php esc_html_e('Händlerübersicht', 'yadore-amazon-api'); ?></h1>
             
             <?php if (!$this->yadore_api->is_configured()): ?>
                 <div class="notice notice-error">
@@ -86,14 +89,12 @@ final class YAA_Admin_Merchants {
                     <div class="yaa-stat-label"><?php esc_html_e('Händler gesamt', 'yadore-amazon-api'); ?></div>
                 </div>
                 <div class="yaa-stat-box">
-                    <div class="yaa-stat-number" style="color: #00a32a;"><?php echo (int) $stats['with_cpc']; ?></div>
-                    <div class="yaa-stat-label"><?php esc_html_e('Mit CPC-Daten', 'yadore-amazon-api'); ?></div>
+                    <div class="yaa-stat-number" style="color: #00a32a;"><?php echo (int) $stats['offer']; ?></div>
+                    <div class="yaa-stat-label"><?php esc_html_e('Offer-Händler', 'yadore-amazon-api'); ?></div>
                 </div>
                 <div class="yaa-stat-box">
-                    <div class="yaa-stat-number" style="color: #dba617;">
-                        <?php echo $stats['avg_cpc'] > 0 ? number_format($stats['avg_cpc'], 4, ',', '.') . ' €' : '—'; ?>
-                    </div>
-                    <div class="yaa-stat-label"><?php esc_html_e('Ø CPC', 'yadore-amazon-api'); ?></div>
+                    <div class="yaa-stat-number" style="color: #dba617;"><?php echo (int) $stats['deeplink']; ?></div>
+                    <div class="yaa-stat-label"><?php esc_html_e('Deeplink-Händler', 'yadore-amazon-api'); ?></div>
                 </div>
                 <div class="yaa-stat-box">
                     <div class="yaa-stat-number" style="color: #135e96;"><?php echo (int) $stats['smartlink']; ?></div>
@@ -125,7 +126,6 @@ final class YAA_Admin_Merchants {
                                 <option value="offer" <?php selected($view, 'offer'); ?>><?php esc_html_e('Nur Offer-Händler', 'yadore-amazon-api'); ?></option>
                                 <option value="deeplink" <?php selected($view, 'deeplink'); ?>><?php esc_html_e('Nur Deeplink-Händler', 'yadore-amazon-api'); ?></option>
                                 <option value="smartlink" <?php selected($view, 'smartlink'); ?>><?php esc_html_e('Nur Smartlink-Händler', 'yadore-amazon-api'); ?></option>
-                                <option value="with_cpc" <?php selected($view, 'with_cpc'); ?>><?php esc_html_e('Nur mit CPC', 'yadore-amazon-api'); ?></option>
                             </select>
                         </label>
                         
@@ -147,16 +147,13 @@ final class YAA_Admin_Merchants {
             
             <!-- Info-Box -->
             <div class="yaa-feature-box info" style="margin-bottom: 20px;">
-                <h4 style="margin-top: 0;">💡 <?php esc_html_e('CPC-Informationen', 'yadore-amazon-api'); ?></h4>
+                <h4 style="margin-top: 0;">💡 <?php esc_html_e('Hinweis zu CPC-Daten', 'yadore-amazon-api'); ?></h4>
                 <p>
-                    <?php esc_html_e('Der angezeigte CPC ist der Brutto-CPC, den Yadore vom Händler erhält. Dein tatsächlicher Verdienst hängt von deinem Revenue-Share ab.', 'yadore-amazon-api'); ?>
+                    <?php esc_html_e('Der CPC (Cost per Click) wird pro Produkt/Angebot berechnet, nicht pro Händler.', 'yadore-amazon-api'); ?>
                     <br>
-                    <strong><?php esc_html_e('Quellen:', 'yadore-amazon-api'); ?></strong>
+                    <?php esc_html_e('Um CPC-Daten für konkrete Produkte zu sehen, nutze den', 'yadore-amazon-api'); ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=yaa-revenue')); ?>"><strong><?php esc_html_e('Revenue-Kalkulator', 'yadore-amazon-api'); ?></strong></a>.
                 </p>
-                <ul style="margin: 10px 0 0 20px;">
-                    <li><strong><?php esc_html_e('Offer-Händler:', 'yadore-amazon-api'); ?></strong> <?php esc_html_e('CPC wird pro Produkt/Angebot berechnet', 'yadore-amazon-api'); ?></li>
-                    <li><strong><?php esc_html_e('Deeplink-Händler:', 'yadore-amazon-api'); ?></strong> <?php esc_html_e('CPC ist direkt am Händler hinterlegt', 'yadore-amazon-api'); ?></li>
-                </ul>
             </div>
             
             <!-- Händler-Tabelle -->
@@ -182,9 +179,6 @@ final class YAA_Admin_Merchants {
                                     <?php echo $this->sortable_header('type', __('Typ', 'yadore-amazon-api'), $sort, $order); ?>
                                 </th>
                                 <th>
-                                    <?php echo $this->sortable_header('cpc', __('CPC (Brutto)', 'yadore-amazon-api'), $sort, $order); ?>
-                                </th>
-                                <th>
                                     <?php echo $this->sortable_header('offers', __('Angebote', 'yadore-amazon-api'), $sort, $order); ?>
                                 </th>
                                 <th><?php esc_html_e('Features', 'yadore-amazon-api'); ?></th>
@@ -192,10 +186,7 @@ final class YAA_Admin_Merchants {
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($merchants as $merchant): 
-                                $cpc_amount = (float) ($merchant['cpc_amount'] ?? 0);
-                                $cpc_class = $this->get_cpc_class($cpc_amount);
-                            ?>
+                            <?php foreach ($merchants as $merchant): ?>
                                 <tr>
                                     <td>
                                         <?php if (!empty($merchant['logo_url']) && !empty($merchant['has_logo'])): ?>
@@ -213,15 +204,6 @@ final class YAA_Admin_Merchants {
                                         <?php echo $this->render_type_badges($merchant); ?>
                                     </td>
                                     <td>
-                                        <?php if ($cpc_amount > 0): ?>
-                                            <span class="yaa-cpc-badge <?php echo esc_attr($cpc_class); ?>">
-                                                <?php echo number_format($cpc_amount, 4, ',', '.'); ?> €
-                                            </span>
-                                        <?php else: ?>
-                                            <span style="color: #999;">—</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
                                         <?php 
                                         $offers = (int) ($merchant['offer_count'] ?? 0);
                                         echo $offers > 0 ? number_format($offers, 0, ',', '.') : '—';
@@ -231,8 +213,8 @@ final class YAA_Admin_Merchants {
                                         <?php echo $this->render_feature_badges($merchant); ?>
                                     </td>
                                     <td>
-                                        <code style="font-size: 10px;" title="<?php echo esc_attr($merchant['id'] ?? ''); ?>">
-                                            <?php echo esc_html(substr($merchant['id'] ?? '', 0, 12) . '...'); ?>
+                                        <code style="font-size: 10px; word-break: break-all;">
+                                            <?php echo esc_html($merchant['id'] ?? ''); ?>
                                         </code>
                                     </td>
                                 </tr>
@@ -319,8 +301,6 @@ final class YAA_Admin_Merchants {
                     'is_smartlink' => false,
                     'is_deeplink'  => false,
                     'has_homepage' => false,
-                    'cpc_amount'   => 0,
-                    'cpc_currency' => 'EUR',
                 ];
             }
         }
@@ -340,26 +320,13 @@ final class YAA_Admin_Merchants {
                 
                 $id = $m['id'];
                 
-                // CPC extrahieren
-                $cpc_amount = 0;
-                $cpc_currency = 'EUR';
-                if (!empty($m['estimatedCpc']['amount'])) {
-                    $cpc_amount = (float) $m['estimatedCpc']['amount'];
-                    $cpc_currency = $m['estimatedCpc']['currency'] ?? 'EUR';
-                }
-                
                 // Existiert bereits als Offer-Händler?
                 if (isset($offer_merchants[$id])) {
-                    // Merge: CPC und Deeplink-Info hinzufügen
+                    // Merge: Deeplink-Info hinzufügen
                     $offer_merchants[$id]['is_deeplink'] = true;
                     $offer_merchants[$id]['is_smartlink'] = $is_smartlink;
                     $offer_merchants[$id]['has_homepage'] = !empty($m['hasSmartlinkHomepage']) || !empty($m['hasExternalHomepage']);
                     $offer_merchants[$id]['deeplink_count'] = $m['deeplinkCount'] ?? 0;
-                    
-                    if ($cpc_amount > 0) {
-                        $offer_merchants[$id]['cpc_amount'] = $cpc_amount;
-                        $offer_merchants[$id]['cpc_currency'] = $cpc_currency;
-                    }
                 } else {
                     // Neuer Händler (nur Deeplink)
                     $deeplink_merchants[$id] = [
@@ -373,8 +340,6 @@ final class YAA_Admin_Merchants {
                         'is_smartlink'   => $is_smartlink,
                         'is_deeplink'    => true,
                         'has_homepage'   => !empty($m['hasSmartlinkHomepage']) || !empty($m['hasExternalHomepage']),
-                        'cpc_amount'     => $cpc_amount,
-                        'cpc_currency'   => $cpc_currency,
                     ];
                 }
             }
@@ -382,12 +347,6 @@ final class YAA_Admin_Merchants {
         
         // Zusammenführen
         $all = array_merge(array_values($offer_merchants), array_values($deeplink_merchants));
-        
-        // Filter: Nur mit CPC
-        if ($view === 'with_cpc') {
-            $all = array_filter($all, fn($m) => ($m['cpc_amount'] ?? 0) > 0);
-            $all = array_values($all);
-        }
         
         return $all;
     }
@@ -411,14 +370,12 @@ final class YAA_Admin_Merchants {
     private function sort_merchants(array $merchants, string $sort, string $order): array {
         usort($merchants, function($a, $b) use ($sort, $order) {
             $val_a = match($sort) {
-                'cpc' => (float) ($a['cpc_amount'] ?? 0),
                 'offers' => (int) ($a['offer_count'] ?? 0),
                 'type' => $a['type'] ?? '',
                 default => strtolower($a['name'] ?? ''),
             };
             
             $val_b = match($sort) {
-                'cpc' => (float) ($b['cpc_amount'] ?? 0),
                 'offers' => (int) ($b['offer_count'] ?? 0),
                 'type' => $b['type'] ?? '',
                 default => strtolower($b['name'] ?? ''),
@@ -444,15 +401,16 @@ final class YAA_Admin_Merchants {
      */
     private function get_stats(array $merchants): array {
         $total = count($merchants);
-        $with_cpc = 0;
-        $total_cpc = 0;
+        $offer = 0;
+        $deeplink = 0;
         $smartlink = 0;
         
         foreach ($merchants as $m) {
-            $cpc = (float) ($m['cpc_amount'] ?? 0);
-            if ($cpc > 0) {
-                $with_cpc++;
-                $total_cpc += $cpc;
+            if (($m['type'] ?? '') === 'offer' || ($m['offer_count'] ?? 0) > 0) {
+                $offer++;
+            }
+            if (!empty($m['is_deeplink'])) {
+                $deeplink++;
             }
             if (!empty($m['is_smartlink'])) {
                 $smartlink++;
@@ -461,19 +419,10 @@ final class YAA_Admin_Merchants {
         
         return [
             'total'    => $total,
-            'with_cpc' => $with_cpc,
-            'avg_cpc'  => $with_cpc > 0 ? $total_cpc / $with_cpc : 0,
+            'offer'    => $offer,
+            'deeplink' => $deeplink,
             'smartlink' => $smartlink,
         ];
-    }
-    
-    /**
-     * CPC-Klasse ermitteln
-     */
-    private function get_cpc_class(float $cpc): string {
-        if ($cpc >= 0.10) return 'yaa-cpc-high';
-        if ($cpc >= 0.05) return 'yaa-cpc-medium';
-        return 'yaa-cpc-low';
     }
     
     /**
@@ -535,7 +484,6 @@ final class YAA_Admin_Merchants {
     
     /**
      * JavaScript für die Seite
-     * KORRIGIERT: String-Escaping in CSV-Export
      */
     public function get_page_js(): string {
         $copy_text = esc_js(__('IDs in Zwischenablage kopiert!', 'yadore-amazon-api'));
@@ -578,7 +526,7 @@ jQuery(document).ready(function($) {
     // CSV Export
     $("#yaa-export-csv").on("click", function() {
         var rows = [];
-        rows.push(["Name", "Typ", "CPC", "Angebote", "ID"]);
+        rows.push(["Name", "Typ", "Angebote", "ID"]);
         
         $(".yaa-merchant-table tbody tr").each(function() {
             var \$row = $(this);
@@ -586,8 +534,7 @@ jQuery(document).ready(function($) {
                 \$row.find("td:eq(1)").text().trim(),
                 \$row.find("td:eq(2)").text().trim(),
                 \$row.find("td:eq(3)").text().trim(),
-                \$row.find("td:eq(4)").text().trim(),
-                \$row.find("td:eq(6) code").attr("title") || ""
+                \$row.find("td:eq(5) code").text().trim()
             ]);
         });
         
@@ -608,7 +555,7 @@ jQuery(document).ready(function($) {
     $("#yaa-copy-merchant-ids").on("click", function() {
         var ids = [];
         $(".yaa-merchant-table tbody tr").each(function() {
-            var id = $(this).find("td:eq(6) code").attr("title");
+            var id = $(this).find("td:eq(5) code").text().trim();
             if (id) ids.push(id);
         });
         

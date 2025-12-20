@@ -2,7 +2,7 @@
 /**
  * Admin AJAX Handler
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.4.1
  */
 
 declare(strict_types=1);
@@ -32,6 +32,7 @@ final class YAA_Admin_Ajax {
         add_action('wp_ajax_yaa_test_redis', [$this, 'test_redis']);
         add_action('wp_ajax_yaa_refresh_merchants', [$this, 'refresh_merchants']);
         add_action('wp_ajax_yaa_fetch_deeplink_merchants', [$this, 'fetch_deeplink_merchants']);
+        add_action('wp_ajax_yaa_fetch_offers_with_cpc', [$this, 'fetch_offers_with_cpc']);
     }
     
     /**
@@ -137,7 +138,7 @@ final class YAA_Admin_Ajax {
     }
     
     /**
-     * NEU: Fetch Deeplink Merchants (mit CPC)
+     * Fetch Deeplink Merchants (mit CPC)
      */
     public function fetch_deeplink_merchants(): void {
         check_ajax_referer('yaa_admin_nonce', 'nonce');
@@ -165,5 +166,95 @@ final class YAA_Admin_Ajax {
                 'message' => $result['error'] ?? __('Unbekannter Fehler', 'yadore-amazon-api'),
             ]);
         }
+    }
+    
+    /**
+     * NEU: Fetch Offers mit CPC-Daten für Revenue-Kalkulator
+     * Ruft die /v2/offer API auf und gibt CPC pro Angebot zurück
+     */
+    public function fetch_offers_with_cpc(): void {
+        check_ajax_referer('yaa_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Keine Berechtigung', 'yadore-amazon-api')]);
+        }
+        
+        $keyword = sanitize_text_field($_POST['keyword'] ?? '');
+        $market = sanitize_text_field($_POST['market'] ?? 'de');
+        $limit = max(1, min(100, (int) ($_POST['limit'] ?? 9)));
+        
+        if ($keyword === '') {
+            wp_send_json_error(['message' => __('Kein Keyword angegeben.', 'yadore-amazon-api')]);
+        }
+        
+        // Direkte API-Abfrage (ohne Merchant-Filter, um alle CPC zu sehen)
+        $api_key = $this->yadore_api->get_api_key();
+        
+        if ($api_key === '') {
+            wp_send_json_error(['message' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api')]);
+        }
+        
+        $url = 'https://api.yadore.com/v2/offer?' . http_build_query([
+            'market'    => $market,
+            'keyword'   => $keyword,
+            'limit'     => $limit,
+            'precision' => 'fuzzy',
+        ]);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 30,
+            'headers' => [
+                'API-Key' => $api_key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => $response->get_error_message()]);
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if ($status_code !== 200 || !is_array($data)) {
+            $error = $data['errors']['market'][0] ?? $data['errors']['keyword'][0] ?? 'HTTP Error ' . $status_code;
+            wp_send_json_error(['message' => $error]);
+        }
+        
+        // Angebote mit CPC extrahieren
+        $offers = [];
+        $raw_offers = $data['offers'] ?? [];
+        
+        foreach ($raw_offers as $offer) {
+            $cpc_amount = null;
+            $cpc_currency = 'EUR';
+            
+            // CPC aus estimatedCpc extrahieren
+            if (isset($offer['estimatedCpc']['amount'])) {
+                $cpc_amount = (float) $offer['estimatedCpc']['amount'];
+                $cpc_currency = $offer['estimatedCpc']['currency'] ?? 'EUR';
+            }
+            
+            $offers[] = [
+                'id'             => $offer['id'] ?? '',
+                'title'          => $offer['title'] ?? '',
+                'merchant_name'  => $offer['merchant']['name'] ?? '',
+                'merchant_id'    => $offer['merchant']['id'] ?? '',
+                'price_amount'   => $offer['price']['amount'] ?? '',
+                'price_currency' => $offer['price']['currency'] ?? 'EUR',
+                'price_display'  => '', // Yadore liefert kein display
+                'image_url'      => $offer['image']['url'] ?? '',
+                'cpc_amount'     => $cpc_amount,
+                'cpc_currency'   => $cpc_currency,
+                'availability'   => $offer['availability'] ?? 'UNKNOWN',
+            ];
+        }
+        
+        wp_send_json_success([
+            'offers' => $offers,
+            'count'  => count($offers),
+            'total'  => $data['total'] ?? count($offers),
+        ]);
     }
 }
