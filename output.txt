@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.2.8
+ * Version: 1.2.10
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.2.8');
+define('YAA_VERSION', '1.2.10');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -77,6 +77,7 @@ require_once YAA_PLUGIN_PATH . 'includes/class-amazon-paapi.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-custom-products.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-shortcode-renderer.php';
 require_once YAA_PLUGIN_PATH . 'includes/class-admin.php';
+require_once YAA_PLUGIN_PATH . 'includes/class-merchant-filter.php';
 
 // =========================================
 // PLUGIN UPDATE CHECKER (GitHub)
@@ -164,6 +165,7 @@ final class Yadore_Amazon_API_Plugin {
             'amazon_marketplace'     => 'de',
             'amazon_default_category'=> 'All',
             'amazon_language'        => '',
+            'amazon_image_size'      => 'Large', // NEU: Bildgröße
             
             // Cache Settings
             'cache_duration'         => 6,
@@ -173,6 +175,20 @@ final class Yadore_Amazon_API_Plugin {
             'redis_port'             => 6379,
             'redis_password'         => '',
             'redis_database'         => 0,
+            
+            // Local Image Storage
+            'enable_local_images'    => 'yes',
+            'image_filename_format'  => 'seo', // NEU: 'seo' oder 'id'
+            
+            // Fuzzy Search settings
+            'enable_fuzzy_search'    => 'yes',
+            'fuzzy_auto_mix'         => 'no',
+            'fuzzy_threshold'        => 30,
+            'fuzzy_weight_title'     => 0.40,
+            'fuzzy_weight_description' => 0.25,
+            'fuzzy_weight_category'  => 0.20,
+            'fuzzy_weight_merchant'  => 0.10,
+            'fuzzy_weight_keywords'  => 0.05,
             
             // Display Settings
             'disable_default_css'    => 'no',
@@ -185,6 +201,8 @@ final class Yadore_Amazon_API_Plugin {
             'show_prime_badge'       => 'yes',
             'show_merchant'          => 'yes',
             'show_description'       => 'yes',
+            'show_custom_badge'      => 'yes',
+            'custom_badge_text'      => 'Empfohlen',
             'color_primary'          => '#ff00cc',
             'color_secondary'        => '#00ffff',
             'color_amazon'           => '#ff9900',
@@ -226,6 +244,7 @@ final class Yadore_Amazon_API_Plugin {
             'combined_products',
             'custom_products',
             'all_products',
+            'fuzzy_products',
         ];
         
         $has_shortcode = false;
@@ -372,7 +391,8 @@ function yaa_plugin_action_links(array $links): array {
     array_unshift($links, $settings_link);
     return $links;
 }
-add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_links'); 
+add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_links');
+ 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\frontend-grid.css 
  
 /**
@@ -2741,11 +2761,14 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * Version: 1.2.6
+ * Version: 1.3.0
  *
  * Features:
  * - Yadore API Configuration
+ * - Yadore Merchant Filter (Whitelist/Blacklist) - NEU
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
+ * - Image Size Selection - NEU
+ * - SEO Filename Configuration - NEU
  * - Custom Products Management
  * - Redis Cache Configuration
  * - Local Image Storage Configuration
@@ -2788,6 +2811,7 @@ final class YAA_Admin {
         add_action('wp_ajax_yaa_test_yadore', [$this, 'ajax_test_yadore']);
         add_action('wp_ajax_yaa_test_amazon', [$this, 'ajax_test_amazon']);
         add_action('wp_ajax_yaa_test_redis', [$this, 'ajax_test_redis']);
+        add_action('wp_ajax_yaa_refresh_merchants', [$this, 'ajax_refresh_merchants']); // NEU
     }
     
     /**
@@ -2863,6 +2887,10 @@ final class YAA_Admin {
             ? $input['yadore_precision'] : 'fuzzy';
         $sanitized['yadore_default_limit'] = max(1, min(50, (int) ($input['yadore_default_limit'] ?? 9)));
         
+        // NEU: Merchant Filter
+        $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
+        $sanitized['yadore_merchant_blacklist'] = $this->sanitize_merchant_list($input['yadore_merchant_blacklist'] ?? '');
+        
         // Amazon settings
         $sanitized['enable_amazon'] = isset($input['enable_amazon']) ? 'yes' : 'no';
         $sanitized['amazon_access_key'] = sanitize_text_field($input['amazon_access_key'] ?? '');
@@ -2886,6 +2914,13 @@ final class YAA_Admin {
         
         // Local Image Storage
         $sanitized['enable_local_images'] = isset($input['enable_local_images']) ? 'yes' : 'no';
+        
+        // NEU: Bildgröße und SEO-Dateinamen
+        $sanitized['preferred_image_size'] = in_array($input['preferred_image_size'] ?? '', ['Large', 'Medium', 'Small'], true) 
+            ? $input['preferred_image_size'] : 'Large';
+        $sanitized['image_filename_format'] = in_array($input['image_filename_format'] ?? '', ['seo', 'id'], true) 
+            ? $input['image_filename_format'] : 'seo';
+        $sanitized['image_resize_enabled'] = isset($input['image_resize_enabled']) ? 'yes' : 'no';
         
         // Fuzzy Search settings
         $sanitized['enable_fuzzy_search'] = isset($input['enable_fuzzy_search']) ? 'yes' : 'no';
@@ -2919,6 +2954,15 @@ final class YAA_Admin {
         $sanitized['github_token'] = sanitize_text_field($input['github_token'] ?? '');
         
         return $sanitized;
+    }
+    
+    /**
+     * NEU: Sanitize merchant list (comma-separated)
+     */
+    private function sanitize_merchant_list(string $input): string {
+        $list = array_map('trim', explode(',', $input));
+        $list = array_filter($list, fn($item) => $item !== '');
+        return implode(', ', $list);
     }
     
     /**
@@ -3001,6 +3045,8 @@ final class YAA_Admin {
             .yaa-stat-box { background: #f6f7f7; padding: 15px; border-radius: 8px; text-align: center; }
             .yaa-stat-number { font-size: 2rem; font-weight: 700; line-height: 1.2; }
             .yaa-stat-label { color: #50575e; font-size: 13px; margin-top: 5px; }
+            .yaa-merchant-select { width: 100%; max-width: 400px; min-height: 100px; }
+            .yaa-seo-example { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px; padding: 10px 15px; margin-top: 10px; font-family: monospace; font-size: 12px; }
             @media (max-width: 782px) { 
                 .yaa-grid { grid-template-columns: 1fr; }
                 .yaa-grid-3, .yaa-grid-4 { grid-template-columns: 1fr; }
@@ -3078,8 +3124,76 @@ final class YAA_Admin {
                         $result.html("<div class=\'yaa-status-error\' style=\'padding:12px;border-radius:4px;\'>❌ Verbindungsfehler</div>").show();
                     });
                 });
+                
+                // NEU: Merchant list refresh
+                $("#yaa-refresh-merchants").on("click", function() {
+                    var $btn = $(this);
+                    var $status = $("#yaa-merchant-refresh-status");
+                    
+                    $btn.prop("disabled", true).text("Wird geladen...");
+                    $status.html("");
+                    
+                    $.post(yaaAdmin.ajaxurl, {
+                        action: "yaa_refresh_merchants",
+                        nonce: yaaAdmin.nonce,
+                        market: $("select[name=\'yaa_settings[yadore_market]\']").val()
+                    }, function(response) {
+                        $btn.prop("disabled", false).text("🔄 Händlerliste aktualisieren");
+                        
+                        if (response.success) {
+                            $status.html("<span style=\'color:green;\'>✅ " + response.data.message + "</span>");
+                            setTimeout(function() { location.reload(); }, 1500);
+                        } else {
+                            $status.html("<span style=\'color:red;\'>❌ " + response.data.message + "</span>");
+                        }
+                    }).fail(function() {
+                        $btn.prop("disabled", false).text("🔄 Händlerliste aktualisieren");
+                        $status.html("<span style=\'color:red;\'>❌ Verbindungsfehler</span>");
+                    });
+                });
+                
+                // NEU: Multi-Select zu Text synchronisieren
+                $("select.yaa-merchant-select").on("change", function() {
+                    var $select = $(this);
+                    var $input = $select.closest(".yaa-form-row").find("input[type=\'text\']");
+                    var values = $select.val() || [];
+                    $input.val(values.join(", "));
+                });
             });
         ';
+    }
+    
+    /**
+     * Get local image statistics
+     */
+    private function get_local_image_stats(): array {
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+        
+        $count = 0;
+        $total_size = 0;
+        
+        if (is_dir($image_dir)) {
+            $files = glob($image_dir . '/*');
+            if ($files !== false) {
+                $count = count($files);
+                foreach ($files as $file) {
+                    if (is_file($file)) {
+                        $total_size += filesize($file);
+                    }
+                }
+            }
+        }
+        
+        if ($total_size < 1024) {
+            $size = $total_size . ' B';
+        } elseif ($total_size < 1024 * 1024) {
+            $size = round($total_size / 1024, 1) . ' KB';
+        } else {
+            $size = round($total_size / (1024 * 1024), 2) . ' MB';
+        }
+        
+        return ['count' => $count, 'size' => $size];
     }
     
     /**
@@ -3111,7 +3225,7 @@ final class YAA_Admin {
                     <div class="yaa-tab active" data-tab="yadore">📦 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
                     <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
-                    <div class="yaa-tab" data-tab="cache">⚡ Cache & Redis</div>
+                    <div class="yaa-tab" data-tab="cache">⚡ Cache & Bilder</div>
                     <div class="yaa-tab" data-tab="display">🎨 Darstellung</div>
                 </div>
                 
@@ -3147,12 +3261,18 @@ final class YAA_Admin {
     }
     
     /**
-     * Render Yadore settings
+     * Render Yadore settings - MIT Merchant Filter
      *
      * @param array<string, mixed> $options
      * @param array<string, string> $markets
      */
     private function render_yadore_settings(array $options, array $markets): void {
+        $current_market = $options['yadore_market'] ?? 'de';
+        $merchants = class_exists('YAA_Merchant_Filter') ? YAA_Merchant_Filter::get_stored_merchants($current_market) : [];
+        $last_update = class_exists('YAA_Merchant_Filter') ? YAA_Merchant_Filter::get_last_update($current_market) : null;
+        
+        $whitelist = $options['yadore_merchant_whitelist'] ?? '';
+        $blacklist = $options['yadore_merchant_blacklist'] ?? '';
         ?>
         <div class="yaa-card">
             <h2>📦 Yadore API Konfiguration</h2>
@@ -3221,6 +3341,106 @@ final class YAA_Admin {
                     🔍 Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <!-- NEU: Merchant Filter -->
+        <div class="yaa-card">
+            <h2>🏪 Händler-Filter (Whitelist / Blacklist)</h2>
+            <p class="description">
+                Filtere Produkte nach Händlern. <strong>Whitelist hat immer Vorrang</strong> vor der Blacklist.
+                Das Matching erfolgt auf dem Händlernamen (case-insensitive, partial match).
+            </p>
+            
+            <div class="yaa-feature-box info" style="margin-bottom: 20px;">
+                <h4 style="margin-top: 0;">📋 Händlerliste</h4>
+                <p>
+                    <strong><?php echo count($merchants); ?></strong> Händler verfügbar
+                    <?php if ($last_update): ?>
+                        (zuletzt aktualisiert: <?php echo esc_html(date_i18n('d.m.Y H:i', $last_update)); ?>)
+                    <?php endif; ?>
+                </p>
+                <p>
+                    <button type="button" class="button" id="yaa-refresh-merchants">
+                        🔄 Händlerliste aktualisieren
+                    </button>
+                    <span id="yaa-merchant-refresh-status" style="margin-left: 10px;"></span>
+                </p>
+            </div>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="yadore_merchant_whitelist">
+                        ✅ Whitelist (nur diese Händler anzeigen)
+                    </label>
+                    <?php if (!empty($merchants)): ?>
+                        <select name="yaa_settings_whitelist_select[]" multiple class="yaa-merchant-select">
+                            <?php 
+                            $whitelist_array = array_map('trim', explode(',', $whitelist));
+                            foreach ($merchants as $merchant): 
+                                $is_selected = in_array($merchant['name'], $whitelist_array, true);
+                            ?>
+                                <option value="<?php echo esc_attr($merchant['name']); ?>" <?php selected($is_selected); ?>>
+                                    <?php echo esc_html($merchant['name']); ?>
+                                    <?php if (!empty($merchant['offerCount'])): ?>
+                                        (<?php echo number_format($merchant['offerCount'], 0, ',', '.'); ?>)
+                                    <?php endif; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    <?php endif; ?>
+                    <input type="text" id="yadore_merchant_whitelist" 
+                           name="yaa_settings[yadore_merchant_whitelist]" 
+                           value="<?php echo esc_attr($whitelist); ?>"
+                           placeholder="amazon, otto, mediamarkt"
+                           style="margin-top: 10px;">
+                    <p class="description">
+                        Komma-separierte Liste. Wenn gesetzt, werden <strong>NUR</strong> Produkte dieser Händler angezeigt.
+                    </p>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="yadore_merchant_blacklist">
+                        ❌ Blacklist (diese Händler ausschließen)
+                    </label>
+                    <?php if (!empty($merchants)): ?>
+                        <select name="yaa_settings_blacklist_select[]" multiple class="yaa-merchant-select">
+                            <?php 
+                            $blacklist_array = array_map('trim', explode(',', $blacklist));
+                            foreach ($merchants as $merchant): 
+                                $is_selected = in_array($merchant['name'], $blacklist_array, true);
+                            ?>
+                                <option value="<?php echo esc_attr($merchant['name']); ?>" <?php selected($is_selected); ?>>
+                                    <?php echo esc_html($merchant['name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    <?php endif; ?>
+                    <input type="text" id="yadore_merchant_blacklist" 
+                           name="yaa_settings[yadore_merchant_blacklist]" 
+                           value="<?php echo esc_attr($blacklist); ?>"
+                           placeholder="aliexpress, wish"
+                           style="margin-top: 10px;">
+                    <p class="description">
+                        Komma-separierte Liste. Produkte dieser Händler werden ausgeblendet (wenn keine Whitelist aktiv).
+                    </p>
+                </div>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 20px;">
+                <strong>⚠️ Whitelist hat Vorrang:</strong> Wenn die Whitelist gesetzt ist, wird die Blacklist ignoriert.
+            </div>
+            
+            <div class="yaa-feature-box" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">📝 Shortcode-Override</h4>
+                <p>Du kannst den Filter pro Shortcode überschreiben:</p>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Laptop" merchant_whitelist="amazon,otto"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Handy" merchant_blacklist="aliexpress,wish"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" merchants="mediamarkt,saturn"]</div>
+                <p class="description" style="margin-top: 10px;">
+                    <code>merchant_whitelist</code> / <code>merchants</code> = Whitelist<br>
+                    <code>merchant_blacklist</code> / <code>exclude_merchants</code> = Blacklist
+                </p>
             </div>
         </div>
         
@@ -3528,9 +3748,6 @@ final class YAA_Admin {
             <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" mix_custom="yes" custom_limit="2"]</div>
             <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" mix_custom="yes" custom_position="alternate"]</div>
             
-            <h4>Kombiniert mit anderen Quellen:</h4>
-            <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" custom_fuzzy="yes" custom_limit="3"]</div>
-            
             <div class="yaa-tip">
                 <strong>Tipp:</strong> Füge bei eigenen Produkten zusätzliche "Fuzzy-Keywords" hinzu, 
                 um die Trefferquote zu verbessern. Diese findest du im Produkt-Bearbeitungsformular.
@@ -3572,13 +3789,15 @@ final class YAA_Admin {
     }
     
     /**
-     * Render cache settings
+     * Render cache settings - MIT Bildgrößen und SEO-Dateinamen
      *
      * @param array<string, mixed> $options
      * @param array<string, mixed> $cache_status
      */
     private function render_cache_settings(array $options, array $cache_status): void {
         $image_stats = $this->get_local_image_stats();
+        $can_resize = class_exists('YAA_Image_Handler') && YAA_Image_Handler::can_resize_images();
+        $image_library = class_exists('YAA_Image_Handler') ? YAA_Image_Handler::get_image_library() : 'Unknown';
         ?>
         <div class="yaa-card">
             <h2>⚡ Cache-Einstellungen</h2>
@@ -3646,13 +3865,102 @@ final class YAA_Admin {
                 </p>
             </div>
             
+            <!-- NEU: Bildgrößen-Einstellung -->
+            <div class="yaa-feature-box info" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">🖼️ Bevorzugte Bildgröße</h4>
+                <p class="description" style="margin-bottom: 15px;">
+                    Diese Einstellung gilt für <strong>alle Quellen</strong> (Amazon, Yadore, eigene Produkte).
+                </p>
+                
+                <div class="yaa-form-row">
+                    <label for="preferred_image_size">Bildgröße auswählen</label>
+                    <select id="preferred_image_size" name="yaa_settings[preferred_image_size]">
+                        <option value="Large" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Large'); ?>>
+                            🖼️ Large (max. 500px) – Beste Qualität
+                        </option>
+                        <option value="Medium" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Medium'); ?>>
+                            🖼️ Medium (max. 160px) – Mittelgroß
+                        </option>
+                        <option value="Small" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Small'); ?>>
+                            🖼️ Small (max. 75px) – Thumbnail
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[image_resize_enabled]" value="yes" 
+                            <?php checked(($options['image_resize_enabled'] ?? 'yes'), 'yes'); ?>
+                            <?php echo !$can_resize ? 'disabled' : ''; ?>>
+                        <strong>Bilder beim Speichern skalieren</strong>
+                    </label>
+                    <p class="description">
+                        Skaliert heruntergeladene Bilder auf die gewählte Maximalgröße. 
+                        Reduziert Speicherplatz und verbessert Ladezeiten.
+                    </p>
+                    <?php if (!$can_resize): ?>
+                        <p class="description" style="color: #dc3232;">
+                            ⚠️ Bildverarbeitung nicht verfügbar. Installieren Sie GD oder Imagick.
+                        </p>
+                    <?php else: ?>
+                        <p class="description">
+                            ✅ Bildverarbeitung: <strong><?php echo esc_html($image_library); ?></strong>
+                        </p>
+                    <?php endif; ?>
+                </div>
+                
+                <table class="widefat" style="margin-top: 15px;">
+                    <thead>
+                        <tr>
+                            <th>Quelle</th>
+                            <th>Wirkung der Einstellung</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Amazon</strong></td>
+                            <td>Wählt die entsprechende Bildgröße direkt von der API + optionale Skalierung</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Yadore</strong></td>
+                            <td>Skaliert das Bild beim lokalen Speichern auf die Maximalgröße</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Eigene Produkte</strong></td>
+                            <td>Externe Bilder werden beim Speichern skaliert</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- NEU: SEO-Dateinamen -->
+            <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
+                <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
+                <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
+                    <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
+                        🔍 SEO-optimiert (Produktname + Timestamp)
+                    </option>
+                    <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
+                        🔢 Technisch (Produkt-ID)
+                    </option>
+                </select>
+                <p class="description" style="margin-top: 8px;">
+                    <strong>SEO-optimiert:</strong> Die ersten 30 Zeichen des Produktnamens + Timestamp für bessere Suchmaschinen-Indexierung.
+                </p>
+                <div class="yaa-seo-example">
+                    <strong>Beispiel SEO:</strong> samsung-galaxy-s24-ultra-smart_1734686220.jpg<br>
+                    <strong>Beispiel ID:</strong> amazon_B0CXYZ12345.jpg
+                </div>
+            </div>
+            
             <div class="yaa-feature-box">
                 <h4 style="margin-top: 0;">✅ Vorteile der lokalen Speicherung:</h4>
                 <ul style="margin: 10px 0 0 20px; list-style: disc;">
                     <li>Schnellere Ladezeiten (keine externen Requests)</li>
                     <li>Bessere DSGVO-Konformität (keine direkten Aufrufe zu Amazon)</li>
                     <li>Bilder bleiben verfügbar, auch wenn API-Quellen sie ändern</li>
-                    <li>Kann im Shortcode überschrieben werden: <code>local_images="yes|no"</code></li>
+                    <li>SEO-freundliche Dateinamen für bessere Indexierung</li>
+                    <li>Optimierte Bildgrößen für alle Quellen</li>
                 </ul>
             </div>
             
@@ -3738,45 +4046,6 @@ final class YAA_Admin {
             </div>
         </div>
         <?php
-    }
-    
-    /**
-     * Get local image statistics
-     *
-     * @return array{count: int, size: string}
-     */
-    private function get_local_image_stats(): array {
-        $upload_dir = wp_upload_dir();
-        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
-        
-        $count = 0;
-        $total_size = 0;
-        
-        if (is_dir($image_dir)) {
-            $files = glob($image_dir . '/*');
-            if ($files !== false) {
-                $count = count($files);
-                foreach ($files as $file) {
-                    if (is_file($file)) {
-                        $total_size += filesize($file);
-                    }
-                }
-            }
-        }
-        
-        // Format size
-        if ($total_size < 1024) {
-            $size = $total_size . ' B';
-        } elseif ($total_size < 1024 * 1024) {
-            $size = round($total_size / 1024, 1) . ' KB';
-        } else {
-            $size = round($total_size / (1024 * 1024), 2) . ' MB';
-        }
-        
-        return [
-            'count' => $count,
-            'size'  => $size,
-        ];
     }
     
     /**
@@ -3971,6 +4240,19 @@ final class YAA_Admin {
                             <td><strong>Lokale Bilder:</strong></td>
                             <td><?php echo (int) $image_stats['count']; ?> (<?php echo esc_html($image_stats['size']); ?>)</td>
                         </tr>
+                        <tr>
+                            <td><strong>Bildformat:</strong></td>
+                            <td>
+                                <?php 
+                                $format = yaa_get_option('image_filename_format', 'seo');
+                                echo $format === 'seo' ? '🔍 SEO-optimiert' : '🔢 Technisch (ID)';
+                                ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Bildgröße:</strong></td>
+                            <td><?php echo esc_html(yaa_get_option('preferred_image_size', 'Large')); ?></td>
+                        </tr>
                     </table>
                     
                     <p style="margin-top: 15px;">
@@ -4039,6 +4321,21 @@ final class YAA_Admin {
                                 <?php endif; ?>
                             </td>
                         </tr>
+                        <tr>
+                            <td><strong>Merchant Filter:</strong></td>
+                            <td>
+                                <?php 
+                                $whitelist = yaa_get_option('yadore_merchant_whitelist', '');
+                                $blacklist = yaa_get_option('yadore_merchant_blacklist', '');
+                                if ($whitelist !== ''): ?>
+                                    <span class="yaa-status-badge yaa-status-info">Whitelist aktiv</span>
+                                <?php elseif ($blacklist !== ''): ?>
+                                    <span class="yaa-status-badge yaa-status-warning">Blacklist aktiv</span>
+                                <?php else: ?>
+                                    <span class="yaa-status-badge yaa-status-info">Kein Filter</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
                     </table>
                 </div>
             </div>
@@ -4071,6 +4368,18 @@ final class YAA_Admin {
                                 <span class="yaa-status-badge yaa-status-success">✅ Installiert</span>
                             <?php else: ?>
                                 <span class="yaa-status-badge yaa-status-warning">Nicht installiert</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>Bildverarbeitung:</strong></td>
+                        <td>
+                            <?php 
+                            $image_library = class_exists('YAA_Image_Handler') ? YAA_Image_Handler::get_image_library() : 'Unknown';
+                            if ($image_library !== 'None'): ?>
+                                <span class="yaa-status-badge yaa-status-success">✅ <?php echo esc_html($image_library); ?></span>
+                            <?php else: ?>
+                                <span class="yaa-status-badge yaa-status-warning">Nicht verfügbar</span>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -4111,7 +4420,7 @@ final class YAA_Admin {
             <div class="yaa-card">
                 <h2>🎨 CSS Klassen Referenz</h2>
                 <p>Nutzen Sie diese Klassen, um das Design über <strong>Custom CSS</strong> in Ihrem Theme anzupassen.</p>
-                <p>Wenn Sie die Option <em>"Standard-CSS deaktivieren"</em> nutzen, müssen Sie das Grid-Layout (z.B. mit Flexbox oder Grid) selbst definieren.</p>
+                <p>Wenn Sie die Option <em>"Standard-CSS deaktivieren"</em> nutzen, müssen Sie das Grid-Layout selbst definieren.</p>
                 
                 <div class="yaa-code-block">
                     <pre>
@@ -4120,45 +4429,43 @@ final class YAA_Admin {
 
 /* Einzelnes Produkt-Element */
 .yaa-item { }
-.yaa-item.yaa-amazon { }  /* Nur Amazon Produkte */
-.yaa-item.yaa-custom { }  /* Nur Eigene Produkte */
-.yaa-item.yaa-yadore { }  /* Nur Yadore Produkte */
+.yaa-item.yaa-amazon { }  /* Nur Amazon */
+.yaa-item.yaa-custom { }  /* Nur Eigene */
+.yaa-item.yaa-yadore { }  /* Nur Yadore */
 
 /* Badges */
-.yaa-prime-badge { }      /* Prime Label */
-.yaa-custom-badge { }     /* "Empfohlen" Label */
+.yaa-prime-badge { }
+.yaa-custom-badge { }
 
 /* Bild-Bereich */
 .yaa-image-wrapper { }
 .yaa-image-wrapper img { }
-.yaa-no-image { }         /* Fallback wenn kein Bild */
+.yaa-no-image { }
 
 /* Inhalt */
 .yaa-content { }
 .yaa-title { }
 .yaa-title a { }
 
-/* Beschreibung & Mehr lesen */
+/* Beschreibung */
 .yaa-description-wrapper { }
 .yaa-description { }
-.yaa-description.expanded { } /* Wenn aufgeklappt */
-.yaa-read-more { }        /* Button zum Aufklappen */
-.yaa-no-description { }
+.yaa-description.expanded { }
+.yaa-read-more { }
 
 /* Preis & Meta */
 .yaa-meta { }
-.yaa-price { }            /* Preis-Text */
-.yaa-merchant { }         /* Händler-Name */
+.yaa-price { }
+.yaa-merchant { }
 
 /* Buttons */
 .yaa-button-wrapper { }
 .yaa-button { }
 
 /* Status Meldungen */
-.yaa-message { }          /* Fehlermeldungen / Leere Suche */
+.yaa-message { }
 .yaa-error { }
 .yaa-empty { }
-.yaa-icon { }
                     </pre>
                 </div>
             </div>
@@ -4170,42 +4477,30 @@ final class YAA_Admin {
                 <div class="yaa-shortcode-box">[yadore_products keyword="Smartphone" limit="9"]</div>
                 <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
                 <div class="yaa-shortcode-box">[yadore_products keyword="Kopfhörer" local_images="yes"]</div>
-                <div class="yaa-shortcode-box">[yadore_products keyword="Monitor" mix_custom="yes" custom_limit="2"]</div>
+                
+                <h3>Yadore mit Händler-Filter</h3>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Laptop" merchant_whitelist="amazon,otto"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Handy" merchant_blacklist="aliexpress,wish"]</div>
+                <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" merchants="mediamarkt,saturn"]</div>
                 
                 <h3>Amazon Produkte</h3>
                 <div class="yaa-shortcode-box">[amazon_products keyword="Laptop" category="Computers" limit="10"]</div>
                 <div class="yaa-shortcode-box">[amazon_products asins="B08N5WRWNW,B09V3KXJPB"]</div>
-                <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" local_images="no"]</div>
-                <div class="yaa-shortcode-box">[amazon_products keyword="Headset" mix_custom="yes" custom_position="alternate"]</div>
                 
                 <h3>Eigene Produkte</h3>
                 <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
                 <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
-                <div class="yaa-shortcode-box">[custom_products keyword="Kopfhörer" fuzzy="yes"]</div>
-                
-                <h3>Fuzzy-Suche</h3>
                 <div class="yaa-shortcode-box">[fuzzy_products keyword="Kopfhörer" limit="6"]</div>
-                <div class="yaa-shortcode-box">[fuzzy_products keywords="Laptop,Notebook,Computer" limit="9" threshold="25"]</div>
-                <div class="yaa-shortcode-box">[fuzzy_products keyword="Test" show_score="yes"]</div>
                 
-                <h3>Kombinierte Ansicht</h3>
-                <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" yadore_limit="6" amazon_limit="4" custom_ids="10,15"]</div>
-                <div class="yaa-shortcode-box">[combined_products keyword="Gaming" custom_fuzzy="yes" custom_limit="3"]</div>
+                <h3>Kombiniert</h3>
+                <div class="yaa-shortcode-box">[combined_products keyword="Kopfhörer" yadore_limit="6" amazon_limit="4"]</div>
                 <div class="yaa-shortcode-box">[all_products keyword="Smartphone" total_limit="12" priority="custom,yadore,amazon"]</div>
                 
-                <h3>Lokale Bilder</h3>
+                <h3>Händler-Filter Attribute</h3>
                 <div class="yaa-tip">
-                    <strong>local_images Attribut:</strong> Überschreibt die globale Einstellung pro Shortcode.<br>
-                    <code>local_images="yes"</code> – Bilder lokal speichern<br>
-                    <code>local_images="no"</code> – Original-URLs verwenden
-                </div>
-                
-                <h3>Eigene Produkte einmischen</h3>
-                <div class="yaa-tip">
-                    <strong>mix_custom Attribut:</strong> Mischt passende eigene Produkte ein.<br>
-                    <code>mix_custom="yes"</code> – Aktivieren<br>
-                    <code>custom_limit="3"</code> – Anzahl eigener Produkte<br>
-                    <code>custom_position="start|end|shuffle|alternate"</code> – Position
+                    <strong>Whitelist hat immer Vorrang!</strong><br>
+                    <code>merchant_whitelist="..."</code> / <code>merchants="..."</code> – NUR diese Händler<br>
+                    <code>merchant_blacklist="..."</code> / <code>exclude_merchants="..."</code> – Diese ausschließen
                 </div>
             </div>
             
@@ -4391,6 +4686,35 @@ define('WP_REDIS_PORT', 6379);
             wp_send_json_success($result);
         } else {
             wp_send_json_error($result);
+        }
+    }
+    
+    /**
+     * NEU: AJAX: Refresh merchant list
+     */
+    public function ajax_refresh_merchants(): void {
+        check_ajax_referer('yaa_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Keine Berechtigung', 'yadore-amazon-api')]);
+        }
+        
+        $market = sanitize_text_field($_POST['market'] ?? 'de');
+        
+        $result = $this->yadore_api->fetch_merchants($market, true);
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'message' => sprintf(
+                    __('%d Händler geladen!', 'yadore-amazon-api'),
+                    count($result['merchants'])
+                ),
+                'count' => count($result['merchants']),
+            ]);
+        } else {
+            wp_send_json_error([
+                'message' => $result['error'] ?? __('Unbekannter Fehler', 'yadore-amazon-api'),
+            ]);
         }
     }
     
@@ -6936,10 +7260,14 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Image Handler Class
  * Handles downloading remote images and serving local versions.
- * Includes validation, retry mechanism, and admin logging.
+ * Includes validation, retry mechanism, SEO filenames, and admin logging.
  * 
- * Version: 1.2.7
+ * Version: 1.2.9
  * PHP 8.3+ compatible
+ * 
+ * NEU in 1.2.9:
+ * - SEO-optimierte Dateinamen (erste 30 Zeichen Produktname + Timestamp)
+ * - Einstellung für Dateiname-Format (SEO oder ID)
  */
 
 declare(strict_types=1);
@@ -6964,17 +7292,28 @@ class YAA_Image_Handler {
      * Max log entries to keep
      */
     private const MAX_LOG_ENTRIES = 100;
+    
+    /**
+     * Max characters for SEO filename (product name part)
+     */
+    private const SEO_NAME_MAX_LENGTH = 30;
 
     /**
      * Process an image: Download if not exists, return local URL.
-     * Includes validation and retry logic.
+     * Includes validation, retry logic, and SEO filename generation.
      * 
      * @param string|null $remote_url The remote image URL.
      * @param string $id Unique identifier (ASIN or EAN) for the filename.
-     * @param string $product_id Optional product ID for logging.
+     * @param string $product_name Product name for SEO filename (NEU).
+     * @param string $source Source identifier (amazon, yadore, custom).
      * @return string Local URL or Placeholder URL.
      */
-    public static function process(?string $remote_url, string $id, string $product_id = ''): string {
+    public static function process(
+        ?string $remote_url, 
+        string $id, 
+        string $product_name = '',
+        string $source = ''
+    ): string {
         // 1. Check if remote URL is valid
         if (empty($remote_url)) {
             return self::get_placeholder_url();
@@ -7004,7 +7343,7 @@ class YAA_Image_Handler {
             file_put_contents($base_dir . '/index.php', '<?php // Silence is golden');
         }
 
-        // 4. Define Filename
+        // 4. Determine file extension
         $path_parts = pathinfo(parse_url($remote_url, PHP_URL_PATH) ?? '');
         $ext = isset($path_parts['extension']) ? strtolower($path_parts['extension']) : 'jpg';
         
@@ -7015,11 +7354,19 @@ class YAA_Image_Handler {
             default => 'jpg',
         };
         
-        $filename = sanitize_file_name($id) . '.' . $ext;
+        // 5. Generate filename based on settings (SEO or ID)
+        $filename = self::generate_filename($id, $product_name, $source, $ext);
         $file_path = $base_dir . '/' . $filename;
         $file_url = $base_url . '/' . $filename;
 
-        // 5. Return local URL if already exists and is valid
+        // 6. Check if file already exists with either naming convention
+        // This allows for backward compatibility and prevents duplicate downloads
+        $existing_file = self::find_existing_file($base_dir, $base_url, $id, $source, $ext);
+        if ($existing_file !== null) {
+            return $existing_file;
+        }
+
+        // 7. Return local URL if already exists and is valid
         if (file_exists($file_path)) {
             // Verify existing file is valid
             if (filesize($file_path) > 100 && self::is_valid_image_file($file_path)) {
@@ -7029,14 +7376,14 @@ class YAA_Image_Handler {
             @unlink($file_path);
         }
 
-        // 6. Optional: Pre-check if remote URL is accessible (HEAD request)
+        // 8. Optional: Pre-check if remote URL is accessible (HEAD request)
         if (!self::is_remote_url_accessible($remote_url)) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'URL not accessible (HEAD check)');
+            self::log_failed_image($remote_url, $id, 'URL not accessible (HEAD check)');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 7. Download Image
+        // 9. Download Image
         $response = wp_remote_get($remote_url, [
             'timeout'    => 15,
             'sslverify'  => false,
@@ -7047,44 +7394,209 @@ class YAA_Image_Handler {
         ]);
 
         if (is_wp_error($response)) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'Download error: ' . $response->get_error_message());
+            self::log_failed_image($remote_url, $id, 'Download error: ' . $response->get_error_message());
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
         $status_code = wp_remote_retrieve_response_code($response);
         if ($status_code !== 200) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'HTTP ' . $status_code);
+            self::log_failed_image($remote_url, $id, 'HTTP ' . $status_code);
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
         $body = wp_remote_retrieve_body($response);
         
-        // 8. Validate that it's actually an image
+        // 10. Validate that it's actually an image
         if (empty($body) || !self::is_valid_image_data($body)) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'Invalid image data');
+            self::log_failed_image($remote_url, $id, 'Invalid image data');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 9. Check minimum size (avoid 1x1 tracking pixels)
+        // 11. Check minimum size (avoid 1x1 tracking pixels)
         if (strlen($body) < 500) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'Image too small (likely tracking pixel)');
+            self::log_failed_image($remote_url, $id, 'Image too small (likely tracking pixel)');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 10. Save File
+        // 12. Save File
         if (file_put_contents($file_path, $body) === false) {
-            self::log_failed_image($remote_url, $product_id ?: $id, 'Could not save file');
+            self::log_failed_image($remote_url, $id, 'Could not save file');
             return self::get_placeholder_url();
         }
 
-        // 11. Clear retry counter on success
+        // 13. Clear retry counter on success
         self::clear_retry_counter($remote_url);
 
         return $file_url;
+    }
+
+    /**
+     * Generate filename based on plugin settings
+     * 
+     * @param string $id Unique identifier (ASIN, EAN, post_id)
+     * @param string $product_name Product name for SEO filename
+     * @param string $source Source (amazon, yadore, custom)
+     * @param string $ext File extension
+     * @return string Generated filename
+     */
+    public static function generate_filename(
+        string $id, 
+        string $product_name = '', 
+        string $source = '',
+        string $ext = 'jpg'
+    ): string {
+        // Get filename format setting
+        $format = function_exists('yaa_get_option') 
+            ? yaa_get_option('image_filename_format', 'seo') 
+            : 'seo';
+        
+        // Sanitize extension
+        $ext = preg_replace('/[^a-z0-9]/i', '', strtolower($ext)) ?: 'jpg';
+        
+        if ($format === 'seo' && $product_name !== '') {
+            // SEO-optimized filename: first 30 chars of product name + timestamp
+            return self::generate_seo_filename($product_name, $ext);
+        }
+        
+        // ID-based filename (legacy/fallback)
+        return self::generate_id_filename($id, $source, $ext);
+    }
+
+    /**
+     * Generate SEO-optimized filename
+     * Format: product-name-first-30-chars_timestamp.ext
+     * 
+     * @param string $product_name Full product name
+     * @param string $ext File extension
+     * @return string SEO filename
+     */
+    private static function generate_seo_filename(string $product_name, string $ext): string {
+        // 1. Normalize product name
+        $name = self::sanitize_for_filename($product_name);
+        
+        // 2. Truncate to max length
+        if (mb_strlen($name, 'UTF-8') > self::SEO_NAME_MAX_LENGTH) {
+            $name = mb_substr($name, 0, self::SEO_NAME_MAX_LENGTH, 'UTF-8');
+            // Remove trailing hyphen if present
+            $name = rtrim($name, '-');
+        }
+        
+        // 3. Ensure name is not empty
+        if ($name === '') {
+            $name = 'product';
+        }
+        
+        // 4. Add timestamp for uniqueness
+        $timestamp = time();
+        
+        // 5. Build filename
+        return $name . '_' . $timestamp . '.' . $ext;
+    }
+
+    /**
+     * Generate ID-based filename (legacy format)
+     * Format: source_id.ext
+     * 
+     * @param string $id Unique identifier
+     * @param string $source Source identifier
+     * @param string $ext File extension
+     * @return string ID-based filename
+     */
+    private static function generate_id_filename(string $id, string $source, string $ext): string {
+        $prefix = '';
+        
+        if ($source !== '') {
+            $prefix = sanitize_file_name($source) . '_';
+        }
+        
+        $safe_id = sanitize_file_name($id);
+        
+        // Fallback if ID is empty
+        if ($safe_id === '') {
+            $safe_id = uniqid('img_');
+        }
+        
+        return $prefix . $safe_id . '.' . $ext;
+    }
+
+    /**
+     * Sanitize a string for use in a filename
+     * Converts to lowercase, replaces special chars with hyphens
+     * 
+     * @param string $text Input text
+     * @return string Sanitized filename-safe string
+     */
+    private static function sanitize_for_filename(string $text): string {
+        // 1. Convert to lowercase
+        $text = mb_strtolower($text, 'UTF-8');
+        
+        // 2. Replace German umlauts
+        $text = str_replace(
+            ['ä', 'ö', 'ü', 'ß', 'Ä', 'Ö', 'Ü'],
+            ['ae', 'oe', 'ue', 'ss', 'ae', 'oe', 'ue'],
+            $text
+        );
+        
+        // 3. Replace common special characters
+        $text = str_replace(
+            ['&', '+', '@', '#', '$', '%', '/', '\\', '|', ':', ';', '"', "'", '<', '>', '?', '*'],
+            '-',
+            $text
+        );
+        
+        // 4. Replace any non-alphanumeric characters (except hyphen) with hyphen
+        $text = preg_replace('/[^a-z0-9\-]/u', '-', $text) ?? $text;
+        
+        // 5. Replace multiple hyphens with single hyphen
+        $text = preg_replace('/-+/', '-', $text) ?? $text;
+        
+        // 6. Trim hyphens from start and end
+        $text = trim($text, '-');
+        
+        return $text;
+    }
+
+    /**
+     * Find existing file by ID (checks both SEO and ID format)
+     * This ensures backward compatibility with existing files
+     * 
+     * @param string $base_dir Base directory path
+     * @param string $base_url Base URL
+     * @param string $id Product ID
+     * @param string $source Source
+     * @param string $ext Extension
+     * @return string|null URL if found, null otherwise
+     */
+    private static function find_existing_file(
+        string $base_dir, 
+        string $base_url, 
+        string $id, 
+        string $source,
+        string $ext
+    ): ?string {
+        // Check ID-based filename (legacy)
+        $id_filename = self::generate_id_filename($id, $source, $ext);
+        $id_path = $base_dir . '/' . $id_filename;
+        
+        if (file_exists($id_path) && filesize($id_path) > 100 && self::is_valid_image_file($id_path)) {
+            return $base_url . '/' . $id_filename;
+        }
+        
+        // For ID-based lookup, we can also try without source prefix
+        if ($source !== '') {
+            $simple_filename = sanitize_file_name($id) . '.' . $ext;
+            $simple_path = $base_dir . '/' . $simple_filename;
+            
+            if (file_exists($simple_path) && filesize($simple_path) > 100 && self::is_valid_image_file($simple_path)) {
+                return $base_url . '/' . $simple_filename;
+            }
+        }
+        
+        return null;
     }
 
     /**
@@ -7092,11 +7604,17 @@ class YAA_Image_Handler {
      * 
      * @param string|null $remote_url The remote image URL.
      * @param string $id Unique identifier for the filename.
-     * @param string $product_id Optional product ID for logging.
+     * @param string $product_name Product name for SEO filename.
+     * @param string $source Source identifier.
      * @return string Local URL or Placeholder URL.
      */
-    public static function process_with_retry(?string $remote_url, string $id, string $product_id = ''): string {
-        return self::process($remote_url, $id, $product_id);
+    public static function process_with_retry(
+        ?string $remote_url, 
+        string $id, 
+        string $product_name = '',
+        string $source = ''
+    ): string {
+        return self::process($remote_url, $id, $product_name, $source);
     }
 
     /**
@@ -7397,21 +7915,467 @@ class YAA_Image_Handler {
 
         return $deleted;
     }
+
+    /**
+     * Get statistics about local images
+     * 
+     * @return array{count: int, size: int, size_formatted: string, oldest: int|null, newest: int|null}
+     */
+    public static function get_statistics(): array {
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+
+        $stats = [
+            'count'          => 0,
+            'size'           => 0,
+            'size_formatted' => '0 B',
+            'oldest'         => null,
+            'newest'         => null,
+        ];
+
+        if (!is_dir($image_dir)) {
+            return $stats;
+        }
+
+        $files = glob($image_dir . '/*');
+        if ($files === false || empty($files)) {
+            return $stats;
+        }
+
+        foreach ($files as $file) {
+            if (is_file($file) && basename($file) !== 'index.php') {
+                $stats['count']++;
+                $stats['size'] += filesize($file);
+                
+                $mtime = filemtime($file);
+                if ($stats['oldest'] === null || $mtime < $stats['oldest']) {
+                    $stats['oldest'] = $mtime;
+                }
+                if ($stats['newest'] === null || $mtime > $stats['newest']) {
+                    $stats['newest'] = $mtime;
+                }
+            }
+        }
+
+        // Format size
+        $size = $stats['size'];
+        if ($size < 1024) {
+            $stats['size_formatted'] = $size . ' B';
+        } elseif ($size < 1024 * 1024) {
+            $stats['size_formatted'] = round($size / 1024, 1) . ' KB';
+        } else {
+            $stats['size_formatted'] = round($size / (1024 * 1024), 2) . ' MB';
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Preview what a SEO filename would look like
+     * Useful for admin settings preview
+     * 
+     * @param string $product_name Sample product name
+     * @return string Example filename
+     */
+    public static function preview_seo_filename(string $product_name): string {
+        return self::generate_seo_filename($product_name, 'jpg');
+    }
+}
+ 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-merchant-filter.php 
+ 
+<?php
+/**
+ * Merchant Filter - Whitelist/Blacklist für Yadore Händler
+ * PHP 8.3+ compatible
+ * Version: 1.3.0
+ * 
+ * Features:
+ * - Whitelist (hat Vorrang)
+ * - Blacklist
+ * - Matching auf Händlername (case-insensitive, partial match)
+ * - Shortcode Override
+ * - Händlerliste via /v2/merchant API
+ */
+
+declare(strict_types=1);
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+final class YAA_Merchant_Filter {
+    
+    /**
+     * Cache key für Merchant-Liste
+     */
+    private const MERCHANT_CACHE_KEY = 'yadore_merchants_list';
+    
+    /**
+     * Cache duration für Merchant-Liste (4 Stunden)
+     */
+    private const MERCHANT_CACHE_DURATION = 4 * HOUR_IN_SECONDS;
+    
+    /**
+     * Filtert Produkte basierend auf Whitelist/Blacklist
+     * Whitelist hat IMMER Vorrang vor Blacklist
+     * 
+     * @param array<int, array<string, mixed>> $products Produkte von der API
+     * @param array<string, mixed> $filter_config Filter-Konfiguration
+     * @return array<int, array<string, mixed>> Gefilterte Produkte
+     */
+    public static function filter_products(array $products, array $filter_config): array {
+        $whitelist = $filter_config['whitelist'] ?? [];
+        $blacklist = $filter_config['blacklist'] ?? [];
+        
+        // Normalisieren
+        $whitelist = self::normalize_merchant_list($whitelist);
+        $blacklist = self::normalize_merchant_list($blacklist);
+        
+        // Wenn weder Whitelist noch Blacklist, alle zurückgeben
+        if (empty($whitelist) && empty($blacklist)) {
+            return $products;
+        }
+        
+        return array_values(array_filter($products, function($product) use ($whitelist, $blacklist) {
+            $merchant_name = $product['merchant']['name'] ?? '';
+            
+            if ($merchant_name === '') {
+                // Produkte ohne Händlernamen: Nur durchlassen wenn keine Whitelist aktiv
+                return empty($whitelist);
+            }
+            
+            // Whitelist hat Vorrang
+            if (!empty($whitelist)) {
+                return self::matches_any($merchant_name, $whitelist);
+            }
+            
+            // Blacklist prüfen
+            if (!empty($blacklist)) {
+                return !self::matches_any($merchant_name, $blacklist);
+            }
+            
+            return true;
+        }));
+    }
+    
+    /**
+     * Prüft ob ein Händlername mit einem der Filter-Einträge übereinstimmt
+     * Case-insensitive, partial match
+     * 
+     * @param string $merchant_name Der zu prüfende Händlername
+     * @param array<string> $filter_list Liste der Filter-Einträge
+     * @return bool True wenn Match gefunden
+     */
+    public static function matches_any(string $merchant_name, array $filter_list): bool {
+        $merchant_lower = mb_strtolower($merchant_name, 'UTF-8');
+        
+        foreach ($filter_list as $filter) {
+            $filter_lower = mb_strtolower(trim($filter), 'UTF-8');
+            
+            if ($filter_lower === '') {
+                continue;
+            }
+            
+            // Exakter Match
+            if ($merchant_lower === $filter_lower) {
+                return true;
+            }
+            
+            // Partial Match (Händlername enthält Filter oder umgekehrt)
+            if (str_contains($merchant_lower, $filter_lower) || str_contains($filter_lower, $merchant_lower)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Normalisiert eine Händlerliste (String oder Array)
+     * 
+     * @param string|array<string> $list
+     * @return array<string>
+     */
+    public static function normalize_merchant_list(string|array $list): array {
+        if (is_string($list)) {
+            if ($list === '') {
+                return [];
+            }
+            $list = explode(',', $list);
+        }
+        
+        // Trimmen und leere Einträge entfernen
+        $list = array_map('trim', $list);
+        $list = array_filter($list, fn($item) => $item !== '');
+        
+        return array_values($list);
+    }
+    
+    /**
+     * Erstellt Filter-Konfiguration aus Shortcode-Attributen und globalen Einstellungen
+     * Shortcode-Attribute haben Vorrang
+     * 
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array{whitelist: array<string>, blacklist: array<string>}
+     */
+    public static function build_filter_config(array $atts): array {
+        // Shortcode-Attribute prüfen
+        $shortcode_whitelist = $atts['merchant_whitelist'] ?? $atts['merchants'] ?? '';
+        $shortcode_blacklist = $atts['merchant_blacklist'] ?? $atts['exclude_merchants'] ?? '';
+        
+        // Wenn Shortcode-Attribute gesetzt sind, haben diese Vorrang
+        if ($shortcode_whitelist !== '' || $shortcode_blacklist !== '') {
+            return [
+                'whitelist' => self::normalize_merchant_list($shortcode_whitelist),
+                'blacklist' => self::normalize_merchant_list($shortcode_blacklist),
+            ];
+        }
+        
+        // Globale Einstellungen laden
+        $global_whitelist = yaa_get_option('yadore_merchant_whitelist', '');
+        $global_blacklist = yaa_get_option('yadore_merchant_blacklist', '');
+        
+        return [
+            'whitelist' => self::normalize_merchant_list($global_whitelist),
+            'blacklist' => self::normalize_merchant_list($global_blacklist),
+        ];
+    }
+    
+    /**
+     * Holt die Händlerliste von der Yadore API
+     * 
+     * @param string $api_key Yadore API Key
+     * @param string $market Markt (de, at, ch, etc.)
+     * @param bool $force_refresh Cache ignorieren
+     * @return array{success: bool, merchants: array<array{id: string, name: string, offerCount: int}>, error?: string}
+     */
+    public static function fetch_merchants(string $api_key, string $market = 'de', bool $force_refresh = false): array {
+        if ($api_key === '') {
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api'),
+            ];
+        }
+        
+        // Cache prüfen
+        $cache_key = self::MERCHANT_CACHE_KEY . '_' . $market;
+        
+        if (!$force_refresh) {
+            $cached = get_transient($cache_key);
+            if ($cached !== false && is_array($cached)) {
+                return [
+                    'success' => true,
+                    'merchants' => $cached,
+                    'from_cache' => true,
+                ];
+            }
+        }
+        
+        // API Request
+        $url = 'https://api.yadore.com/v2/merchant?' . http_build_query([
+            'market' => $market,
+        ]);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 30,
+            'headers' => [
+                'API-Key' => $api_key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => $response->get_error_message(),
+            ];
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if ($status_code !== 200 || !is_array($data)) {
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => sprintf(__('API Fehler: HTTP %d', 'yadore-amazon-api'), $status_code),
+            ];
+        }
+        
+        // Händler extrahieren und normalisieren
+        $merchants = [];
+        $raw_merchants = $data['merchants'] ?? [];
+        
+        foreach ($raw_merchants as $merchant) {
+            $merchants[] = [
+                'id'         => $merchant['id'] ?? '',
+                'name'       => $merchant['name'] ?? '',
+                'offerCount' => (int) ($merchant['offerCount'] ?? 0),
+                'logo'       => $merchant['logo']['url'] ?? '',
+                'hasLogo'    => (bool) ($merchant['logo']['exists'] ?? false),
+            ];
+        }
+        
+        // Nach Name sortieren
+        usort($merchants, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+        
+        // Cache speichern
+        set_transient($cache_key, $merchants, self::MERCHANT_CACHE_DURATION);
+        
+        // Auch in Option speichern für Offline-Nutzung
+        update_option('yaa_yadore_merchants_' . $market, $merchants, false);
+        update_option('yaa_yadore_merchants_updated_' . $market, time(), false);
+        
+        return [
+            'success' => true,
+            'merchants' => $merchants,
+            'total' => $data['total'] ?? count($merchants),
+            'from_cache' => false,
+        ];
+    }
+    
+    /**
+     * Holt die gespeicherte Händlerliste (für Admin-Bereich)
+     * 
+     * @param string $market Markt
+     * @return array<array{id: string, name: string, offerCount: int}>
+     */
+    public static function get_stored_merchants(string $market = 'de'): array {
+        $merchants = get_option('yaa_yadore_merchants_' . $market, []);
+        return is_array($merchants) ? $merchants : [];
+    }
+    
+    /**
+     * Gibt das letzte Update-Datum zurück
+     * 
+     * @param string $market Markt
+     * @return int|null Unix Timestamp oder null
+     */
+    public static function get_last_update(string $market = 'de'): ?int {
+        $timestamp = get_option('yaa_yadore_merchants_updated_' . $market, null);
+        return $timestamp !== null ? (int) $timestamp : null;
+    }
+    
+    /**
+     * Löscht den Merchant-Cache
+     * 
+     * @param string|null $market Markt oder null für alle
+     */
+    public static function clear_cache(?string $market = null): void {
+        if ($market !== null) {
+            delete_transient(self::MERCHANT_CACHE_KEY . '_' . $market);
+        } else {
+            // Alle Märkte löschen
+            global $wpdb;
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_" . self::MERCHANT_CACHE_KEY . "_%'"
+            );
+        }
+    }
+    
+    /**
+     * Prüft ob ein Händler in der Whitelist ist
+     * 
+     * @param string $merchant_name Händlername
+     * @return bool
+     */
+    public static function is_whitelisted(string $merchant_name): bool {
+        $whitelist = self::normalize_merchant_list(yaa_get_option('yadore_merchant_whitelist', ''));
+        
+        if (empty($whitelist)) {
+            return true; // Keine Whitelist = alle erlaubt
+        }
+        
+        return self::matches_any($merchant_name, $whitelist);
+    }
+    
+    /**
+     * Prüft ob ein Händler in der Blacklist ist
+     * 
+     * @param string $merchant_name Händlername
+     * @return bool
+     */
+    public static function is_blacklisted(string $merchant_name): bool {
+        $blacklist = self::normalize_merchant_list(yaa_get_option('yadore_merchant_blacklist', ''));
+        
+        if (empty($blacklist)) {
+            return false; // Keine Blacklist = keiner geblockt
+        }
+        
+        return self::matches_any($merchant_name, $blacklist);
+    }
+    
+    /**
+     * Generiert ein HTML-Select für Händlerauswahl (Admin)
+     * 
+     * @param string $name Input name
+     * @param array<string> $selected Ausgewählte Händler
+     * @param string $market Markt
+     * @param string $placeholder Placeholder-Text
+     * @return string HTML
+     */
+    public static function render_merchant_select(
+        string $name, 
+        array $selected, 
+        string $market = 'de',
+        string $placeholder = ''
+    ): string {
+        $merchants = self::get_stored_merchants($market);
+        $selected_lower = array_map(fn($s) => mb_strtolower(trim($s), 'UTF-8'), $selected);
+        
+        $html = '<select name="' . esc_attr($name) . '[]" multiple class="yaa-merchant-select" ';
+        $html .= 'data-placeholder="' . esc_attr($placeholder ?: __('Händler auswählen...', 'yadore-amazon-api')) . '">';
+        
+        foreach ($merchants as $merchant) {
+            $name_lower = mb_strtolower($merchant['name'], 'UTF-8');
+            $is_selected = in_array($name_lower, $selected_lower, true) || in_array($merchant['name'], $selected, true);
+            
+            $html .= '<option value="' . esc_attr($merchant['name']) . '"';
+            $html .= $is_selected ? ' selected' : '';
+            $html .= '>';
+            $html .= esc_html($merchant['name']);
+            if ($merchant['offerCount'] > 0) {
+                $html .= ' (' . number_format($merchant['offerCount'], 0, ',', '.') . ' Angebote)';
+            }
+            $html .= '</option>';
+        }
+        
+        $html .= '</select>';
+        
+        return $html;
+    }
+    
+    /**
+     * Validiert und bereinigt eine Händlerliste für die Speicherung
+     * 
+     * @param string|array<string> $input
+     * @return string Komma-separierte Liste
+     */
+    public static function sanitize_merchant_list(string|array $input): string {
+        $list = self::normalize_merchant_list($input);
+        return implode(', ', $list);
+    }
 }
  
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-shortcode-renderer.php 
  
 <?php
 /**
- * Shortcode Renderer - Mit Fuzzy-Suche und Bild-Fehlerbehandlung
+ * Shortcode Renderer - Vollständige Version mit allen Features
  * PHP 8.3+ compatible
- * Version: 1.2.7
+ * Version: 1.3.0
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
  * - Fuzzy-Suche für eigene Produkte
  * - Automatisches Einmischen eigener Produkte
- * - Lokale Bilderspeicherung mit Validierung
+ * - Lokale Bilderspeicherung mit SEO-Dateinamen
+ * - Bildgrößen-Auswahl
+ * - Merchant Filter (Whitelist/Blacklist) für Yadore
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
  */
@@ -7467,15 +8431,14 @@ final class YAA_Shortcode_Renderer {
             'keyword'       => '',
             'keywords'      => '',
             'limit'         => 10,
-            'threshold'     => '',  // Leer = Plugin-Standard
+            'threshold'     => '',
             'columns'       => '',
             'class'         => '',
             'local_images'  => '',
-            'hide_no_image' => 'no',  // NEU: Produkte ohne Bild ausblenden
-            'show_score'    => 'no',  // Debug: Score anzeigen
+            'hide_no_image' => 'no',
+            'show_score'    => 'no',
         ], $atts, 'fuzzy_products');
         
-        // Keywords ermitteln
         $keywords = [];
         
         if (!empty($atts['keywords'])) {
@@ -7494,7 +8457,6 @@ final class YAA_Shortcode_Renderer {
         
         $all_items = [];
         
-        // Für jedes Keyword Fuzzy-Suche durchführen
         if (count($keywords) === 1) {
             $all_items = $this->custom_products->search_products_fuzzy(
                 $keywords[0],
@@ -7502,7 +8464,6 @@ final class YAA_Shortcode_Renderer {
                 $threshold
             );
         } else {
-            // Multi-Keyword: Limit aufteilen
             $per_keyword = (int) ceil($total_limit / count($keywords));
             $collected = [];
             
@@ -7513,13 +8474,11 @@ final class YAA_Shortcode_Renderer {
                     $threshold
                 );
                 
-                // Duplikate vermeiden (basierend auf post_id)
                 foreach ($results as $item) {
                     $pid = $item['post_id'] ?? 0;
                     if (!isset($collected[$pid])) {
                         $collected[$pid] = $item;
                     } else {
-                        // Höheren Score behalten
                         if (($item['_fuzzy_score'] ?? 0) > ($collected[$pid]['_fuzzy_score'] ?? 0)) {
                             $collected[$pid] = $item;
                         }
@@ -7527,22 +8486,17 @@ final class YAA_Shortcode_Renderer {
                 }
             }
             
-            // Nach Score sortieren
             $all_items = array_values($collected);
             usort($all_items, fn($a, $b) => ($b['_fuzzy_score'] ?? 0) <=> ($a['_fuzzy_score'] ?? 0));
-            
-            // Limit anwenden
             $all_items = array_slice($all_items, 0, $total_limit);
         }
         
-        // Produkte ohne Bild ausfiltern
         $all_items = $this->filter_items_without_image($all_items, $atts);
         
         if (empty($all_items)) {
             return $this->render_empty();
         }
         
-        // Debug: Score in Beschreibung anzeigen
         if ((string) $atts['show_score'] === 'yes') {
             foreach ($all_items as &$item) {
                 $score = $item['_fuzzy_score'] ?? 0;
@@ -7559,29 +8513,33 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Render Yadore products - Mit optionalem Fuzzy-Mixing
+     * Render Yadore products - Mit Merchant Filter
      */
     public function render_yadore(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'         => '',
-            'keywords'        => '',
-            'limit'           => (int) yaa_get_option('yadore_default_limit', 9),
-            'market'          => (string) yaa_get_option('yadore_market', 'de'),
-            'precision'       => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-            'columns'         => '',
-            'class'           => '',
-            'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
-            'mix_custom'      => '',    // 'yes' = Fuzzy-Produkte einmischen
-            'custom_position' => 'start',  // 'start', 'end', 'shuffle', 'alternate'
-            'custom_limit'    => 2,
+            'keyword'            => '',
+            'keywords'           => '',
+            'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            'mix_custom'         => '',
+            'custom_position'    => 'start',
+            'custom_limit'       => 2,
+            // Merchant Filter
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',  // Alias für whitelist
+            'exclude_merchants'  => '',  // Alias für blacklist
         ], $atts, 'yadore_products');
         
         if (!$this->yadore_api->is_configured()) {
             return $this->render_error(__('Yadore API nicht konfiguriert.', 'yadore-amazon-api'));
         }
         
-        // Multi-Keyword Support
         $keywords = [];
         
         if (!empty($atts['keywords'])) {
@@ -7598,19 +8556,31 @@ final class YAA_Shortcode_Renderer {
         $total_limit = (int) $atts['limit'];
         $items = [];
         
+        // Merchant Filter ermitteln (Shortcode hat Vorrang)
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
+        
         if (count($keywords) === 1) {
             $result = $this->yadore_api->fetch([
-                'keyword'   => $keywords[0],
-                'limit'     => $total_limit,
-                'market'    => (string) $atts['market'],
-                'precision' => (string) $atts['precision'],
+                'keyword'            => $keywords[0],
+                'limit'              => $total_limit,
+                'market'             => (string) $atts['market'],
+                'precision'          => (string) $atts['precision'],
+                'merchant_whitelist' => $merchant_whitelist,
+                'merchant_blacklist' => $merchant_blacklist,
             ]);
             
             if (!is_wp_error($result)) {
                 $items = $result;
             }
         } else {
-            $items = $this->fetch_multi_keywords($keywords, $total_limit, $atts);
+            $items = $this->fetch_multi_keywords_with_filter(
+                $keywords, 
+                $total_limit, 
+                $atts, 
+                $merchant_whitelist, 
+                $merchant_blacklist
+            );
         }
         
         // Fuzzy Custom Products einmischen
@@ -7642,7 +8612,7 @@ final class YAA_Shortcode_Renderer {
             'columns'         => '',
             'class'           => '',
             'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'hide_no_image'   => 'no',
             'mix_custom'      => '',
             'custom_position' => 'start',
             'custom_limit'    => 2,
@@ -7711,25 +8681,23 @@ final class YAA_Shortcode_Renderer {
         $atts = shortcode_atts([
             'ids'           => '',
             'category'      => '',
-            'keyword'       => '',  // Fuzzy-Suche Keyword
+            'keyword'       => '',
             'limit'         => 10,
             'columns'       => '',
             'class'         => '',
             'local_images'  => '',
-            'hide_no_image' => 'no',  // NEU
-            'fuzzy'         => '',    // 'yes' für Fuzzy-Suche
-            'threshold'     => '',    // Fuzzy Threshold
+            'hide_no_image' => 'no',
+            'fuzzy'         => '',
+            'threshold'     => '',
         ], $atts, 'custom_products');
         
         $items = [];
         
-        // Nach IDs laden
         if (!empty($atts['ids'])) {
             $ids = array_map('intval', explode(',', (string) $atts['ids']));
             $ids = array_filter($ids);
             $items = $this->custom_products->get_products_by_ids($ids);
         }
-        // Fuzzy-Suche
         elseif (!empty($atts['keyword']) && ($atts['fuzzy'] === 'yes' || $this->fuzzy_enabled)) {
             $threshold = (string) $atts['threshold'] !== '' ? (int) $atts['threshold'] : null;
             $items = $this->custom_products->search_products_fuzzy(
@@ -7738,19 +8706,16 @@ final class YAA_Shortcode_Renderer {
                 $threshold
             );
         }
-        // Nach Kategorie laden
         elseif (!empty($atts['category'])) {
             $items = $this->custom_products->get_products_by_category(
                 (string) $atts['category'],
                 (int) $atts['limit']
             );
         }
-        // Alle laden
         else {
             $items = $this->custom_products->get_all_products((int) $atts['limit']);
         }
         
-        // Produkte ohne Bild ausfiltern
         $items = $this->filter_items_without_image($items, $atts);
         
         if (empty($items)) {
@@ -7765,21 +8730,26 @@ final class YAA_Shortcode_Renderer {
      */
     public function render_combined(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'         => '',
-            'keywords'        => '',
-            'yadore_limit'    => 6,
-            'amazon_limit'    => 4,
-            'custom_ids'      => '',
-            'custom_category' => '',
-            'custom_limit'    => 0,
-            'custom_fuzzy'    => 'no',  // Fuzzy-Suche für eigene Produkte
-            'market'          => (string) yaa_get_option('yadore_market', 'de'),
-            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
-            'shuffle'         => 'yes',
-            'columns'         => '',
-            'class'           => '',
-            'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'keyword'            => '',
+            'keywords'           => '',
+            'yadore_limit'       => 6,
+            'amazon_limit'       => 4,
+            'custom_ids'         => '',
+            'custom_category'    => '',
+            'custom_limit'       => 0,
+            'custom_fuzzy'       => 'no',
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'shuffle'            => 'yes',
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            // Merchant Filter für Yadore
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',
+            'exclude_merchants'  => '',
         ], $atts, 'combined_products');
         
         $combined = [];
@@ -7789,6 +8759,10 @@ final class YAA_Shortcode_Renderer {
         
         $keyword = trim((string) $atts['keyword']);
         $keywords_string = trim((string) $atts['keywords']);
+        
+        // Merchant Filter
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
         
         // 1. Eigene Produkte laden
         if (!empty($atts['custom_ids'])) {
@@ -7802,9 +8776,7 @@ final class YAA_Shortcode_Renderer {
                 $custom_limit > 0 ? $custom_limit : 5
             );
             $combined = array_merge($combined, $custom_items);
-        } 
-        // Fuzzy-Suche für eigene Produkte
-        elseif ($atts['custom_fuzzy'] === 'yes' && ($keyword !== '' || $keywords_string !== '')) {
+        } elseif ($atts['custom_fuzzy'] === 'yes' && ($keyword !== '' || $keywords_string !== '')) {
             $search_term = $keyword !== '' ? $keyword : explode(',', $keywords_string)[0];
             $custom_items = $this->custom_products->search_products_fuzzy(
                 trim($search_term),
@@ -7821,15 +8793,20 @@ final class YAA_Shortcode_Renderer {
             if ($keywords_string !== '') {
                 $keywords = array_map('trim', explode(',', $keywords_string));
                 $keywords = array_filter($keywords);
-                $yadore_items = $this->fetch_multi_keywords($keywords, $yadore_limit, [
-                    'market'    => (string) $atts['market'],
-                    'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-                ]);
+                $yadore_items = $this->fetch_multi_keywords_with_filter(
+                    $keywords, 
+                    $yadore_limit, 
+                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                    $merchant_whitelist,
+                    $merchant_blacklist
+                );
             } else {
                 $yadore_items = $this->yadore_api->fetch([
-                    'keyword' => $keyword,
-                    'limit'   => $yadore_limit,
-                    'market'  => (string) $atts['market'],
+                    'keyword'            => $keyword,
+                    'limit'              => $yadore_limit,
+                    'market'             => (string) $atts['market'],
+                    'merchant_whitelist' => $merchant_whitelist,
+                    'merchant_blacklist' => $merchant_blacklist,
                 ]);
                 
                 if (is_wp_error($yadore_items)) {
@@ -7855,7 +8832,6 @@ final class YAA_Shortcode_Renderer {
             }
         }
         
-        // Produkte ohne Bild ausfiltern
         $combined = $this->filter_items_without_image($combined, $atts);
         
         if (empty($combined)) {
@@ -7874,20 +8850,25 @@ final class YAA_Shortcode_Renderer {
      */
     public function render_all_sources(array|string $atts = []): string {
         $atts = shortcode_atts([
-            'keyword'         => '',
-            'keywords'        => '',
-            'total_limit'     => 12,
-            'custom_ids'      => '',
-            'custom_category' => '',
-            'custom_fuzzy'    => 'no',
-            'market'          => (string) yaa_get_option('yadore_market', 'de'),
-            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
-            'priority'        => 'custom,yadore,amazon',
-            'shuffle'         => 'no',
-            'columns'         => '',
-            'class'           => '',
-            'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'keyword'            => '',
+            'keywords'           => '',
+            'total_limit'        => 12,
+            'custom_ids'         => '',
+            'custom_category'    => '',
+            'custom_fuzzy'       => 'no',
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'priority'           => 'custom,yadore,amazon',
+            'shuffle'            => 'no',
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            // Merchant Filter
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',
+            'exclude_merchants'  => '',
         ], $atts, 'all_products');
         
         $total_limit = (int) $atts['total_limit'];
@@ -7895,6 +8876,10 @@ final class YAA_Shortcode_Renderer {
         $remaining = $total_limit;
         
         $priorities = array_map('trim', explode(',', (string) $atts['priority']));
+        
+        // Merchant Filter
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
         
         foreach ($priorities as $source) {
             if ($remaining <= 0) {
@@ -7913,9 +8898,7 @@ final class YAA_Shortcode_Renderer {
                             (string) $atts['custom_category'],
                             $remaining
                         );
-                    } 
-                    // Fuzzy
-                    elseif ($atts['custom_fuzzy'] === 'yes') {
+                    } elseif ($atts['custom_fuzzy'] === 'yes') {
                         $keyword = trim((string) $atts['keyword']);
                         if ($keyword !== '') {
                             $items = $this->custom_products->search_products_fuzzy($keyword, $remaining);
@@ -7932,15 +8915,20 @@ final class YAA_Shortcode_Renderer {
                         
                         if ($keywords_string !== '') {
                             $keywords = array_map('trim', explode(',', $keywords_string));
-                            $items = $this->fetch_multi_keywords($keywords, $remaining, [
-                                'market'    => (string) $atts['market'],
-                                'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-                            ]);
+                            $items = $this->fetch_multi_keywords_with_filter(
+                                $keywords, 
+                                $remaining, 
+                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                                $merchant_whitelist,
+                                $merchant_blacklist
+                            );
                         } elseif ($keyword !== '') {
                             $result = $this->yadore_api->fetch([
-                                'keyword' => $keyword,
-                                'limit'   => $remaining,
-                                'market'  => (string) $atts['market'],
+                                'keyword'            => $keyword,
+                                'limit'              => $remaining,
+                                'market'             => (string) $atts['market'],
+                                'merchant_whitelist' => $merchant_whitelist,
+                                'merchant_blacklist' => $merchant_blacklist,
                             ]);
                             if (!is_wp_error($result)) {
                                 $items = $result;
@@ -7973,7 +8961,6 @@ final class YAA_Shortcode_Renderer {
             }
         }
         
-        // Produkte ohne Bild ausfiltern
         $combined = $this->filter_items_without_image($combined, $atts);
         
         if (empty($combined)) {
@@ -7988,7 +8975,7 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * NEU: Produkte ohne Bild ausfiltern
+     * Produkte ohne Bild ausfiltern
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -8012,16 +8999,14 @@ final class YAA_Shortcode_Renderer {
     /**
      * Optionales Einmischen von Fuzzy-Produkten
      * 
-     * @param array<int, array<string, mixed>> $items Bestehende Produkte
-     * @param array<string> $keywords Suchbegriffe
-     * @param array<string, mixed> $atts Shortcode Attribute
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string> $keywords
+     * @param array<string, mixed> $atts
      * @return array<int, array<string, mixed>>
      */
     private function maybe_mix_fuzzy_products(array $items, array $keywords, array $atts): array {
-        // Prüfen ob Mixing aktiviert ist
         $mix_custom = $atts['mix_custom'] ?? '';
         
-        // Global oder per Shortcode aktiviert?
         $should_mix = ($mix_custom === 'yes') || 
                       ($mix_custom === '' && $this->fuzzy_enabled && yaa_get_option('fuzzy_auto_mix', 'no') === 'yes');
         
@@ -8032,7 +9017,6 @@ final class YAA_Shortcode_Renderer {
         $custom_limit = (int) ($atts['custom_limit'] ?? 2);
         $position = $atts['custom_position'] ?? 'start';
         
-        // Fuzzy-Suche für jeden Keyword
         $fuzzy_items = [];
         $per_keyword = (int) ceil($custom_limit / count($keywords));
         
@@ -8041,7 +9025,6 @@ final class YAA_Shortcode_Renderer {
             $fuzzy_items = array_merge($fuzzy_items, $results);
         }
         
-        // Duplikate entfernen
         $unique_fuzzy = [];
         $seen_ids = [];
         foreach ($fuzzy_items as $item) {
@@ -8052,14 +9035,12 @@ final class YAA_Shortcode_Renderer {
             }
         }
         
-        // Auf Limit beschränken
         $unique_fuzzy = array_slice($unique_fuzzy, 0, $custom_limit);
         
         if (empty($unique_fuzzy)) {
             return $items;
         }
         
-        // Position bestimmen
         switch ($position) {
             case 'start':
                 $items = array_merge($unique_fuzzy, $items);
@@ -8072,7 +9053,6 @@ final class YAA_Shortcode_Renderer {
                 shuffle($items);
                 break;
             case 'alternate':
-                // Abwechselnd einfügen
                 $result = [];
                 $fuzzy_index = 0;
                 $interval = max(1, (int) floor(count($items) / (count($unique_fuzzy) + 1)));
@@ -8085,7 +9065,6 @@ final class YAA_Shortcode_Renderer {
                     $result[] = $item;
                 }
                 
-                // Restliche Fuzzy-Items am Ende
                 while ($fuzzy_index < count($unique_fuzzy)) {
                     $result[] = $unique_fuzzy[$fuzzy_index];
                     $fuzzy_index++;
@@ -8099,13 +9078,22 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Fetch products for multiple keywords with distributed limit
+     * Fetch products for multiple keywords with merchant filter
      * 
      * @param array<string> $keywords
+     * @param int $total_limit
      * @param array<string, mixed> $atts
+     * @param string $merchant_whitelist
+     * @param string $merchant_blacklist
      * @return array<int, array<string, mixed>>
      */
-    private function fetch_multi_keywords(array $keywords, int $total_limit, array $atts): array {
+    private function fetch_multi_keywords_with_filter(
+        array $keywords, 
+        int $total_limit, 
+        array $atts,
+        string $merchant_whitelist = '',
+        string $merchant_blacklist = ''
+    ): array {
         $keyword_count = count($keywords);
         $base_per_keyword = (int) floor($total_limit / $keyword_count);
         $remainder = $total_limit % $keyword_count;
@@ -8125,10 +9113,12 @@ final class YAA_Shortcode_Renderer {
             }
             
             $result = $this->yadore_api->fetch([
-                'keyword'   => $keyword,
-                'limit'     => $limit_for_this,
-                'market'    => (string) $atts['market'],
-                'precision' => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+                'keyword'            => $keyword,
+                'limit'              => $limit_for_this,
+                'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
+                'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+                'merchant_whitelist' => $merchant_whitelist,
+                'merchant_blacklist' => $merchant_blacklist,
             ]);
             
             if (!is_wp_error($result) && !empty($result)) {
@@ -8160,11 +9150,22 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Process image URL - Mit erweiterter Validierung
+     * Process image URL - Mit SEO-Dateinamen Support
      * 
-     * @param array<string, mixed> $atts
+     * @param string $remote_url Remote image URL
+     * @param string $unique_id Unique identifier (ASIN, EAN, post_id)
+     * @param string $source Source (amazon, yadore, custom)
+     * @param string $product_name Product name for SEO filename
+     * @param array<string, mixed> $atts Shortcode attributes
+     * @return string Local or remote URL
      */
-    private function process_image_url(string $remote_url, string $unique_id, string $source, array $atts = []): string {
+    private function process_image_url(
+        string $remote_url, 
+        string $unique_id, 
+        string $source, 
+        string $product_name = '',
+        array $atts = []
+    ): string {
         if ($remote_url === '') {
             return '';
         }
@@ -8193,10 +9194,8 @@ final class YAA_Shortcode_Renderer {
             return $remote_url;
         }
         
-        $file_id = $source . '_' . sanitize_file_name($unique_id);
-        
-        // Nutze den verbesserten Image Handler mit Validierung
-        return YAA_Image_Handler::process($remote_url, $file_id, $unique_id);
+        // Nutze den Image Handler mit SEO-Dateinamen
+        return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
     /**
@@ -8241,8 +9240,9 @@ final class YAA_Shortcode_Renderer {
                 $is_amazon = $source === 'amazon';
                 $is_custom = $source === 'custom';
                 $url = $item['url'] ?? '#';
+                $title = $item['title'] ?? '';
                 
-                // Bild-Verarbeitung
+                // Bild-Verarbeitung mit Produktname für SEO-Dateinamen
                 $raw_image_url = $item['image']['url'] ?? '';
                 
                 $image_unique_id = match($source) {
@@ -8252,9 +9252,15 @@ final class YAA_Shortcode_Renderer {
                     default  => $item['id'] ?? uniqid('img_'),
                 };
                 
-                $image_url = $this->process_image_url($raw_image_url, $image_unique_id, $source, $atts);
+                // Produktname für SEO-Dateinamen übergeben
+                $image_url = $this->process_image_url(
+                    $raw_image_url, 
+                    $image_unique_id, 
+                    $source, 
+                    $title,
+                    $atts
+                );
                 
-                $title = $item['title'] ?? '';
                 $description = $item['description'] ?? '';
                 $price_amount = $item['price']['amount'] ?? '';
                 $price_currency = $item['price']['currency'] ?? 'EUR';
@@ -8383,6 +9389,10 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Yadore API Handler
  * PHP 8.3+ compatible
+ * Version: 1.3.0
+ * 
+ * NEU: Merchant Filter (Whitelist/Blacklist)
+ * NEU: /v2/merchant API Integration
  */
 
 declare(strict_types=1);
@@ -8393,11 +9403,15 @@ if (!defined('ABSPATH')) {
 
 final class YAA_Yadore_API {
     
-    private const API_BASE = 'https://api.yadore.com/v2/offer';
+    private const API_URL = 'https://api.yadore.com/v2/offer';
+    private const MERCHANT_API_URL = 'https://api.yadore.com/v2/merchant';
     
     private YAA_Cache_Handler $cache;
+    private string $api_key = '';
     
-    // Yadore supported markets
+    /**
+     * Verfügbare Märkte
+     */
     private const MARKETS = [
         'de' => 'Deutschland',
         'at' => 'Österreich',
@@ -8410,31 +9424,42 @@ final class YAA_Yadore_API {
         'pl' => 'Polen',
         'uk' => 'Großbritannien',
         'us' => 'USA',
-        'se' => 'Schweden',
-        'dk' => 'Dänemark',
-        'no' => 'Norwegen',
-        'fi' => 'Finnland',
+        'br' => 'Brasilien',
     ];
     
     public function __construct(YAA_Cache_Handler $cache) {
         $this->cache = $cache;
+        $this->load_api_key();
+    }
+    
+    /**
+     * Load API key from config or options
+     */
+    private function load_api_key(): void {
+        $this->api_key = defined('YADORE_API_KEY') 
+            ? (string) YADORE_API_KEY 
+            : (string) yaa_get_option('yadore_api_key', '');
+    }
+    
+    /**
+     * Reload API key (nach Einstellungsänderung)
+     */
+    public function reload_api_key(): void {
+        $this->load_api_key();
     }
     
     /**
      * Check if API is configured
      */
     public function is_configured(): bool {
-        return $this->get_api_key() !== '' && yaa_get_option('enable_yadore', 'yes') === 'yes';
+        return $this->api_key !== '' && yaa_get_option('enable_yadore', 'yes') === 'yes';
     }
     
     /**
-     * Get API Key
+     * Get API key (für Merchant Filter)
      */
-    private function get_api_key(): string {
-        if (defined('YADORE_API_KEY')) {
-            return (string) YADORE_API_KEY;
-        }
-        return (string) yaa_get_option('yadore_api_key', '');
+    public function get_api_key(): string {
+        return $this->api_key;
     }
     
     /**
@@ -8447,106 +9472,167 @@ final class YAA_Yadore_API {
     }
     
     /**
-     * Fetch offers from Yadore API
+     * Fetch products from Yadore API
      * 
-     * @param array<string, mixed> $atts
+     * @param array<string, mixed> $params
      * @return array<int, array<string, mixed>>|\WP_Error
      */
-    public function fetch(array $atts): array|\WP_Error {
-        $api_key = $this->get_api_key();
-        
-        if ($api_key === '') {
-            return new \WP_Error('no_api_key', __('Yadore API-Key nicht konfiguriert.', 'yadore-amazon-api'));
+    public function fetch(array $params): array|\WP_Error {
+        if (!$this->is_configured()) {
+            return new \WP_Error('not_configured', __('Yadore API nicht konfiguriert.', 'yadore-amazon-api'));
         }
         
-        // Merge with defaults
-        $defaults = [
-            'keyword'   => '',
-            'limit'     => (int) yaa_get_option('yadore_default_limit', 9),
-            'market'    => (string) yaa_get_option('yadore_market', 'de'),
-            'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-            'sort'      => 'rel_desc',
+        $keyword = trim($params['keyword'] ?? '');
+        $limit = (int) ($params['limit'] ?? 9);
+        $market = $params['market'] ?? yaa_get_option('yadore_market', 'de');
+        $precision = $params['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy');
+        $ean = $params['ean'] ?? '';
+        $merchant_id = $params['merchant_id'] ?? '';
+        
+        // NEU: Filter-Konfiguration aus Parametern extrahieren
+        $filter_config = [
+            'whitelist' => $params['merchant_whitelist'] ?? '',
+            'blacklist' => $params['merchant_blacklist'] ?? '',
         ];
         
-        $atts = wp_parse_args($atts, $defaults);
-        $atts['limit'] = (int) $atts['limit'];
+        // Build cache key (inkl. Filter)
+        $filter_hash = md5(serialize($filter_config));
+        $cache_key = 'yadore_' . md5($keyword . $ean . $market . $precision . $limit . $merchant_id . $filter_hash);
         
-        $keyword = trim((string) $atts['keyword']);
-        
-        if ($keyword === '') {
-            return new \WP_Error('no_keyword', __('Kein Suchbegriff angegeben.', 'yadore-amazon-api'));
+        // Check cache
+        $cached = $this->cache->get($cache_key);
+        if ($cached !== false && is_array($cached)) {
+            return $cached;
         }
         
-        $cache_key = $this->generate_cache_key($atts);
-        $fallback_key = $cache_key . '_fallback';
+        // Build query params
+        $query_params = [
+            'market'    => $market,
+            'precision' => $precision,
+            'limit'     => min(100, max(1, $limit + 20)), // Extra laden für Filter
+        ];
         
-        // Try cache first
-        $cached_data = $this->cache->get($cache_key);
-        if ($cached_data !== false && is_array($cached_data)) {
-            return $cached_data;
+        if ($keyword !== '') {
+            $query_params['keyword'] = $keyword;
         }
         
-        // Fetch from API
-        $url = add_query_arg([
-            'market'    => $atts['market'],
-            'keyword'   => urlencode($keyword),
-            'limit'     => $atts['limit'],
-            'sort'      => $atts['sort'],
-            'precision' => $atts['precision'],
-        ], self::API_BASE);
-
+        if ($ean !== '') {
+            $query_params['ean'] = $ean;
+        }
+        
+        if ($merchant_id !== '') {
+            $query_params['merchantId'] = $merchant_id;
+        }
+        
+        // Make API request
+        $url = self::API_URL . '?' . http_build_query($query_params);
+        
         $response = wp_remote_get($url, [
-            'headers'   => ['API-Key' => $api_key],
-            'timeout'   => 15,
-            'sslverify' => true,
+            'timeout' => 15,
+            'headers' => [
+                'API-Key' => $this->api_key,
+                'Accept'  => 'application/json',
+            ],
         ]);
-
+        
         if (is_wp_error($response)) {
-            error_log('Yadore API Error: ' . $response->get_error_message());
-            return $this->get_fallback($fallback_key);
+            return $response;
         }
-
+        
         $status_code = wp_remote_retrieve_response_code($response);
-        if ($status_code !== 200) {
-            error_log('Yadore API HTTP Error: ' . $status_code);
-            return $this->get_fallback($fallback_key);
-        }
-
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-
-        if (!is_array($data) || !isset($data['offers']) || empty($data['offers'])) {
-            return $this->get_fallback($fallback_key);
+        
+        if ($status_code !== 200) {
+            $error_message = $data['errors']['market'][0] 
+                ?? $data['errors']['keyword'][0] 
+                ?? 'HTTP Error ' . $status_code;
+            return new \WP_Error('api_error', $error_message);
         }
-
-        // Normalize data
-        $offers = $this->normalize_offers($data['offers']);
+        
+        if (!is_array($data)) {
+            return new \WP_Error('invalid_response', __('Ungültige API-Antwort.', 'yadore-amazon-api'));
+        }
+        
+        // Normalize products
+        $products = $this->normalize_response($data);
+        
+        // NEU: Händlerfilter anwenden
+        $products = $this->apply_merchant_filter($products, $filter_config, $params);
+        
+        // Auf gewünschtes Limit kürzen
+        $products = array_slice($products, 0, $limit);
         
         // Cache results
-        $this->cache->set($cache_key, $offers, yaa_get_cache_time());
-        $this->cache->set($fallback_key, $offers, yaa_get_fallback_time());
+        $this->cache->set($cache_key, $products, yaa_get_cache_time());
         
         // Track keyword
-        $this->track_keyword($atts);
+        $this->track_keyword($keyword, $market, $limit);
         
-        return $offers;
+        return $products;
     }
     
     /**
-     * Normalize offers to standard format
+     * Wendet den Händlerfilter auf Produkte an
      * 
-     * @param array<int, array<string, mixed>> $offers
+     * @param array<int, array<string, mixed>> $products
+     * @param array<string, mixed> $filter_config Shortcode-Filter
+     * @param array<string, mixed> $params Original-Parameter
      * @return array<int, array<string, mixed>>
      */
-    private function normalize_offers(array $offers): array {
-        $normalized = [];
+    private function apply_merchant_filter(array $products, array $filter_config, array $params): array {
+        // Filter-Konfiguration erstellen (Shortcode hat Vorrang)
+        $shortcode_whitelist = $filter_config['whitelist'] ?? '';
+        $shortcode_blacklist = $filter_config['blacklist'] ?? '';
+        
+        // Wenn Shortcode-Parameter leer sind, globale Einstellungen laden
+        if ($shortcode_whitelist === '' && $shortcode_blacklist === '') {
+            $final_config = [
+                'whitelist' => YAA_Merchant_Filter::normalize_merchant_list(
+                    yaa_get_option('yadore_merchant_whitelist', '')
+                ),
+                'blacklist' => YAA_Merchant_Filter::normalize_merchant_list(
+                    yaa_get_option('yadore_merchant_blacklist', '')
+                ),
+            ];
+        } else {
+            // Shortcode-Parameter verwenden
+            $final_config = [
+                'whitelist' => YAA_Merchant_Filter::normalize_merchant_list($shortcode_whitelist),
+                'blacklist' => YAA_Merchant_Filter::normalize_merchant_list($shortcode_blacklist),
+            ];
+        }
+        
+        return YAA_Merchant_Filter::filter_products($products, $final_config);
+    }
+    
+    /**
+     * Holt die Händlerliste von der API
+     * 
+     * @param string $market Markt
+     * @param bool $force_refresh Cache ignorieren
+     * @return array{success: bool, merchants: array, error?: string}
+     */
+    public function fetch_merchants(string $market = 'de', bool $force_refresh = false): array {
+        return YAA_Merchant_Filter::fetch_merchants($this->api_key, $market, $force_refresh);
+    }
+    
+    /**
+     * Normalize API response to standard format
+     * 
+     * @param array<string, mixed> $data
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_response(array $data): array {
+        $products = [];
+        $offers = $data['offers'] ?? [];
         
         foreach ($offers as $offer) {
-            $normalized[] = [
+            $products[] = [
                 'id'          => $offer['id'] ?? uniqid('yadore_'),
                 'title'       => $offer['title'] ?? '',
                 'description' => $offer['description'] ?? '',
-                'url'         => $offer['clickUrl'] ?? '#',
+                'url'         => $offer['clickUrl'] ?? '',
                 'image'       => [
                     'url' => $offer['image']['url'] ?? '',
                 ],
@@ -8556,45 +9642,29 @@ final class YAA_Yadore_API {
                     'display'  => '',
                 ],
                 'merchant'    => [
+                    'id'   => $offer['merchant']['id'] ?? '',
                     'name' => $offer['merchant']['name'] ?? '',
-                    'logo' => $offer['merchant']['logo'] ?? '',
+                    'logo' => $offer['merchant']['logo']['url'] ?? '',
                 ],
-                'source'      => 'yadore',
-                'is_prime'    => false,
+                'source'       => 'yadore',
+                'availability' => $offer['availability'] ?? 'UNKNOWN',
+                'is_prime'     => false,
+                'ean'          => $offer['ean'] ?? '',
+                'brand'        => $offer['brand'] ?? '',
             ];
         }
         
-        return $normalized;
+        return $products;
     }
     
     /**
-     * Generate cache key
-     * 
-     * @param array<string, mixed> $atts
+     * Track keyword for cron preload
      */
-    private function generate_cache_key(array $atts): string {
-        return 'yadore_' . md5(serialize($atts));
-    }
-    
-    /**
-     * Get fallback cache
-     * 
-     * @return array<int, array<string, mixed>>|\WP_Error
-     */
-    private function get_fallback(string $fallback_key): array|\WP_Error {
-        $fallback = $this->cache->get($fallback_key);
-        if ($fallback !== false && is_array($fallback)) {
-            return $fallback;
+    private function track_keyword(string $keyword, string $market, int $limit): void {
+        if ($keyword === '') {
+            return;
         }
-        return new \WP_Error('no_data', __('Keine Daten verfügbar.', 'yadore-amazon-api'));
-    }
-    
-    /**
-     * Track keywords for cron preload
-     * 
-     * @param array<string, mixed> $atts
-     */
-    private function track_keyword(array $atts): void {
+        
         $cached_keywords = get_option('yaa_cached_keywords', []);
         
         if (!is_array($cached_keywords)) {
@@ -8602,16 +9672,17 @@ final class YAA_Yadore_API {
         }
         
         $new_entry = [
-            'keyword' => $atts['keyword'],
-            'limit'   => $atts['limit'],
-            'market'  => $atts['market'],
+            'keyword' => $keyword,
+            'market'  => $market,
+            'limit'   => $limit,
             'source'  => 'yadore',
         ];
         
+        // Check for duplicates
         foreach ($cached_keywords as $entry) {
-            if (($entry['keyword'] ?? '') === $new_entry['keyword'] 
-                && ($entry['market'] ?? '') === $new_entry['market']
-                && ($entry['source'] ?? 'yadore') === 'yadore') {
+            if (($entry['keyword'] ?? '') === $keyword 
+                && ($entry['source'] ?? '') === 'yadore'
+                && ($entry['market'] ?? 'de') === $market) {
                 return;
             }
         }
@@ -8627,40 +9698,53 @@ final class YAA_Yadore_API {
      * @return array{success: bool, message: string}
      */
     public function test_connection(?string $api_key = null): array {
-        $api_key ??= $this->get_api_key();
+        $key = $api_key ?? $this->api_key;
         
-        if ($api_key === '') {
+        if ($key === '') {
             return [
                 'success' => false,
-                'message' => __('Kein API-Key angegeben.', 'yadore-amazon-api'),
+                'message' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api'),
             ];
         }
         
-        $url = add_query_arg([
+        $url = self::API_URL . '?' . http_build_query([
             'market'  => 'de',
             'keyword' => 'test',
             'limit'   => 1,
-        ], self::API_BASE);
-
-        $response = wp_remote_get($url, [
-            'headers' => ['API-Key' => $api_key],
-            'timeout' => 10,
         ]);
-
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 10,
+            'headers' => [
+                'API-Key' => $key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
         if (is_wp_error($response)) {
             return [
                 'success' => false,
                 'message' => $response->get_error_message(),
             ];
         }
-
+        
         $status_code = wp_remote_retrieve_response_code($response);
         
-        return match ($status_code) {
-            200 => ['success' => true, 'message' => __('Verbindung erfolgreich!', 'yadore-amazon-api')],
-            401 => ['success' => false, 'message' => __('Ungültiger API-Key.', 'yadore-amazon-api')],
-            default => ['success' => false, 'message' => sprintf(__('HTTP Fehler: %d', 'yadore-amazon-api'), $status_code)],
-        };
+        if ($status_code === 200) {
+            return [
+                'success' => true,
+                'message' => __('Verbindung erfolgreich!', 'yadore-amazon-api'),
+            ];
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        $error = $data['errors']['market'][0] ?? 'HTTP Error ' . $status_code;
+        
+        return [
+            'success' => false,
+            'message' => $error,
+        ];
     }
 }
  

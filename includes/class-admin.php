@@ -2,20 +2,22 @@
 /**
  * Admin Settings & Dashboard
  * PHP 8.3+ compatible with full backend configuration
- * Version: 1.3.0
+ * Version: 1.3.1
  *
  * Features:
  * - Yadore API Configuration
- * - Yadore Merchant Filter (Whitelist/Blacklist) - NEU
+ * - Yadore Merchant Filter (Whitelist/Blacklist)
  * - Amazon PA-API 5.0 Configuration (all marketplaces)
- * - Image Size Selection - NEU
- * - SEO Filename Configuration - NEU
+ * - Image Size Selection
+ * - SEO Filename Configuration
  * - Custom Products Management
  * - Redis Cache Configuration
  * - Local Image Storage Configuration
  * - Fuzzy Search Configuration
  * - Display Settings
  * - Status & Documentation
+ * 
+ * FIX 1.3.1: Tab-Navigation unabhängig von wp-color-picker
  */
 
 declare(strict_types=1);
@@ -52,7 +54,7 @@ final class YAA_Admin {
         add_action('wp_ajax_yaa_test_yadore', [$this, 'ajax_test_yadore']);
         add_action('wp_ajax_yaa_test_amazon', [$this, 'ajax_test_amazon']);
         add_action('wp_ajax_yaa_test_redis', [$this, 'ajax_test_redis']);
-        add_action('wp_ajax_yaa_refresh_merchants', [$this, 'ajax_refresh_merchants']); // NEU
+        add_action('wp_ajax_yaa_refresh_merchants', [$this, 'ajax_refresh_merchants']);
     }
     
     /**
@@ -128,7 +130,7 @@ final class YAA_Admin {
             ? $input['yadore_precision'] : 'fuzzy';
         $sanitized['yadore_default_limit'] = max(1, min(50, (int) ($input['yadore_default_limit'] ?? 9)));
         
-        // NEU: Merchant Filter
+        // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
         $sanitized['yadore_merchant_blacklist'] = $this->sanitize_merchant_list($input['yadore_merchant_blacklist'] ?? '');
         
@@ -156,7 +158,7 @@ final class YAA_Admin {
         // Local Image Storage
         $sanitized['enable_local_images'] = isset($input['enable_local_images']) ? 'yes' : 'no';
         
-        // NEU: Bildgröße und SEO-Dateinamen
+        // Bildgröße und SEO-Dateinamen
         $sanitized['preferred_image_size'] = in_array($input['preferred_image_size'] ?? '', ['Large', 'Medium', 'Small'], true) 
             ? $input['preferred_image_size'] : 'Large';
         $sanitized['image_filename_format'] = in_array($input['image_filename_format'] ?? '', ['seo', 'id'], true) 
@@ -198,7 +200,7 @@ final class YAA_Admin {
     }
     
     /**
-     * NEU: Sanitize merchant list (comma-separated)
+     * Sanitize merchant list (comma-separated)
      */
     private function sanitize_merchant_list(string $input): string {
         $list = array_map('trim', explode(',', $input));
@@ -208,27 +210,44 @@ final class YAA_Admin {
     
     /**
      * Enqueue admin assets
+     * FIX: Tab-JavaScript unabhängig von wp-color-picker laden
      */
     public function enqueue_admin_assets(string $hook): void {
-        if (!str_contains($hook, 'yaa-') && $hook !== 'toplevel_page_yaa-settings') {
+        // Prüfen ob dies eine YAA Admin-Seite ist
+        $is_yaa_page = str_contains($hook, 'yaa-') 
+                    || str_contains($hook, 'yaa_') 
+                    || $hook === 'toplevel_page_yaa-settings';
+        
+        if (!$is_yaa_page) {
             return;
         }
         
-        wp_enqueue_style('wp-color-picker');
-        wp_enqueue_script('wp-color-picker');
+        // 1. Admin CSS - eigenes Handle registrieren
+        wp_register_style('yaa-admin', false, [], YAA_VERSION);
+        wp_enqueue_style('yaa-admin');
+        wp_add_inline_style('yaa-admin', $this->get_admin_css());
         
-        // Inline admin styles
-        $admin_css = $this->get_admin_css();
-        wp_add_inline_style('wp-color-picker', $admin_css);
+        // 2. Tab-JavaScript - UNABHÄNGIG von wp-color-picker
+        wp_register_script('yaa-admin-tabs', false, ['jquery'], YAA_VERSION, true);
+        wp_enqueue_script('yaa-admin-tabs');
+        wp_add_inline_script('yaa-admin-tabs', $this->get_tab_js());
         
-        // Admin JS
-        $admin_js = $this->get_admin_js();
-        wp_add_inline_script('wp-color-picker', $admin_js);
-        
-        wp_localize_script('wp-color-picker', 'yaaAdmin', [
+        // 3. AJAX-Funktionalität (an Tab-Script hängen)
+        wp_localize_script('yaa-admin-tabs', 'yaaAdmin', [
             'nonce' => wp_create_nonce('yaa_admin_nonce'),
             'ajaxurl' => admin_url('admin-ajax.php'),
         ]);
+        
+        // 4. Color Picker und erweiterte JS nur auf Settings-Seite
+        if ($hook === 'toplevel_page_yaa-settings' || str_ends_with($hook, '_page_yaa-settings')) {
+            wp_enqueue_style('wp-color-picker');
+            wp_enqueue_script('wp-color-picker');
+            
+            // Erweitertes JS (Color Picker, Test-Buttons, etc.)
+            wp_register_script('yaa-admin-extended', false, ['jquery', 'wp-color-picker', 'yaa-admin-tabs'], YAA_VERSION, true);
+            wp_enqueue_script('yaa-admin-extended');
+            wp_add_inline_script('yaa-admin-extended', $this->get_extended_admin_js());
+        }
     }
     
     /**
@@ -297,38 +316,65 @@ final class YAA_Admin {
     }
     
     /**
-     * Get admin JavaScript
+     * Get Tab JavaScript (unabhängig lauffähig)
+     * FIX: Separates Script ohne Abhängigkeit von wp-color-picker
      */
-    private function get_admin_js(): string {
+    private function get_tab_js(): string {
         return '
             jQuery(document).ready(function($) {
-                // Color pickers
-                $(".yaa-color-picker").wpColorPicker();
-                
-                // Tabs
+                // Tab-Navigation
                 $(".yaa-tab").on("click", function() {
                     var tab = $(this).data("tab");
+                    if (!tab) return;
+                    
                     $(".yaa-tab").removeClass("active");
                     $(this).addClass("active");
                     $(".yaa-tab-content").removeClass("active");
                     $("#yaa-tab-" + tab).addClass("active");
-                    localStorage.setItem("yaa_active_tab", tab);
+                    
+                    try {
+                        localStorage.setItem("yaa_active_tab", tab);
+                    } catch(e) {
+                        // localStorage nicht verfügbar
+                    }
                 });
                 
-                // Restore active tab
-                var savedTab = localStorage.getItem("yaa_active_tab");
-                if (savedTab && $(".yaa-tab[data-tab=\"" + savedTab + "\"]").length) {
-                    $(".yaa-tab[data-tab=\"" + savedTab + "\"]").click();
+                // Gespeicherten Tab wiederherstellen
+                try {
+                    var savedTab = localStorage.getItem("yaa_active_tab");
+                    if (savedTab) {
+                        var $savedTabEl = $(".yaa-tab[data-tab=\"" + savedTab + "\"]");
+                        if ($savedTabEl.length) {
+                            $savedTabEl.trigger("click");
+                        }
+                    }
+                } catch(e) {
+                    // localStorage nicht verfügbar
+                }
+            });
+        ';
+    }
+    
+    /**
+     * Get extended Admin JavaScript (Color Picker, AJAX Tests, etc.)
+     * Wird nur auf der Settings-Seite geladen
+     */
+    private function get_extended_admin_js(): string {
+        return '
+            jQuery(document).ready(function($) {
+                // Color pickers initialisieren
+                if ($.fn.wpColorPicker) {
+                    $(".yaa-color-picker").wpColorPicker();
                 }
                 
-                // Marketplace change
+                // Marketplace Dropdown
                 $("select[name=\'yaa_settings[amazon_marketplace]\']").on("change", function() {
                     var marketplace = $(this).val();
                     $(".yaa-marketplace-detail").hide();
                     $("#marketplace-info-" + marketplace.replace(/\\./g, "-")).show();
                 });
                 
-                // Test buttons
+                // Test Buttons
                 $(".yaa-test-btn").on("click", function(e) {
                     e.preventDefault();
                     var $btn = $(this);
@@ -366,7 +412,7 @@ final class YAA_Admin {
                     });
                 });
                 
-                // NEU: Merchant list refresh
+                // Merchant list refresh
                 $("#yaa-refresh-merchants").on("click", function() {
                     var $btn = $(this);
                     var $status = $("#yaa-merchant-refresh-status");
@@ -393,7 +439,7 @@ final class YAA_Admin {
                     });
                 });
                 
-                // NEU: Multi-Select zu Text synchronisieren
+                // Multi-Select zu Text synchronisieren
                 $("select.yaa-merchant-select").on("change", function() {
                     var $select = $(this);
                     var $input = $select.closest(".yaa-form-row").find("input[type=\'text\']");
@@ -585,7 +631,7 @@ final class YAA_Admin {
             </div>
         </div>
         
-        <!-- NEU: Merchant Filter -->
+        <!-- Merchant Filter -->
         <div class="yaa-card">
             <h2>🏪 Händler-Filter (Whitelist / Blacklist)</h2>
             <p class="description">
@@ -1106,7 +1152,7 @@ final class YAA_Admin {
                 </p>
             </div>
             
-            <!-- NEU: Bildgrößen-Einstellung -->
+            <!-- Bildgrößen-Einstellung -->
             <div class="yaa-feature-box info" style="margin-top: 20px;">
                 <h4 style="margin-top: 0;">🖼️ Bevorzugte Bildgröße</h4>
                 <p class="description" style="margin-bottom: 15px;">
@@ -1174,7 +1220,7 @@ final class YAA_Admin {
                 </table>
             </div>
             
-            <!-- NEU: SEO-Dateinamen -->
+            <!-- SEO-Dateinamen -->
             <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
                 <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
                 <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
@@ -1931,7 +1977,7 @@ define('WP_REDIS_PORT', 6379);
     }
     
     /**
-     * NEU: AJAX: Refresh merchant list
+     * AJAX: Refresh merchant list
      */
     public function ajax_refresh_merchants(): void {
         check_ajax_referer('yaa_admin_nonce', 'nonce');
