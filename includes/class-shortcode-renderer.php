@@ -1,16 +1,20 @@
 <?php
 /**
- * Shortcode Renderer - Mit Fuzzy-Suche und Bild-Fehlerbehandlung
+ * Shortcode Renderer - Mit Fuzzy-Suche, SEO-Bildnamen und Bild-Fehlerbehandlung
  * PHP 8.3+ compatible
- * Version: 1.2.7
+ * Version: 1.2.9
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
  * - Fuzzy-Suche für eigene Produkte
  * - Automatisches Einmischen eigener Produkte
- * - Lokale Bilderspeicherung mit Validierung
+ * - Lokale Bilderspeicherung mit SEO-Dateinamen (NEU)
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
+ * 
+ * NEU in 1.2.9:
+ * - SEO-optimierte Dateinamen für Bilder (Produktname + Timestamp)
+ * - Produktname wird an Image Handler übergeben
  */
 
 declare(strict_types=1);
@@ -68,7 +72,7 @@ final class YAA_Shortcode_Renderer {
             'columns'       => '',
             'class'         => '',
             'local_images'  => '',
-            'hide_no_image' => 'no',  // NEU: Produkte ohne Bild ausblenden
+            'hide_no_image' => 'no',
             'show_score'    => 'no',  // Debug: Score anzeigen
         ], $atts, 'fuzzy_products');
         
@@ -168,7 +172,7 @@ final class YAA_Shortcode_Renderer {
             'columns'         => '',
             'class'           => '',
             'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'hide_no_image'   => 'no',
             'mix_custom'      => '',    // 'yes' = Fuzzy-Produkte einmischen
             'custom_position' => 'start',  // 'start', 'end', 'shuffle', 'alternate'
             'custom_limit'    => 2,
@@ -239,7 +243,7 @@ final class YAA_Shortcode_Renderer {
             'columns'         => '',
             'class'           => '',
             'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'hide_no_image'   => 'no',
             'mix_custom'      => '',
             'custom_position' => 'start',
             'custom_limit'    => 2,
@@ -313,7 +317,7 @@ final class YAA_Shortcode_Renderer {
             'columns'       => '',
             'class'         => '',
             'local_images'  => '',
-            'hide_no_image' => 'no',  // NEU
+            'hide_no_image' => 'no',
             'fuzzy'         => '',    // 'yes' für Fuzzy-Suche
             'threshold'     => '',    // Fuzzy Threshold
         ], $atts, 'custom_products');
@@ -376,7 +380,7 @@ final class YAA_Shortcode_Renderer {
             'columns'         => '',
             'class'           => '',
             'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'hide_no_image'   => 'no',
         ], $atts, 'combined_products');
         
         $combined = [];
@@ -484,7 +488,7 @@ final class YAA_Shortcode_Renderer {
             'columns'         => '',
             'class'           => '',
             'local_images'    => '',
-            'hide_no_image'   => 'no',  // NEU
+            'hide_no_image'   => 'no',
         ], $atts, 'all_products');
         
         $total_limit = (int) $atts['total_limit'];
@@ -585,7 +589,7 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * NEU: Produkte ohne Bild ausfiltern
+     * Produkte ohne Bild ausfiltern
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -757,11 +761,22 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Process image URL - Mit erweiterter Validierung
+     * Process image URL - Mit SEO-Dateinamen Support (NEU in 1.2.9)
      * 
-     * @param array<string, mixed> $atts
+     * @param string $remote_url Remote image URL
+     * @param string $unique_id Unique identifier (ASIN, EAN, post_id)
+     * @param string $source Source (amazon, yadore, custom)
+     * @param string $product_name Product name for SEO filename (NEU)
+     * @param array<string, mixed> $atts Shortcode attributes
+     * @return string Local or remote URL
      */
-    private function process_image_url(string $remote_url, string $unique_id, string $source, array $atts = []): string {
+    private function process_image_url(
+        string $remote_url, 
+        string $unique_id, 
+        string $source, 
+        string $product_name = '',
+        array $atts = []
+    ): string {
         if ($remote_url === '') {
             return '';
         }
@@ -790,10 +805,9 @@ final class YAA_Shortcode_Renderer {
             return $remote_url;
         }
         
-        $file_id = $source . '_' . sanitize_file_name($unique_id);
-        
-        // Nutze den verbesserten Image Handler mit Validierung
-        return YAA_Image_Handler::process($remote_url, $file_id, $unique_id);
+        // Nutze den verbesserten Image Handler mit SEO-Dateinamen
+        // Parameter: remote_url, id, product_name, source
+        return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
     /**
@@ -838,8 +852,9 @@ final class YAA_Shortcode_Renderer {
                 $is_amazon = $source === 'amazon';
                 $is_custom = $source === 'custom';
                 $url = $item['url'] ?? '#';
+                $title = $item['title'] ?? '';
                 
-                // Bild-Verarbeitung
+                // Bild-Verarbeitung mit Produktname für SEO-Dateinamen (NEU)
                 $raw_image_url = $item['image']['url'] ?? '';
                 
                 $image_unique_id = match($source) {
@@ -849,9 +864,15 @@ final class YAA_Shortcode_Renderer {
                     default  => $item['id'] ?? uniqid('img_'),
                 };
                 
-                $image_url = $this->process_image_url($raw_image_url, $image_unique_id, $source, $atts);
+                // NEU: Produktname für SEO-Dateinamen übergeben
+                $image_url = $this->process_image_url(
+                    $raw_image_url, 
+                    $image_unique_id, 
+                    $source, 
+                    $title,  // Produktname für SEO
+                    $atts
+                );
                 
-                $title = $item['title'] ?? '';
                 $description = $item['description'] ?? '';
                 $price_amount = $item['price']['amount'] ?? '';
                 $price_currency = $item['price']['currency'] ?? 'EUR';
