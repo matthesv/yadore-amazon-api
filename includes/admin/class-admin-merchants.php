@@ -198,8 +198,8 @@ final class YAA_Admin_Merchants {
                             ?>
                                 <tr>
                                     <td>
-                                        <?php if (!empty($merchant['logo']) && !empty($merchant['has_logo'])): ?>
-                                            <img src="<?php echo esc_url($merchant['logo']); ?>" 
+                                        <?php if (!empty($merchant['logo_url']) && !empty($merchant['has_logo'])): ?>
+                                            <img src="<?php echo esc_url($merchant['logo_url']); ?>" 
                                                  alt="<?php echo esc_attr($merchant['name']); ?>" 
                                                  class="yaa-merchant-logo">
                                         <?php else: ?>
@@ -310,16 +310,16 @@ final class YAA_Admin_Merchants {
             $offer_result = YAA_Merchant_Filter::get_stored_merchants($market);
             foreach ($offer_result as $m) {
                 $offer_merchants[$m['id']] = [
-                    'id'          => $m['id'],
-                    'name'        => $m['name'],
-                    'logo'        => $m['logo'] ?? '',
-                    'has_logo'    => $m['hasLogo'] ?? false,
-                    'offer_count' => $m['offerCount'] ?? 0,
-                    'type'        => 'offer',
+                    'id'           => $m['id'],
+                    'name'         => $m['name'],
+                    'logo_url'     => $m['logo'] ?? '',
+                    'has_logo'     => $m['hasLogo'] ?? false,
+                    'offer_count'  => $m['offerCount'] ?? 0,
+                    'type'         => 'offer',
                     'is_smartlink' => false,
-                    'is_deeplink' => false,
+                    'is_deeplink'  => false,
                     'has_homepage' => false,
-                    'cpc_amount'  => 0,
+                    'cpc_amount'   => 0,
                     'cpc_currency' => 'EUR',
                 ];
             }
@@ -363,18 +363,18 @@ final class YAA_Admin_Merchants {
                 } else {
                     // Neuer Händler (nur Deeplink)
                     $deeplink_merchants[$id] = [
-                        'id'            => $id,
-                        'name'          => $m['name'],
-                        'logo'          => $m['logo']['url'] ?? '',
-                        'has_logo'      => $m['logo']['exists'] ?? false,
-                        'offer_count'   => 0,
-                        'deeplink_count'=> $m['deeplinkCount'] ?? 0,
-                        'type'          => 'deeplink',
-                        'is_smartlink'  => $is_smartlink,
-                        'is_deeplink'   => true,
-                        'has_homepage'  => !empty($m['hasSmartlinkHomepage']) || !empty($m['hasExternalHomepage']),
-                        'cpc_amount'    => $cpc_amount,
-                        'cpc_currency'  => $cpc_currency,
+                        'id'             => $id,
+                        'name'           => $m['name'],
+                        'logo_url'       => $m['logo']['url'] ?? '',
+                        'has_logo'       => $m['logo']['exists'] ?? false,
+                        'offer_count'    => 0,
+                        'deeplink_count' => $m['deeplinkCount'] ?? 0,
+                        'type'           => 'deeplink',
+                        'is_smartlink'   => $is_smartlink,
+                        'is_deeplink'    => true,
+                        'has_homepage'   => !empty($m['hasSmartlinkHomepage']) || !empty($m['hasExternalHomepage']),
+                        'cpc_amount'     => $cpc_amount,
+                        'cpc_currency'   => $cpc_currency,
                     ];
                 }
             }
@@ -535,31 +535,88 @@ final class YAA_Admin_Merchants {
     
     /**
      * JavaScript für die Seite
+     * KORRIGIERT: String-Escaping in CSV-Export
      */
     public function get_page_js(): string {
-        return '
-            jQuery(document).ready(function($) {
-                // Alle Händler aktualisieren
-                $("#yaa-refresh-all-merchants").on("click", function() {
-                    var $btn = $(this);
-                    var $status = $("#yaa-refresh-status");
-                    var market = $("select[name=\'market\']").val();
-                    
-                    $btn.prop("disabled", true).text("Wird geladen...");
-                    $status.html("");
-                    
-                    // 1. Offer-Händler laden
-                    $.post(yaaAdmin.ajaxurl, {
-                        action: "yaa_refresh_merchants",
-                        nonce: yaaAdmin.nonce,
-                        market: market
-                    }).then(function(response1) {
-                        $status.html("<span style=\'color:blue;\'>⏳ Offer-Händler geladen, lade Deeplinks...</span>");
-                        
-                        // 2. Deeplink-Händler laden
-                        return $.post(yaaAdmin.ajaxurl, {
-                            action: "yaa_fetch_deeplink_merchants",
-                            nonce: yaaAdmin.nonce,
-                            market: market
-                        });
-                    }).then(function(response2) {
+        $copy_text = esc_js(__('IDs in Zwischenablage kopiert!', 'yadore-amazon-api'));
+        
+        return <<<JS
+jQuery(document).ready(function($) {
+    // Alle Händler aktualisieren
+    $("#yaa-refresh-all-merchants").on("click", function() {
+        var \$btn = $(this);
+        var \$status = $("#yaa-refresh-status");
+        var market = $("select[name='market']").val();
+        
+        \$btn.prop("disabled", true).text("Wird geladen...");
+        \$status.html("");
+        
+        // 1. Offer-Händler laden
+        $.post(yaaAdmin.ajaxurl, {
+            action: "yaa_refresh_merchants",
+            nonce: yaaAdmin.nonce,
+            market: market
+        }).then(function(response1) {
+            \$status.html("<span style='color:blue;'>⏳ Offer-Händler geladen, lade Deeplinks...</span>");
+            
+            // 2. Deeplink-Händler laden
+            return $.post(yaaAdmin.ajaxurl, {
+                action: "yaa_fetch_deeplink_merchants",
+                nonce: yaaAdmin.nonce,
+                market: market
+            });
+        }).then(function(response2) {
+            \$btn.prop("disabled", false).text("🔄 Daten aktualisieren");
+            \$status.html("<span style='color:green;'>✅ Alle Händler aktualisiert!</span>");
+            setTimeout(function() { location.reload(); }, 1500);
+        }).fail(function() {
+            \$btn.prop("disabled", false).text("🔄 Daten aktualisieren");
+            \$status.html("<span style='color:red;'>❌ Fehler beim Laden</span>");
+        });
+    });
+    
+    // CSV Export
+    $("#yaa-export-csv").on("click", function() {
+        var rows = [];
+        rows.push(["Name", "Typ", "CPC", "Angebote", "ID"]);
+        
+        $(".yaa-merchant-table tbody tr").each(function() {
+            var \$row = $(this);
+            rows.push([
+                \$row.find("td:eq(1)").text().trim(),
+                \$row.find("td:eq(2)").text().trim(),
+                \$row.find("td:eq(3)").text().trim(),
+                \$row.find("td:eq(4)").text().trim(),
+                \$row.find("td:eq(6) code").attr("title") || ""
+            ]);
+        });
+        
+        var csv = rows.map(function(row) {
+            return row.map(function(cell) {
+                return '"' + String(cell).replace(/"/g, '""') + '"';
+            }).join(";");
+        }).join("\\n");
+        
+        var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "yadore-merchants-" + new Date().toISOString().slice(0,10) + ".csv";
+        link.click();
+    });
+    
+    // IDs kopieren
+    $("#yaa-copy-merchant-ids").on("click", function() {
+        var ids = [];
+        $(".yaa-merchant-table tbody tr").each(function() {
+            var id = $(this).find("td:eq(6) code").attr("title");
+            if (id) ids.push(id);
+        });
+        
+        navigator.clipboard.writeText(ids.join("\\n")).then(function() {
+            alert("{$copy_text}");
+        });
+    });
+});
+JS;
+    }
+}
