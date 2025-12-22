@@ -177,14 +177,18 @@ class YAA_Banner_Shortcode {
 
         $products = [];
         foreach ($response as $offer) {
+            if (!is_array($offer)) {
+                continue;
+            }
+
             $products[] = [
                 'source'   => 'yadore',
-                'title'    => $offer['title'] ?? '',
-                'price'    => $offer['price'] ?? '',
-                'currency' => $offer['currency'] ?? '€',
-                'image'    => $offer['image_url'] ?? $offer['image'] ?? '',
-                'url'      => $offer['deeplink'] ?? $offer['url'] ?? '',
-                'merchant' => $offer['merchant_name'] ?? $offer['merchant'] ?? '',
+                'title'    => $this->extract_string($offer, ['title', 'name']),
+                'price'    => $this->extract_string($offer, ['price', 'displayPrice']),
+                'currency' => $this->extract_string($offer, ['currency'], '€'),
+                'image'    => $this->extract_string($offer, ['image_url', 'image', 'imageUrl', 'thumbnail']),
+                'url'      => $this->extract_string($offer, ['deeplink', 'url', 'link', 'affiliateUrl']),
+                'merchant' => $this->extract_string($offer, ['merchant_name', 'merchant', 'shop', 'shopName']),
             ];
         }
 
@@ -207,13 +211,17 @@ class YAA_Banner_Shortcode {
 
         $products = [];
         foreach ($response as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
             $products[] = [
                 'source'   => 'amazon',
-                'title'    => $item['title'] ?? '',
-                'price'    => $item['price'] ?? '',
+                'title'    => $this->extract_string($item, ['title', 'name']),
+                'price'    => $this->extract_string($item, ['price', 'displayPrice', 'priceFormatted']),
                 'currency' => '€',
-                'image'    => $item['image'] ?? '',
-                'url'      => $item['url'] ?? '',
+                'image'    => $this->extract_string($item, ['image', 'imageUrl', 'mediumImage', 'largeImage']),
+                'url'      => $this->extract_string($item, ['url', 'detailPageURL', 'link']),
                 'merchant' => 'Amazon',
             ];
         }
@@ -240,20 +248,70 @@ class YAA_Banner_Shortcode {
                 $query->the_post();
                 $post_id = get_the_ID();
 
+                $price = get_post_meta($post_id, '_yaa_price', true);
+                $currency = get_post_meta($post_id, '_yaa_currency', true);
+                $url = get_post_meta($post_id, '_yaa_affiliate_url', true);
+                $merchant = get_post_meta($post_id, '_yaa_merchant', true);
+                $image = get_the_post_thumbnail_url($post_id, 'medium');
+
                 $products[] = [
                     'source'   => 'custom',
                     'title'    => get_the_title(),
-                    'price'    => get_post_meta($post_id, '_yaa_price', true),
-                    'currency' => get_post_meta($post_id, '_yaa_currency', true) ?: '€',
-                    'image'    => get_the_post_thumbnail_url($post_id, 'medium'),
-                    'url'      => get_post_meta($post_id, '_yaa_affiliate_url', true),
-                    'merchant' => get_post_meta($post_id, '_yaa_merchant', true),
+                    'price'    => is_string($price) ? $price : '',
+                    'currency' => is_string($currency) && !empty($currency) ? $currency : '€',
+                    'image'    => is_string($image) ? $image : '',
+                    'url'      => is_string($url) ? $url : '',
+                    'merchant' => is_string($merchant) ? $merchant : '',
                 ];
             }
             wp_reset_postdata();
         }
 
         return $products;
+    }
+
+    /**
+     * Extract string value from array with multiple possible keys
+     * 
+     * @param array $data Source array
+     * @param array $keys Possible keys to try (in order of priority)
+     * @param string $default Default value if not found
+     * @return string
+     */
+    private function extract_string(array $data, array $keys, string $default = ''): string {
+        foreach ($keys as $key) {
+            if (isset($data[$key])) {
+                $value = $data[$key];
+                
+                // Handle nested arrays (e.g., image might be ['url' => '...'])
+                if (is_array($value)) {
+                    // Try common nested keys
+                    foreach (['url', 'src', 'href', 'value', 'text', 0] as $nestedKey) {
+                        if (isset($value[$nestedKey]) && is_string($value[$nestedKey])) {
+                            return $value[$nestedKey];
+                        }
+                    }
+                    // Last resort: get first string value
+                    foreach ($value as $v) {
+                        if (is_string($v) && !empty($v)) {
+                            return $v;
+                        }
+                    }
+                    continue;
+                }
+                
+                // Handle scalar values
+                if (is_string($value)) {
+                    return $value;
+                }
+                
+                if (is_numeric($value)) {
+                    return (string) $value;
+                }
+            }
+        }
+        
+        return $default;
     }
 
     /**
@@ -307,24 +365,30 @@ class YAA_Banner_Shortcode {
         $style      = $atts['style'];
         $show_price = $atts['show_price'];
         $cta_text   = esc_html($atts['cta']);
-        $source     = esc_attr($product['source']);
+        $source     = esc_attr($product['source'] ?? 'unknown');
 
-        $title    = esc_html($this->truncate_title($product['title'], $style));
-        $url      = esc_url($product['url']);
-        $image    = esc_url($product['image']);
-        $price    = esc_html($product['price']);
-        $currency = esc_html($product['currency']);
+        // Ensure all values are strings before escaping
+        $title    = esc_html($this->truncate_title($this->ensure_string($product['title'] ?? ''), $style));
+        $url      = esc_url($this->ensure_string($product['url'] ?? ''));
+        $image    = esc_url($this->ensure_string($product['image'] ?? ''));
+        $price    = esc_html($this->ensure_string($product['price'] ?? ''));
+        $currency = esc_html($this->ensure_string($product['currency'] ?? '€'));
+
+        // Skip items without URL
+        if (empty($url)) {
+            return '';
+        }
 
         ob_start();
         ?>
-        <div class="yaa-banner-item yaa-<?php echo $source; ?> <?php echo $aspect_class; ?>">
+        <div class="yaa-banner-item yaa-<?php echo $source; ?> <?php echo esc_attr($aspect_class); ?>">
             <a href="<?php echo $url; ?>" 
                target="_blank" 
                rel="nofollow noopener sponsored"
                class="yaa-banner-link">
                 
                 <?php if (!empty($image)) : ?>
-                <div class="yaa-banner-image <?php echo $aspect_class; ?>">
+                <div class="yaa-banner-image <?php echo esc_attr($aspect_class); ?>">
                     <img src="<?php echo $image; ?>" 
                          alt="<?php echo $title; ?>" 
                          loading="lazy">
@@ -355,12 +419,18 @@ class YAA_Banner_Shortcode {
      */
     private function render_minimal_item(array $product, array $atts): string {
         $show_price = $atts['show_price'];
-        $source     = esc_attr($product['source']);
+        $source     = esc_attr($product['source'] ?? 'unknown');
 
-        $title    = esc_html($this->truncate_title($product['title'], 'minimal'));
-        $url      = esc_url($product['url']);
-        $price    = esc_html($product['price']);
-        $currency = esc_html($product['currency']);
+        // Ensure all values are strings before escaping
+        $title    = esc_html($this->truncate_title($this->ensure_string($product['title'] ?? ''), 'minimal'));
+        $url      = esc_url($this->ensure_string($product['url'] ?? ''));
+        $price    = esc_html($this->ensure_string($product['price'] ?? ''));
+        $currency = esc_html($this->ensure_string($product['currency'] ?? '€'));
+
+        // Skip items without URL
+        if (empty($url)) {
+            return '';
+        }
 
         ob_start();
         ?>
@@ -377,6 +447,43 @@ class YAA_Banner_Shortcode {
         </span>
         <?php
         return ob_get_clean();
+    }
+
+    /**
+     * Ensure value is a string
+     * 
+     * @param mixed $value
+     * @return string
+     */
+    private function ensure_string(mixed $value): string {
+        if (is_string($value)) {
+            return $value;
+        }
+        
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+        
+        if (is_array($value)) {
+            // Try to extract a string from common array structures
+            foreach (['url', 'src', 'href', 'value', 'text', 0] as $key) {
+                if (isset($value[$key]) && is_string($value[$key])) {
+                    return $value[$key];
+                }
+            }
+            // Return first string found
+            foreach ($value as $v) {
+                if (is_string($v)) {
+                    return $v;
+                }
+            }
+        }
+        
+        if (is_bool($value)) {
+            return $value ? '1' : '';
+        }
+        
+        return '';
     }
 
     /**
