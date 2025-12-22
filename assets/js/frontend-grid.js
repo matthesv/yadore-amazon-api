@@ -1,17 +1,15 @@
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.3.0 - PHP 8.3+ compatible
+ * Version 1.5.4 - Mit Image Proxy Support
+ * PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
  * - Image 404 Error Handling with Thumbnail Fallback
+ * - NEU: Server-seitiger Image Proxy als letzter Fallback
  * - Public API
- * 
- * NEU in 1.3.0:
- * - Thumbnail-Fallback vor CSS-Placeholder (Anforderung 3)
- * - Verbesserte Bildlade-Logik
  */
 
 (function() {
@@ -134,7 +132,13 @@
 
     /**
      * Initialize image error handling for 404/broken images
-     * NEU: Versucht erst Thumbnail zu laden, dann CSS-Placeholder
+     * NEU: Erweiterte Fallback-Kette mit Image Proxy
+     * 
+     * Fallback-Reihenfolge:
+     * 1. Original Image → Error
+     * 2. Thumbnail (data-thumbnail) → Error
+     * 3. Server-seitiger Proxy (yaaProxy.endpoint) → Error
+     * 4. CSS Placeholder
      */
     function initImageErrorHandling() {
         const images = document.querySelectorAll('.yaa-image-wrapper img');
@@ -170,83 +174,148 @@
 
     /**
      * NEU: Attempt image fallback chain
+     * 
+     * Fallback-Reihenfolge:
      * 1. Original image (already failed)
      * 2. Try thumbnail if available (data-thumbnail attribute)
-     * 3. Fall back to CSS placeholder
+     * 3. Try server-side proxy (if enabled)
+     * 4. Fall back to CSS placeholder
      * 
      * @param {HTMLImageElement} img
      */
-    /**
- * NEU: Attempt image fallback chain
- * 1. Original image (already failed)
- * 2. Try thumbnail if available (data-thumbnail attribute)
- * 3. Fall back to CSS placeholder
- * 
- * FIX: referrerpolicy="no-referrer" gegen Hotlink-Protection
- * 
- * @param {HTMLImageElement} img
- */
-function attemptImageFallback(img) {
-    const wrapper = img.closest('.yaa-image-wrapper');
-    
-    if (!wrapper) {
-        return;
-    }
-    
-    // ========================================
-    // FIX: Referrer-Policy setzen um Hotlink-Protection zu umgehen
-    // ========================================
-    if (!img.hasAttribute('referrerpolicy')) {
-        img.setAttribute('referrerpolicy', 'no-referrer');
-    }
-    
-    // Get fallback state
-    const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-    const thumbnailUrl = img.getAttribute('data-thumbnail');
-    const originalSrc = img.getAttribute('data-original-src') || img.src;
-    
-    // Store original src on first attempt
-    if (!img.hasAttribute('data-original-src')) {
-        img.setAttribute('data-original-src', img.src);
-    }
-    
-    // ========================================
-    // FALLBACK CHAIN
-    // ========================================
-    
-    // Step 1: If we haven't tried thumbnail yet and it exists, try it
-    if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
-        if (window.console) {
-            console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+    function attemptImageFallback(img) {
+        const wrapper = img.closest('.yaa-image-wrapper');
+        
+        if (!wrapper) {
+            return;
         }
         
-        img.setAttribute('data-fallback-attempted', 'thumbnail');
-        img.classList.add('yaa-img-loading');
-        
-        // Try loading the thumbnail
-        img.src = thumbnailUrl;
-        
-        // Don't proceed to placeholder yet - wait for thumbnail load/error
-        return;
-    }
-    
-    // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
-    if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
-        if (window.console && fallbackAttempted === 'thumbnail') {
-            console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
-        } else if (window.console) {
-            console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+        // ========================================
+        // Referrer-Policy setzen um Hotlink-Protection zu umgehen
+        // ========================================
+        if (!img.hasAttribute('referrerpolicy')) {
+            img.setAttribute('referrerpolicy', 'no-referrer');
         }
         
-        img.setAttribute('data-fallback-attempted', 'complete');
-        showCSSPlaceholder(img, wrapper);
+        // Get fallback state
+        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        
+        // Store original src on first attempt
+        if (!img.hasAttribute('data-original-src')) {
+            img.setAttribute('data-original-src', img.src);
+        }
+        
+        // ========================================
+        // FALLBACK CHAIN
+        // ========================================
+        
+        // Step 1: If we haven't tried thumbnail yet and it exists, try it
+        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+            if (window.console) {
+                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'thumbnail');
+            img.classList.add('yaa-img-loading');
+            
+            // Try loading the thumbnail
+            img.src = thumbnailUrl;
+            
+            // Don't proceed to next fallback yet - wait for thumbnail load/error
+            return;
+        }
+        
+        // Step 2: If thumbnail failed or doesn't exist, try proxy (NEU)
+        if (fallbackAttempted === 'thumbnail' || (fallbackAttempted === 'false' && !thumbnailUrl)) {
+            // Check if proxy is enabled
+            if (isProxyEnabled() && originalSrc && originalSrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Trying server-side proxy for:', originalSrc);
+                }
+                
+                img.setAttribute('data-fallback-attempted', 'proxy');
+                img.classList.add('yaa-img-loading');
+                
+                // Generate proxy URL
+                const proxyUrl = getProxyUrl(originalSrc);
+                
+                if (proxyUrl) {
+                    img.src = proxyUrl;
+                    return;
+                }
+            }
+        }
+        
+        // Step 3: Proxy also failed or not available, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || fallbackAttempted === 'proxy') {
+            if (window.console) {
+                if (fallbackAttempted === 'proxy') {
+                    console.warn('YAA: Proxy also failed, showing placeholder for:', originalSrc);
+                } else if (fallbackAttempted === 'thumbnail') {
+                    console.warn('YAA: Thumbnail failed, showing placeholder:', originalSrc);
+                } else {
+                    console.warn('YAA: Image failed (no fallbacks), showing placeholder:', originalSrc);
+                }
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'complete');
+            showCSSPlaceholder(img, wrapper);
+        }
     }
-}
-
 
     /**
-     * NEU: Show CSS placeholder after all fallbacks failed
-     * Extracted from handleBrokenImage for cleaner code
+     * NEU: Check if image proxy is enabled
+     * @returns {boolean}
+     */
+    function isProxyEnabled() {
+        // Check global config from wp_localize_script
+        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.enabled) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * NEU: Generate proxy URL for an image
+     * @param {string} originalUrl - The original image URL
+     * @returns {string|null} - Proxy URL or null if not available
+     */
+    function getProxyUrl(originalUrl) {
+        if (!originalUrl || originalUrl === '') {
+            return null;
+        }
+        
+        // Don't proxy local URLs
+        if (originalUrl.indexOf(window.location.origin) === 0) {
+            return null;
+        }
+        
+        // Don't proxy data URLs
+        if (originalUrl.indexOf('data:') === 0) {
+            return null;
+        }
+        
+        // Don't proxy already proxied URLs
+        if (originalUrl.indexOf('action=yaa_proxy_image') !== -1) {
+            return null;
+        }
+        
+        // Build proxy URL
+        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.endpoint) {
+            var params = new URLSearchParams();
+            params.append('action', window.yaaProxy.action || 'yaa_proxy_image');
+            params.append('url', originalUrl);
+            
+            return window.yaaProxy.endpoint + '?' + params.toString();
+        }
+        
+        return null;
+    }
+
+    /**
+     * Show CSS placeholder after all fallbacks failed
      * 
      * @param {HTMLImageElement} img
      * @param {HTMLElement} wrapper
@@ -271,14 +340,14 @@ function attemptImageFallback(img) {
         }
         
         // Create CSS placeholder element
-        const placeholder = document.createElement('div');
+        var placeholder = document.createElement('div');
         placeholder.className = 'yaa-placeholder';
         placeholder.setAttribute('aria-hidden', 'true');
         placeholder.setAttribute('role', 'img');
         placeholder.setAttribute('aria-label', 'Bild nicht verfügbar');
         
         // Determine source type for colored placeholder
-        const item = wrapper.closest('.yaa-item');
+        var item = wrapper.closest('.yaa-item');
         if (item) {
             if (item.classList.contains('yaa-amazon')) {
                 placeholder.classList.add('yaa-placeholder-amazon');
@@ -290,7 +359,7 @@ function attemptImageFallback(img) {
         }
         
         // Insert placeholder (inside the link if exists, otherwise directly)
-        const link = wrapper.querySelector('a');
+        var link = wrapper.querySelector('a');
         if (link) {
             link.appendChild(placeholder);
         } else {
@@ -312,7 +381,7 @@ function attemptImageFallback(img) {
      */
     function initAccessibilityEnhancements() {
         // Add ARIA labels to read more buttons
-        const buttons = document.querySelectorAll('.yaa-read-more');
+        var buttons = document.querySelectorAll('.yaa-read-more');
         buttons.forEach(function(button) {
             if (!button.hasAttribute('aria-expanded')) {
                 button.setAttribute('aria-expanded', 'false');
@@ -326,11 +395,11 @@ function attemptImageFallback(img) {
         });
 
         // Add ARIA labels to product links
-        const productLinks = document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');
+        var productLinks = document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');
         productLinks.forEach(function(link) {
             if (link.hasAttribute('target') && link.getAttribute('target') === '_blank') {
                 if (!link.querySelector('.screen-reader-text')) {
-                    const srText = document.createElement('span');
+                    var srText = document.createElement('span');
                     srText.className = 'screen-reader-text';
                     srText.textContent = ' (öffnet in neuem Tab)';
                     srText.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
@@ -350,8 +419,8 @@ function attemptImageFallback(img) {
      * @param {string} id - The description ID (without 'desc-' prefix)
      */
     window.YAA.toggleDescription = function(id) {
-        const description = document.getElementById('desc-' + id);
-        const button = description ? description.parentElement.querySelector('.yaa-read-more') : null;
+        var description = document.getElementById('desc-' + id);
+        var button = description ? description.parentElement.querySelector('.yaa-read-more') : null;
         
         if (description && button) {
             toggleDescription(description, button);
@@ -392,7 +461,7 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Manually trigger thumbnail fallback for an image
+     * Manually trigger thumbnail fallback for an image
      * @param {HTMLImageElement} img - The image element
      * @returns {boolean} True if thumbnail was attempted
      */
@@ -401,7 +470,7 @@ function attemptImageFallback(img) {
             return false;
         }
         
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        var thumbnailUrl = img.getAttribute('data-thumbnail');
         if (thumbnailUrl && thumbnailUrl !== '') {
             img.setAttribute('data-fallback-attempted', 'false');
             attemptImageFallback(img);
@@ -409,6 +478,52 @@ function attemptImageFallback(img) {
         }
         
         return false;
+    };
+
+    /**
+     * NEU: Manually trigger proxy fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if proxy was attempted
+     */
+    window.YAA.tryProxy = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        if (!isProxyEnabled()) {
+            if (window.console) {
+                console.warn('YAA: Image proxy is not enabled');
+            }
+            return false;
+        }
+        
+        var originalSrc = img.getAttribute('data-original-src') || img.src;
+        var proxyUrl = getProxyUrl(originalSrc);
+        
+        if (proxyUrl) {
+            img.setAttribute('data-fallback-attempted', 'proxy');
+            img.src = proxyUrl;
+            return true;
+        }
+        
+        return false;
+    };
+
+    /**
+     * NEU: Generate proxy URL for external use
+     * @param {string} imageUrl - Original image URL
+     * @returns {string|null} Proxy URL or null
+     */
+    window.YAA.getProxyUrl = function(imageUrl) {
+        return getProxyUrl(imageUrl);
+    };
+
+    /**
+     * NEU: Check if proxy is enabled
+     * @returns {boolean}
+     */
+    window.YAA.isProxyEnabled = function() {
+        return isProxyEnabled();
     };
 
     /**
@@ -421,11 +536,11 @@ function attemptImageFallback(img) {
             return null;
         }
 
-        const titleElement = item.querySelector('.yaa-title a');
-        const priceElement = item.querySelector('.yaa-price');
-        const merchantElement = item.querySelector('.yaa-merchant');
-        const imageElement = item.querySelector('.yaa-image-wrapper img');
-        const wrapper = item.querySelector('.yaa-image-wrapper');
+        var titleElement = item.querySelector('.yaa-title a');
+        var priceElement = item.querySelector('.yaa-price');
+        var merchantElement = item.querySelector('.yaa-merchant');
+        var imageElement = item.querySelector('.yaa-image-wrapper img');
+        var wrapper = item.querySelector('.yaa-image-wrapper');
 
         return {
             title: titleElement ? titleElement.textContent.trim() : '',
@@ -433,7 +548,9 @@ function attemptImageFallback(img) {
             price: priceElement ? priceElement.textContent.trim() : '',
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
+            originalImage: imageElement ? imageElement.getAttribute('data-original-src') : '',
             thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
+            proxyUrl: imageElement ? getProxyUrl(imageElement.getAttribute('data-original-src') || imageElement.src) : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
             isYadore: item.classList.contains('yaa-yadore'),
@@ -450,7 +567,7 @@ function attemptImageFallback(img) {
      * @returns {Array} Array of product data objects
      */
     window.YAA.getAllProducts = function(container) {
-        let containerEl = container;
+        var containerEl = container;
         
         if (typeof container === 'string') {
             containerEl = document.querySelector(container);
@@ -460,11 +577,11 @@ function attemptImageFallback(img) {
             containerEl = document;
         }
         
-        const items = containerEl.querySelectorAll('.yaa-item');
-        const products = [];
+        var items = containerEl.querySelectorAll('.yaa-item');
+        var products = [];
         
         items.forEach(function(item) {
-            const data = window.YAA.getProductData(item);
+            var data = window.YAA.getProductData(item);
             if (data) {
                 products.push(data);
             }
@@ -482,7 +599,7 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Get count of images currently loading thumbnails
+     * Get count of images currently loading thumbnails
      * @returns {number}
      */
     window.YAA.getLoadingThumbnailCount = function() {
@@ -490,30 +607,47 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Get detailed image status for debugging
+     * NEU: Get count of images currently using proxy
+     * @returns {number}
+     */
+    window.YAA.getProxyImageCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length;
+    };
+
+    /**
+     * Get detailed image status for debugging
      * @returns {Object}
      */
     window.YAA.getImageStats = function() {
-        const images = document.querySelectorAll('.yaa-image-wrapper img');
-        let loaded = 0;
-        let broken = 0;
-        let loadingThumbnail = 0;
-        let hasThumbnail = 0;
+        var images = document.querySelectorAll('.yaa-image-wrapper img');
+        var loaded = 0;
+        var broken = 0;
+        var loadingThumbnail = 0;
+        var loadingProxy = 0;
+        var hasThumbnail = 0;
+        var hasProxy = 0;
         
         images.forEach(function(img) {
             if (img.classList.contains('yaa-img-loaded')) {
                 loaded++;
             }
             
-            const fallbackState = img.getAttribute('data-fallback-attempted');
+            var fallbackState = img.getAttribute('data-fallback-attempted');
             if (fallbackState === 'complete') {
                 broken++;
             } else if (fallbackState === 'thumbnail') {
                 loadingThumbnail++;
+            } else if (fallbackState === 'proxy') {
+                loadingProxy++;
             }
             
             if (img.getAttribute('data-thumbnail')) {
                 hasThumbnail++;
+            }
+            
+            var originalSrc = img.getAttribute('data-original-src') || img.src;
+            if (getProxyUrl(originalSrc)) {
+                hasProxy++;
             }
         });
         
@@ -522,7 +656,10 @@ function attemptImageFallback(img) {
             loaded: loaded,
             broken: broken,
             loadingThumbnail: loadingThumbnail,
-            withThumbnailFallback: hasThumbnail
+            loadingProxy: loadingProxy,
+            withThumbnailFallback: hasThumbnail,
+            withProxyAvailable: hasProxy,
+            proxyEnabled: isProxyEnabled()
         };
     };
 

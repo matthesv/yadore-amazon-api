@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.2
+ * Version: 1.5.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.2');
+define('YAA_VERSION', '1.5.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -1621,55 +1621,73 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
      * 
      * @param {HTMLImageElement} img
      */
-    function attemptImageFallback(img) {
-        const wrapper = img.closest('.yaa-image-wrapper');
-        
-        if (!wrapper) {
-            return;
-        }
-        
-        // Get fallback state
-        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
-        const originalSrc = img.getAttribute('data-original-src') || img.src;
-        
-        // Store original src on first attempt
-        if (!img.hasAttribute('data-original-src')) {
-            img.setAttribute('data-original-src', img.src);
-        }
-        
-        // ========================================
-        // FALLBACK CHAIN
-        // ========================================
-        
-        // Step 1: If we haven't tried thumbnail yet and it exists, try it
-        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
-            if (window.console) {
-                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'thumbnail');
-            img.classList.add('yaa-img-loading');
-            
-            // Try loading the thumbnail
-            img.src = thumbnailUrl;
-            
-            // Don't proceed to placeholder yet - wait for thumbnail load/error
-            return;
-        }
-        
-        // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
-        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
-            if (window.console && fallbackAttempted === 'thumbnail') {
-                console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
-            } else if (window.console) {
-                console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'complete');
-            showCSSPlaceholder(img, wrapper);
-        }
+    /**
+ * NEU: Attempt image fallback chain
+ * 1. Original image (already failed)
+ * 2. Try thumbnail if available (data-thumbnail attribute)
+ * 3. Fall back to CSS placeholder
+ * 
+ * FIX: referrerpolicy="no-referrer" gegen Hotlink-Protection
+ * 
+ * @param {HTMLImageElement} img
+ */
+function attemptImageFallback(img) {
+    const wrapper = img.closest('.yaa-image-wrapper');
+    
+    if (!wrapper) {
+        return;
     }
+    
+    // ========================================
+    // FIX: Referrer-Policy setzen um Hotlink-Protection zu umgehen
+    // ========================================
+    if (!img.hasAttribute('referrerpolicy')) {
+        img.setAttribute('referrerpolicy', 'no-referrer');
+    }
+    
+    // Get fallback state
+    const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+    const thumbnailUrl = img.getAttribute('data-thumbnail');
+    const originalSrc = img.getAttribute('data-original-src') || img.src;
+    
+    // Store original src on first attempt
+    if (!img.hasAttribute('data-original-src')) {
+        img.setAttribute('data-original-src', img.src);
+    }
+    
+    // ========================================
+    // FALLBACK CHAIN
+    // ========================================
+    
+    // Step 1: If we haven't tried thumbnail yet and it exists, try it
+    if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+        if (window.console) {
+            console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+        }
+        
+        img.setAttribute('data-fallback-attempted', 'thumbnail');
+        img.classList.add('yaa-img-loading');
+        
+        // Try loading the thumbnail
+        img.src = thumbnailUrl;
+        
+        // Don't proceed to placeholder yet - wait for thumbnail load/error
+        return;
+    }
+    
+    // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
+    if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
+        if (window.console && fallbackAttempted === 'thumbnail') {
+            console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
+        } else if (window.console) {
+            console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+        }
+        
+        img.setAttribute('data-fallback-attempted', 'complete');
+        showCSSPlaceholder(img, wrapper);
+    }
+}
+
 
     /**
      * NEU: Show CSS placeholder after all fallbacks failed
@@ -8939,6 +8957,7 @@ final class YAA_Shortcode_Renderer {
                                      alt="<?php echo esc_attr($title); ?>" 
                                      loading="lazy"
                                      decoding="async"
+                                     referrerpolicy="no-referrer"
                                      data-fallback-attempted="false"
                                      <?php if ($processed_thumbnail_url !== ''): ?>
                                      data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
@@ -11514,7 +11533,7 @@ jQuery(document).ready(function($) {
                     var cpcClass = cpc > 0 ? 'yaa-cpc-positive' : 'yaa-cpc-zero';
                     
                     var imageHtml = offer.image_url 
-                        ? '<img src="' + offer.image_url + '" class="yaa-product-image" alt="">'
+                        ? '<img src="' + offer.image_url + '" class="yaa-product-image" alt="" referrerpolicy="no-referrer" crossorigin="anonymous">'
                         : '<span style="font-size: 24px;">📦</span>';
                     
                     var priceDisplay = offer.price_display || (offer.price_amount ? offer.price_amount + ' ' + offer.price_currency : '—');

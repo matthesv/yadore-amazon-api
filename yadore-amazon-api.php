@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.3
+ * Version: 1.5.5
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.3');
+define('YAA_VERSION', '1.5.5');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -71,36 +71,6 @@ YAA_Autoloader::register(YAA_PLUGIN_PATH);
 YAA_Autoloader::add_directory('includes/admin');
 
 // =========================================
-// LEGACY REQUIRES (für Klassen die noch nicht migriert wurden)
-// Diese können nach und nach entfernt werden, sobald der Autoloader greift
-// =========================================
-
-// Core-Klassen die immer benötigt werden
-// Der Autoloader lädt diese automatisch, aber wir können sie auch explizit laden
-// für bessere Kontrolle über die Ladereihenfolge
-
-// Hinweis: Die folgenden require_once Statements sind optional
-// wenn der Autoloader korrekt funktioniert. Sie dienen als Fallback.
-
-/*
- * Liste der Kern-Klassen (werden durch Autoloader geladen):
- * - YAA_Cache_Handler
- * - YAA_Image_Handler
- * - YAA_Fuzzy_Matcher
- * - YAA_Yadore_API
- * - YAA_Amazon_PAAPI
- * - YAA_Custom_Products
- * - YAA_Shortcode_Renderer
- * - YAA_Merchant_Filter
- * - YAA_Admin (Koordinator)
- * - YAA_Admin_Settings
- * - YAA_Admin_Ajax
- * - YAA_Admin_Status
- * - YAA_Admin_Docs
- * - YAA_Admin_Merchants (NEU: Händlerübersicht mit CPC)
- */
-
-// =========================================
 // PLUGIN UPDATE CHECKER (GitHub)
 // =========================================
 if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php')) {
@@ -122,7 +92,7 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.4.0 - Mit Autoloader Support
+ * Version 1.5.4 - Mit Image Proxy Support
  */
 final class Yadore_Amazon_API_Plugin {
     
@@ -134,6 +104,7 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Custom_Products $custom_products;
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
+    public readonly YAA_Image_Proxy $image_proxy; // NEU
     
     public static function get_instance(): self {
         if (self::$instance === null) {
@@ -159,6 +130,9 @@ final class Yadore_Amazon_API_Plugin {
             $this->cache,
             $this->custom_products
         );
+        
+        // NEU: Image Proxy Component
+        $this->image_proxy = new YAA_Image_Proxy();
         
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
@@ -204,6 +178,10 @@ final class Yadore_Amazon_API_Plugin {
             // Local Image Storage
             'enable_local_images'    => 'yes',
             'image_filename_format'  => 'seo',
+            
+            // NEU: Image Proxy Settings
+            'enable_image_proxy'     => 'yes',
+            'image_proxy_cache'      => 24, // Stunden
             
             // Fuzzy Search settings
             'enable_fuzzy_search'    => 'yes',
@@ -357,6 +335,13 @@ final class Yadore_Amazon_API_Plugin {
             YAA_VERSION,
             true
         );
+        
+        // NEU: Proxy-URL ans Frontend übergeben
+        wp_localize_script('yaa-frontend-grid', 'yaaProxy', [
+            'enabled'  => yaa_get_option('enable_image_proxy', 'yes') === 'yes',
+            'endpoint' => admin_url('admin-ajax.php'),
+            'action'   => 'yaa_proxy_image',
+        ]);
     }
     
     public function preload_cache(): void {
