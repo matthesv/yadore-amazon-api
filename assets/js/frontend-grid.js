@@ -176,55 +176,73 @@
      * 
      * @param {HTMLImageElement} img
      */
-    function attemptImageFallback(img) {
-        const wrapper = img.closest('.yaa-image-wrapper');
-        
-        if (!wrapper) {
-            return;
-        }
-        
-        // Get fallback state
-        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
-        const originalSrc = img.getAttribute('data-original-src') || img.src;
-        
-        // Store original src on first attempt
-        if (!img.hasAttribute('data-original-src')) {
-            img.setAttribute('data-original-src', img.src);
-        }
-        
-        // ========================================
-        // FALLBACK CHAIN
-        // ========================================
-        
-        // Step 1: If we haven't tried thumbnail yet and it exists, try it
-        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
-            if (window.console) {
-                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'thumbnail');
-            img.classList.add('yaa-img-loading');
-            
-            // Try loading the thumbnail
-            img.src = thumbnailUrl;
-            
-            // Don't proceed to placeholder yet - wait for thumbnail load/error
-            return;
-        }
-        
-        // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
-        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
-            if (window.console && fallbackAttempted === 'thumbnail') {
-                console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
-            } else if (window.console) {
-                console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'complete');
-            showCSSPlaceholder(img, wrapper);
-        }
+    /**
+ * NEU: Attempt image fallback chain
+ * 1. Original image (already failed)
+ * 2. Try thumbnail if available (data-thumbnail attribute)
+ * 3. Fall back to CSS placeholder
+ * 
+ * FIX: referrerpolicy="no-referrer" gegen Hotlink-Protection
+ * 
+ * @param {HTMLImageElement} img
+ */
+function attemptImageFallback(img) {
+    const wrapper = img.closest('.yaa-image-wrapper');
+    
+    if (!wrapper) {
+        return;
     }
+    
+    // ========================================
+    // FIX: Referrer-Policy setzen um Hotlink-Protection zu umgehen
+    // ========================================
+    if (!img.hasAttribute('referrerpolicy')) {
+        img.setAttribute('referrerpolicy', 'no-referrer');
+    }
+    
+    // Get fallback state
+    const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+    const thumbnailUrl = img.getAttribute('data-thumbnail');
+    const originalSrc = img.getAttribute('data-original-src') || img.src;
+    
+    // Store original src on first attempt
+    if (!img.hasAttribute('data-original-src')) {
+        img.setAttribute('data-original-src', img.src);
+    }
+    
+    // ========================================
+    // FALLBACK CHAIN
+    // ========================================
+    
+    // Step 1: If we haven't tried thumbnail yet and it exists, try it
+    if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+        if (window.console) {
+            console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+        }
+        
+        img.setAttribute('data-fallback-attempted', 'thumbnail');
+        img.classList.add('yaa-img-loading');
+        
+        // Try loading the thumbnail
+        img.src = thumbnailUrl;
+        
+        // Don't proceed to placeholder yet - wait for thumbnail load/error
+        return;
+    }
+    
+    // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
+    if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
+        if (window.console && fallbackAttempted === 'thumbnail') {
+            console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
+        } else if (window.console) {
+            console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+        }
+        
+        img.setAttribute('data-fallback-attempted', 'complete');
+        showCSSPlaceholder(img, wrapper);
+    }
+}
+
 
     /**
      * NEU: Show CSS placeholder after all fallbacks failed

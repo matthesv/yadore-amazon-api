@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.1
+ * Version: 1.5.2
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.1');
+define('YAA_VERSION', '1.5.2');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -420,13 +420,13 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  
 /**
  * Yadore-Amazon-API Frontend Grid Styles
- * Version 1.2.7 - PHP 8.3+ compatible
+ * Version 1.3.0 - PHP 8.3+ compatible
  * 
  * Features:
  * - CSS Custom Properties
  * - Responsive Grid
  * - Glassmorphism Design
- * - Image Error Placeholders
+ * - VERBESSERTES Image Error Placeholder Design (Anforderung 4)
  * - Accessibility Support
  * - Dark/Light Mode
  */
@@ -599,6 +599,12 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     opacity: 1;
 }
 
+/* NEU: Image loading thumbnail state */
+.yaa-image-wrapper img.yaa-img-loading {
+    opacity: 0.7;
+    filter: blur(2px);
+}
+
 .yaa-item:hover .yaa-image-wrapper img {
     transform: scale(1.08);
     filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 0, 204, 0.3));
@@ -632,16 +638,17 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 
 /* =========================================
  * IMAGE ERROR / 404 PLACEHOLDER (JavaScript-generated)
+ * VERBESSERTES DESIGN - Version 1.3.0
  * ========================================= */
 
 /* Wrapper with broken image */
 .yaa-image-wrapper.yaa-image-error {
     background: linear-gradient(135deg, 
-        rgba(30, 30, 30, 0.6) 0%, 
-        rgba(20, 20, 20, 0.8) 100%);
+        rgba(25, 25, 30, 0.9) 0%, 
+        rgba(15, 15, 20, 0.95) 100%);
 }
 
-/* CSS-only Placeholder (inserted by JS) */
+/* CSS-only Placeholder (inserted by JS) - MODERNISIERT */
 .yaa-placeholder {
     position: absolute;
     top: 0;
@@ -652,53 +659,152 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, 
-        rgba(30, 30, 30, 0.95) 0%, 
-        rgba(20, 20, 20, 0.98) 100%);
+    background: linear-gradient(145deg, 
+        rgba(30, 30, 35, 0.95) 0%, 
+        rgba(20, 20, 25, 0.98) 50%,
+        rgba(25, 25, 30, 0.95) 100%);
     border-radius: inherit;
+    overflow: hidden;
 }
 
-/* Placeholder Icon (CSS-generated SVG) */
+/* Glassmorphism overlay effect */
 .yaa-placeholder::before {
     content: "";
-    width: 80px;
-    height: 80px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='20' width='70' height='50' rx='6' stroke='%23555' stroke-width='3'/%3E%3Ccircle cx='35' cy='38' r='8' stroke='%23555' stroke-width='2'/%3E%3Cpath d='M20 60 L38 45 L52 55 L72 35 L85 50 L85 65 L15 65 Z' fill='%23444' opacity='0.8'/%3E%3Cline x1='50' y1='75' x2='50' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3Cline x1='40' y1='85' x2='60' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23666'/%3E%3Cstop offset='100%25' style='stop-color:%23444'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='15' y='20' width='70' height='50' rx='8' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Ccircle cx='32' cy='38' r='8' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3Cpath d='M18 58 L35 42 L50 52 L68 32 L82 48 L82 62 L18 62 Z' fill='%23333' fill-opacity='0.6'/%3E%3Cpath d='M50 72 L50 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M42 82 L58 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
     background-size: contain;
-    opacity: 0.5;
-    transition: opacity 0.3s ease;
+    opacity: 0.4;
+    transition: all 0.4s ease;
 }
 
-/* Placeholder Text */
+/* Subtle shimmer animation */
 .yaa-placeholder::after {
     content: "Bild nicht verfügbar";
-    margin-top: 15px;
-    font-size: 0.7rem;
-    color: var(--yaa-text-muted, #666);
+    position: absolute;
+    bottom: 25%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.35);
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 2px;
     white-space: nowrap;
-    opacity: 0.4;
+    font-weight: 500;
+    background: linear-gradient(90deg, 
+        rgba(255,255,255,0.2) 0%, 
+        rgba(255,255,255,0.4) 50%, 
+        rgba(255,255,255,0.2) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: yaa-placeholder-shimmer 3s ease-in-out infinite;
+}
+
+@keyframes yaa-placeholder-shimmer {
+    0% { background-position: 200% center; }
+    100% { background-position: -200% center; }
+}
+
+/* Decorative corner accents */
+.yaa-placeholder .yaa-placeholder-corner {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: rgba(255, 255, 255, 0.1);
+    border-style: solid;
+    border-width: 0;
 }
 
 /* Hover effect on placeholder */
 .yaa-item:hover .yaa-placeholder::before {
-    opacity: 0.7;
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(1.05);
 }
 
-/* Source-specific placeholder colors */
+.yaa-item:hover .yaa-placeholder::after {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* =========================================
+ * SOURCE-SPECIFIC PLACEHOLDER COLORS
+ * Verbesserte farbliche Integration
+ * ========================================= */
+
+/* Amazon Placeholder - Orange Akzent */
+.yaa-placeholder-amazon {
+    background: linear-gradient(145deg, 
+        rgba(40, 30, 20, 0.95) 0%, 
+        rgba(25, 20, 15, 0.98) 50%,
+        rgba(35, 25, 18, 0.95) 100%);
+    border-bottom: 2px solid rgba(255, 153, 0, 0.3);
+}
+
 .yaa-placeholder-amazon::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(350deg);
+    filter: sepia(50%) saturate(200%) hue-rotate(350deg) brightness(1.1);
+}
+
+.yaa-placeholder-amazon::after {
+    background: linear-gradient(90deg, 
+        rgba(255, 153, 0, 0.3) 0%, 
+        rgba(255, 180, 50, 0.5) 50%, 
+        rgba(255, 153, 0, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+/* Custom Product Placeholder - Grüner Akzent */
+.yaa-placeholder-custom {
+    background: linear-gradient(145deg, 
+        rgba(20, 35, 25, 0.95) 0%, 
+        rgba(15, 25, 18, 0.98) 50%,
+        rgba(18, 30, 22, 0.95) 100%);
+    border-bottom: 2px solid rgba(76, 175, 80, 0.3);
 }
 
 .yaa-placeholder-custom::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(80deg);
+    filter: sepia(50%) saturate(200%) hue-rotate(80deg) brightness(1.1);
+}
+
+.yaa-placeholder-custom::after {
+    background: linear-gradient(90deg, 
+        rgba(76, 175, 80, 0.3) 0%, 
+        rgba(129, 199, 132, 0.5) 50%, 
+        rgba(76, 175, 80, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+/* Yadore Placeholder - Magenta/Cyan Akzent */
+.yaa-placeholder-yadore {
+    background: linear-gradient(145deg, 
+        rgba(30, 20, 35, 0.95) 0%, 
+        rgba(20, 15, 25, 0.98) 50%,
+        rgba(25, 18, 30, 0.95) 100%);
+    border-bottom: 2px solid rgba(255, 0, 204, 0.3);
 }
 
 .yaa-placeholder-yadore::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(280deg);
+    filter: sepia(50%) saturate(250%) hue-rotate(280deg) brightness(1.1);
+}
+
+.yaa-placeholder-yadore::after {
+    background: linear-gradient(90deg, 
+        rgba(255, 0, 204, 0.3) 0%, 
+        rgba(0, 255, 255, 0.5) 50%, 
+        rgba(255, 0, 204, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 
 /* =========================================
@@ -1147,12 +1253,13 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     }
     
     .yaa-placeholder::before {
-        width: 60px;
-        height: 60px;
+        width: 70px;
+        height: 70px;
     }
     
     .yaa-placeholder::after {
-        font-size: 0.6rem;
+        font-size: 0.55rem;
+        letter-spacing: 1.5px;
     }
 }
 
@@ -1182,6 +1289,16 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     .yaa-button {
         padding: 10px 12px;
         font-size: 0.65rem;
+    }
+    
+    .yaa-placeholder::before {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .yaa-placeholder::after {
+        font-size: 0.5rem;
+        bottom: 20%;
     }
 }
 
@@ -1215,6 +1332,15 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     .yaa-price {
         color: #000 !important;
         -webkit-text-fill-color: #000 !important;
+    }
+    
+    .yaa-placeholder {
+        background: #f5f5f5 !important;
+    }
+    
+    .yaa-placeholder::after {
+        color: #666 !important;
+        -webkit-text-fill-color: #666 !important;
     }
 }
 
@@ -1259,9 +1385,24 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 }
 
 .yaa-grid-container.yaa-theme-light .yaa-placeholder {
-    background: linear-gradient(135deg, 
-        rgba(245, 245, 245, 0.98) 0%, 
-        rgba(235, 235, 235, 0.98) 100%);
+    background: linear-gradient(145deg, 
+        rgba(245, 245, 248, 0.98) 0%, 
+        rgba(235, 235, 240, 0.98) 50%,
+        rgba(240, 240, 245, 0.98) 100%);
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-placeholder::before {
+    opacity: 0.3;
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-placeholder::after {
+    background: linear-gradient(90deg, 
+        rgba(100, 100, 100, 0.4) 0%, 
+        rgba(50, 50, 50, 0.6) 50%, 
+        rgba(100, 100, 100, 0.4) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 
 /* =========================================
@@ -1272,7 +1413,8 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     .yaa-button,
     .yaa-image-wrapper img,
     .yaa-description,
-    .yaa-read-more::after {
+    .yaa-read-more::after,
+    .yaa-placeholder::before {
         transition: none;
     }
     
@@ -1288,6 +1430,10 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
         animation: none;
     }
     
+    .yaa-placeholder::after {
+        animation: none;
+    }
+    
     .yaa-spinner {
         animation: none;
         border-top-color: var(--yaa-primary);
@@ -1299,14 +1445,18 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.2.7 - PHP 8.3+ compatible
+ * Version 1.3.0 - PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
- * - Image 404 Error Handling
+ * - Image 404 Error Handling with Thumbnail Fallback
  * - Public API
+ * 
+ * NEU in 1.3.0:
+ * - Thumbnail-Fallback vor CSS-Placeholder (Anforderung 3)
+ * - Verbesserte Bildlade-Logik
  */
 
 (function() {
@@ -1429,16 +1579,21 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 
     /**
      * Initialize image error handling for 404/broken images
-     * Creates CSS placeholder when image fails to load
+     * NEU: Versucht erst Thumbnail zu laden, dann CSS-Placeholder
      */
     function initImageErrorHandling() {
         const images = document.querySelectorAll('.yaa-image-wrapper img');
         
         images.forEach(function(img) {
+            // Mark image as not yet processed for fallback
+            if (!img.hasAttribute('data-fallback-attempted')) {
+                img.setAttribute('data-fallback-attempted', 'false');
+            }
+            
             // Handle images that are already broken (cached or immediate 404)
             if (img.complete) {
                 if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                    handleBrokenImage(img);
+                    attemptImageFallback(img);
                 } else {
                     // Image loaded successfully
                     img.classList.add('yaa-img-loaded');
@@ -1448,27 +1603,82 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
             // Handle future load events
             img.addEventListener('load', function() {
                 img.classList.add('yaa-img-loaded');
+                img.classList.remove('yaa-img-loading');
             });
             
             // Handle future errors (async loading)
             img.addEventListener('error', function() {
-                handleBrokenImage(img);
+                attemptImageFallback(img);
             });
         });
     }
 
     /**
-     * Handle a broken/404 image
-     * Hides the image and shows a CSS placeholder
+     * NEU: Attempt image fallback chain
+     * 1. Original image (already failed)
+     * 2. Try thumbnail if available (data-thumbnail attribute)
+     * 3. Fall back to CSS placeholder
+     * 
      * @param {HTMLImageElement} img
      */
-    function handleBrokenImage(img) {
+    function attemptImageFallback(img) {
         const wrapper = img.closest('.yaa-image-wrapper');
         
         if (!wrapper) {
             return;
         }
         
+        // Get fallback state
+        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        
+        // Store original src on first attempt
+        if (!img.hasAttribute('data-original-src')) {
+            img.setAttribute('data-original-src', img.src);
+        }
+        
+        // ========================================
+        // FALLBACK CHAIN
+        // ========================================
+        
+        // Step 1: If we haven't tried thumbnail yet and it exists, try it
+        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+            if (window.console) {
+                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'thumbnail');
+            img.classList.add('yaa-img-loading');
+            
+            // Try loading the thumbnail
+            img.src = thumbnailUrl;
+            
+            // Don't proceed to placeholder yet - wait for thumbnail load/error
+            return;
+        }
+        
+        // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
+            if (window.console && fallbackAttempted === 'thumbnail') {
+                console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
+            } else if (window.console) {
+                console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'complete');
+            showCSSPlaceholder(img, wrapper);
+        }
+    }
+
+    /**
+     * NEU: Show CSS placeholder after all fallbacks failed
+     * Extracted from handleBrokenImage for cleaner code
+     * 
+     * @param {HTMLImageElement} img
+     * @param {HTMLElement} wrapper
+     */
+    function showCSSPlaceholder(img, wrapper) {
         // Prevent multiple executions
         if (wrapper.classList.contains('yaa-image-error')) {
             return;
@@ -1480,6 +1690,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
         // Hide the broken image
         img.style.display = 'none';
         img.style.visibility = 'hidden';
+        img.classList.remove('yaa-img-loading');
         
         // Check if placeholder already exists
         if (wrapper.querySelector('.yaa-placeholder')) {
@@ -1512,11 +1723,15 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
         } else {
             wrapper.appendChild(placeholder);
         }
-        
-        // Log error for debugging (optional)
-        if (window.console && img.src) {
-            console.warn('YAA: Image failed to load:', img.src);
-        }
+    }
+
+    /**
+     * Legacy function for backwards compatibility
+     * @deprecated Use attemptImageFallback instead
+     * @param {HTMLImageElement} img
+     */
+    function handleBrokenImage(img) {
+        attemptImageFallback(img);
     }
 
     /**
@@ -1594,10 +1809,33 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
      */
     window.YAA.recheckImage = function(img) {
         if (img && img.tagName === 'IMG') {
+            // Reset fallback state
+            img.setAttribute('data-fallback-attempted', 'false');
+            
             if (img.complete && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
-                handleBrokenImage(img);
+                attemptImageFallback(img);
             }
         }
+    };
+
+    /**
+     * NEU: Manually trigger thumbnail fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if thumbnail was attempted
+     */
+    window.YAA.tryThumbnail = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        if (thumbnailUrl && thumbnailUrl !== '') {
+            img.setAttribute('data-fallback-attempted', 'false');
+            attemptImageFallback(img);
+            return true;
+        }
+        
+        return false;
     };
 
     /**
@@ -1622,12 +1860,14 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
             price: priceElement ? priceElement.textContent.trim() : '',
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
+            thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
             isYadore: item.classList.contains('yaa-yadore'),
             isPrime: item.querySelector('.yaa-prime-badge') !== null,
             hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
-            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false
+            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false,
+            fallbackAttempted: imageElement ? imageElement.getAttribute('data-fallback-attempted') : null
         };
     };
 
@@ -1666,6 +1906,51 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
      */
     window.YAA.getBrokenImageCount = function() {
         return document.querySelectorAll('.yaa-image-wrapper.yaa-image-error').length;
+    };
+
+    /**
+     * NEU: Get count of images currently loading thumbnails
+     * @returns {number}
+     */
+    window.YAA.getLoadingThumbnailCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="thumbnail"]').length;
+    };
+
+    /**
+     * NEU: Get detailed image status for debugging
+     * @returns {Object}
+     */
+    window.YAA.getImageStats = function() {
+        const images = document.querySelectorAll('.yaa-image-wrapper img');
+        let loaded = 0;
+        let broken = 0;
+        let loadingThumbnail = 0;
+        let hasThumbnail = 0;
+        
+        images.forEach(function(img) {
+            if (img.classList.contains('yaa-img-loaded')) {
+                loaded++;
+            }
+            
+            const fallbackState = img.getAttribute('data-fallback-attempted');
+            if (fallbackState === 'complete') {
+                broken++;
+            } else if (fallbackState === 'thumbnail') {
+                loadingThumbnail++;
+            }
+            
+            if (img.getAttribute('data-thumbnail')) {
+                hasThumbnail++;
+            }
+        });
+        
+        return {
+            total: images.length,
+            loaded: loaded,
+            broken: broken,
+            loadingThumbnail: loadingThumbnail,
+            withThumbnailFallback: hasThumbnail
+        };
     };
 
 })();
@@ -8523,8 +8808,9 @@ final class YAA_Shortcode_Renderer {
         return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
-    /**
+        /**
      * Render the product grid
+     * NEU in 1.5.1: data-thumbnail Attribut für Fallback-Kette
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -8567,9 +8853,27 @@ final class YAA_Shortcode_Renderer {
                 $url = $item['url'] ?? '#';
                 $title = $item['title'] ?? '';
                 
-                // Bild-Verarbeitung mit Produktname für SEO-Dateinamen
+                // === BILD-VERARBEITUNG MIT THUMBNAIL-FALLBACK ===
+                
+                // Haupt-Bild URL
                 $raw_image_url = $item['image']['url'] ?? '';
                 
+                // Thumbnail URL für Fallback (NEU)
+                $thumbnail_url = '';
+                
+                // Yadore: Thumbnail aus API-Response
+                if ($source === 'yadore') {
+                    $thumbnail_url = $item['image']['thumbnail_url'] ?? '';
+                }
+                
+                // Amazon: Medium-Bild als Thumbnail-Fallback
+                // Die Amazon API liefert verschiedene Größen - wir nutzen bereits die beste verfügbare
+                // Aber wir können das Small-Bild als Fallback speichern falls vorhanden
+                if ($source === 'amazon' && isset($item['image']['medium_url'])) {
+                    $thumbnail_url = $item['image']['medium_url'];
+                }
+                
+                // Unique ID für Bild-Verarbeitung
                 $image_unique_id = match($source) {
                     'amazon' => $item['asin'] ?? $item['id'] ?? uniqid('amz_'),
                     'custom' => (string) ($item['post_id'] ?? $item['id'] ?? uniqid('cst_')),
@@ -8585,6 +8889,18 @@ final class YAA_Shortcode_Renderer {
                     $title,
                     $atts
                 );
+                
+                // Auch Thumbnail lokal speichern wenn aktiviert (aber nur wenn unterschiedlich)
+                $processed_thumbnail_url = '';
+                if ($thumbnail_url !== '' && $thumbnail_url !== $raw_image_url) {
+                    $processed_thumbnail_url = $this->process_image_url(
+                        $thumbnail_url,
+                        $image_unique_id . '_thumb',
+                        $source,
+                        $title . ' Thumbnail',
+                        $atts
+                    );
+                }
                 
                 $description = $item['description'] ?? '';
                 $price_amount = $item['price']['amount'] ?? '';
@@ -8622,7 +8938,12 @@ final class YAA_Shortcode_Renderer {
                                 <img src="<?php echo esc_url($image_url); ?>" 
                                      alt="<?php echo esc_attr($title); ?>" 
                                      loading="lazy"
-                                     decoding="async">
+                                     decoding="async"
+                                     data-fallback-attempted="false"
+                                     <?php if ($processed_thumbnail_url !== ''): ?>
+                                     data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                     <?php endif; ?>
+                                     data-source="<?php echo esc_attr($source); ?>">
                             </a>
                         <?php else: ?>
                             <div class="yaa-no-image">
@@ -8690,6 +9011,7 @@ final class YAA_Shortcode_Renderer {
         <?php
         return ob_get_clean() ?: '';
     }
+
     
     /**
      * Render error message

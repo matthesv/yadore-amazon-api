@@ -972,6 +972,7 @@ final class YAA_Shortcode_Renderer {
                                      alt="<?php echo esc_attr($title); ?>" 
                                      loading="lazy"
                                      decoding="async"
+                                     referrerpolicy="no-referrer"
                                      data-fallback-attempted="false"
                                      <?php if ($processed_thumbnail_url !== ''): ?>
                                      data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"

@@ -278,7 +278,7 @@ jQuery(document).ready(function($) {
                     var cpcClass = cpc > 0 ? 'yaa-cpc-positive' : 'yaa-cpc-zero';
                     
                     var imageHtml = offer.image_url 
-                        ? '<img src="' + offer.image_url + '" class="yaa-product-image" alt="">'
+                        ? '<img src="' + offer.image_url + '" class="yaa-product-image" alt="" referrerpolicy="no-referrer" crossorigin="anonymous">'
                         : '<span style="font-size: 24px;">📦</span>';
                     
                     var priceDisplay = offer.price_display || (offer.price_amount ? offer.price_amount + ' ' + offer.price_currency : '—');
