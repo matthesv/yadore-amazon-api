@@ -1,12 +1,13 @@
 /**
- * Yadore Interaktive Produktsuche
- * Mit Initial-Produkten, Reset-Funktion und erweiterten Features
+ * Yadore Amazon API - Interaktive Produktsuche
+ * Mit Sortierung, Initial-Produkten, Reset-Funktion und erweiterten Features
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.3
+ * @since 1.7.0
  * 
  * Features:
  * - Live-Suche mit Debouncing
+ * - Sortierung mit Server-Synchronisation
  * - Initial-Produkte
  * - Reset-Funktion
  * - Bild-Fehlerbehandlung mit Fallback-Kette
@@ -15,10 +16,15 @@
  * - Pagination (Load More)
  * - Touch-Events für Mobile
  * - Keyboard-Navigation
+ * - Analytics-Tracking
  */
 
 (function($) {
     'use strict';
+
+    // =========================================
+    // HAUPTKLASSE
+    // =========================================
 
     class YadoreProductSearch {
         constructor(container) {
@@ -39,26 +45,49 @@
             this.$resultsCount = this.$container.find('.yadore-search-results-count');
             this.$resultsQuery = this.$container.find('.yadore-search-results-query');
             this.$resetButton = this.$container.find('.yadore-reset-button');
+            
+            // Sortierung
+            this.$sortSelect = this.$container.find('.yadore-sort-select, .yaa-sort-select');
+            this.$filtersWrapper = this.$container.find('.yadore-filters-wrapper, .yaa-search-filters');
 
             // Einstellungen aus data-Attributen
             this.settings = {
                 network: this.$container.data('network') || '',
+                apiSource: this.$container.data('api-source') || '',
                 maxResults: this.$container.data('max-results') || 12,
                 columns: this.$container.data('columns') || 3,
                 minChars: this.$container.data('min-chars') || 3,
                 showPrice: this.$container.data('show-price') === 1,
                 showMerchant: this.$container.data('show-merchant') === 1,
-                newTab: this.$container.data('new-tab') === 1,
+                showRating: this.$container.data('show-rating') !== false,
+                showPrime: this.$container.data('show-prime') !== false,
+                showAvailability: this.$container.data('show-availability') !== false,
+                showDescription: this.$container.data('show-description') === true,
+                descriptionLength: this.$container.data('description-length') || 150,
+                newTab: this.$container.data('new-tab') === 1 || this.$container.data('target') === '_blank',
+                target: this.$container.data('target') || '_blank',
+                nofollow: this.$container.data('nofollow') !== false,
+                sponsored: this.$container.data('sponsored') !== false,
                 debounce: this.$container.data('debounce') || 500,
                 liveSearch: this.$container.data('live-search') === 1,
-                sort: this.$container.data('sort') || 'rel_desc',
+                // WICHTIG: Sortierung
+                sort: this.$container.data('sort') || this.$container.data('default-sort') || 'relevance',
+                defaultSort: this.$container.data('default-sort') || 'relevance',
                 merchantFilter: this.$container.data('merchant-filter') || '',
                 showInitial: this.$container.data('show-initial') === 1,
                 showReset: this.$container.data('show-reset') === 1,
                 hasInitial: this.$container.data('has-initial') === 1,
-                // NEU: Pagination
-                resultsPerPage: this.$container.data('results-per-page') || 12,
+                // Pagination
+                resultsPerPage: this.$container.data('results-per-page') || this.$container.data('per-page') || 12,
                 enablePagination: this.$container.data('enable-pagination') !== 0,
+                // Filter
+                minPrice: this.$container.data('min-price') || '',
+                maxPrice: this.$container.data('max-price') || '',
+                primeOnly: this.$container.data('prime-only') === true,
+                minRating: this.$container.data('min-rating') || '',
+                category: this.$container.data('category') || '',
+                // Analytics
+                enableAnalytics: this.$container.data('analytics') !== false,
             };
 
             // State
@@ -76,6 +105,19 @@
             this.allProducts = [];
             this.displayedProducts = [];
             
+            // Sortierung State - WICHTIG FÜR SYNCHRONISATION
+            this.currentSort = this.settings.sort;
+            this.sortFromServer = null;
+            
+            // Filter State
+            this.activeFilters = {
+                minPrice: this.settings.minPrice,
+                maxPrice: this.settings.maxPrice,
+                primeOnly: this.settings.primeOnly,
+                minRating: this.settings.minRating,
+                category: this.settings.category,
+            };
+            
             // Touch State
             this.touchStartX = 0;
             this.touchStartY = 0;
@@ -83,9 +125,16 @@
 
             // Lazy Loading Observer
             this.imageObserver = null;
+            
+            // Instance ID für mehrere Instanzen
+            this.instanceId = this.$container.attr('id') || 'yadore-search-' + Math.random().toString(36).substr(2, 9);
 
             this.init();
         }
+
+        // =========================================
+        // INITIALISIERUNG
+        // =========================================
 
         init() {
             // Form Submit
@@ -129,10 +178,16 @@
 
             // ESC-Taste zum Zurücksetzen
             this.$input.on('keydown', (e) => {
-                if (e.which === 27 && this.isShowingResults) { // ESC
+                if (e.which === 27 && this.isShowingResults) {
                     this.resetToInitial();
                 }
             });
+
+            // WICHTIG: Sortierung Event Handler
+            this.initSortingHandler();
+            
+            // Filter Event Handler
+            this.initFilterHandlers();
 
             // Keyboard Navigation für Ergebnisse
             this.initKeyboardNavigation();
@@ -148,6 +203,289 @@
 
             // Bild-Fehlerbehandlung für Initial-Produkte
             this.initImageErrorHandling(this.$initialProducts);
+            
+            // Clear-Button initialisieren
+            this.initClearButton();
+            
+            // Suggestions initialisieren
+            this.initSuggestions();
+
+            this.log('Initialized', this.settings);
+        }
+
+        // =========================================
+        // SORTIERUNG - WICHTIGE ÄNDERUNGEN
+        // =========================================
+
+        initSortingHandler() {
+            // Sort-Dropdown Event Handler
+            this.$sortSelect.on('change', (e) => {
+                const newSort = $(e.target).val();
+                this.handleSortChange(newSort);
+            });
+
+            // Initial-Sortierung setzen
+            if (this.$sortSelect.length) {
+                this.$sortSelect.val(this.currentSort);
+            }
+        }
+
+        handleSortChange(newSort) {
+            // Validieren
+            const validSorts = Object.keys(this.getSortOptions());
+            if (!validSorts.includes(newSort)) {
+                this.log('Invalid sort option:', newSort);
+                newSort = this.settings.defaultSort;
+            }
+
+            this.currentSort = newSort;
+            this.log('Sort changed to:', newSort);
+
+            // Wenn bereits Suchergebnisse vorhanden, neu suchen
+            if (this.isShowingResults && this.lastQuery) {
+                this.currentPage = 1;
+                this.allProducts = [];
+                this.displayedProducts = [];
+                this.search();
+            }
+        }
+
+        getSortOptions() {
+            // Fallback zu Defaults wenn nicht vom Server geladen
+            return yadoreSearch.sortOptions || {
+                'relevance': 'Relevanz',
+                'price_asc': 'Preis aufsteigend',
+                'price_desc': 'Preis absteigend',
+                'title_asc': 'Name A-Z',
+                'title_desc': 'Name Z-A',
+                'rating_desc': 'Beste Bewertung',
+                'newest': 'Neueste zuerst',
+            };
+        }
+
+        syncSortFromServer(serverSort, sortLabel) {
+            // Synchronisiere Sortierung mit Server-Antwort
+            if (serverSort && serverSort !== this.currentSort) {
+                this.log('Syncing sort from server:', serverSort, '(was:', this.currentSort + ')');
+                this.currentSort = serverSort;
+                this.sortFromServer = serverSort;
+                
+                // UI aktualisieren
+                if (this.$sortSelect.length) {
+                    this.$sortSelect.val(serverSort);
+                }
+            }
+        }
+
+        // =========================================
+        // FILTER HANDLING
+        // =========================================
+
+        initFilterHandlers() {
+            // Preis-Filter
+            this.$container.find('.yadore-min-price, .yaa-min-price').on('change', (e) => {
+                this.activeFilters.minPrice = $(e.target).val();
+                this.triggerFilteredSearch();
+            });
+
+            this.$container.find('.yadore-max-price, .yaa-max-price').on('change', (e) => {
+                this.activeFilters.maxPrice = $(e.target).val();
+                this.triggerFilteredSearch();
+            });
+
+            // Prime-Filter
+            this.$container.find('.yadore-prime-checkbox, .yaa-prime-checkbox').on('change', (e) => {
+                this.activeFilters.primeOnly = $(e.target).is(':checked');
+                this.triggerFilteredSearch();
+            });
+
+            // Rating-Filter
+            this.$container.find('.yadore-min-rating-select, .yaa-min-rating-select').on('change', (e) => {
+                this.activeFilters.minRating = $(e.target).val();
+                this.triggerFilteredSearch();
+            });
+
+            // Source-Filter
+            this.$container.find('.yadore-source-select, .yaa-source-select').on('change', (e) => {
+                this.settings.apiSource = $(e.target).val();
+                this.triggerFilteredSearch();
+            });
+
+            // Advanced Filters Toggle
+            this.$container.find('.yadore-toggle-filters, .yaa-toggle-filters').on('click', (e) => {
+                const $button = $(e.currentTarget);
+                const $content = $button.next('.yadore-advanced-filters-content, .yaa-advanced-filters-content');
+                const isExpanded = $button.attr('aria-expanded') === 'true';
+                
+                $button.attr('aria-expanded', !isExpanded);
+                $content.prop('hidden', isExpanded);
+                $button.find('.yadore-toggle-icon, .yaa-toggle-icon').toggleClass('rotated', !isExpanded);
+            });
+        }
+
+        triggerFilteredSearch() {
+            if (this.isShowingResults && this.lastQuery) {
+                this.currentPage = 1;
+                this.allProducts = [];
+                this.displayedProducts = [];
+                this.search();
+            }
+        }
+
+        // =========================================
+        // CLEAR BUTTON
+        // =========================================
+
+        initClearButton() {
+            const $clearButton = this.$container.find('.yadore-search-clear, .yaa-search-clear');
+            
+            // Zeigen/Verstecken basierend auf Input-Inhalt
+            this.$input.on('input', () => {
+                const hasValue = this.$input.val().trim().length > 0;
+                $clearButton.toggle(hasValue);
+            });
+
+            $clearButton.on('click', () => {
+                this.$input.val('').trigger('input');
+                this.$input.focus();
+                
+                if (this.isShowingResults) {
+                    this.resetToInitial();
+                }
+            });
+        }
+
+        // =========================================
+        // SUGGESTIONS
+        // =========================================
+
+        initSuggestions() {
+            if (!yadoreSearch.enableSuggestions) {
+                return;
+            }
+
+            const $suggestions = this.$container.find('.yadore-search-suggestions, .yaa-search-suggestions');
+            
+            if (!$suggestions.length) {
+                return;
+            }
+
+            let suggestionTimer = null;
+
+            this.$input.on('input', () => {
+                clearTimeout(suggestionTimer);
+                
+                const query = this.$input.val().trim();
+                
+                if (query.length < 2) {
+                    $suggestions.hide().empty();
+                    return;
+                }
+
+                suggestionTimer = setTimeout(() => {
+                    this.fetchSuggestions(query, $suggestions);
+                }, 200);
+            });
+
+            this.$input.on('focus', () => {
+                if ($suggestions.children().length > 0) {
+                    $suggestions.show();
+                }
+            });
+
+            this.$input.on('blur', () => {
+                // Verzögern um Klick auf Suggestion zu ermöglichen
+                setTimeout(() => {
+                    $suggestions.hide();
+                }, 200);
+            });
+
+            // Keyboard Navigation in Suggestions
+            this.$input.on('keydown', (e) => {
+                if (!$suggestions.is(':visible')) {
+                    return;
+                }
+
+                const $items = $suggestions.find('.yadore-suggestion-item');
+                const $active = $items.filter('.active');
+                let index = $items.index($active);
+
+                switch (e.which) {
+                    case 40: // Down
+                        e.preventDefault();
+                        index = Math.min(index + 1, $items.length - 1);
+                        $items.removeClass('active').eq(index).addClass('active');
+                        break;
+                        
+                    case 38: // Up
+                        e.preventDefault();
+                        index = Math.max(index - 1, 0);
+                        $items.removeClass('active').eq(index).addClass('active');
+                        break;
+                        
+                    case 13: // Enter
+                        if ($active.length) {
+                            e.preventDefault();
+                            const term = $active.data('term');
+                            this.$input.val(term);
+                            $suggestions.hide();
+                            this.search();
+                        }
+                        break;
+                        
+                    case 27: // Escape
+                        $suggestions.hide();
+                        break;
+                }
+            });
+        }
+
+        fetchSuggestions(query, $suggestions) {
+            $.ajax({
+                url: yadoreSearch.ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'yaa_search_suggestions',
+                    nonce: yadoreSearch.nonce,
+                    keyword: query,
+                },
+                success: (response) => {
+                    if (response.success && response.data.suggestions.length > 0) {
+                        this.renderSuggestions(response.data.suggestions, $suggestions);
+                    } else {
+                        $suggestions.hide().empty();
+                    }
+                },
+                error: () => {
+                    $suggestions.hide().empty();
+                }
+            });
+        }
+
+        renderSuggestions(suggestions, $suggestions) {
+            let html = '';
+            
+            suggestions.forEach((item, index) => {
+                const icon = item.type === 'recent' ? '🕐' : '🔥';
+                html += `
+                    <div class="yadore-suggestion-item ${index === 0 ? 'active' : ''}" 
+                         data-term="${this.escapeHtml(item.term)}"
+                         role="option">
+                        <span class="yadore-suggestion-icon">${icon}</span>
+                        <span class="yadore-suggestion-text">${this.escapeHtml(item.term)}</span>
+                    </div>
+                `;
+            });
+
+            $suggestions.html(html).show();
+
+            // Click Handler
+            $suggestions.find('.yadore-suggestion-item').on('click', (e) => {
+                const term = $(e.currentTarget).data('term');
+                this.$input.val(term);
+                $suggestions.hide();
+                this.search();
+            });
         }
 
         // =========================================
@@ -155,12 +493,10 @@
         // =========================================
 
         initNetworkHandling() {
-            // Online/Offline Status überwachen
             window.addEventListener('online', () => {
                 this.isOnline = true;
                 this.hideOfflineMessage();
                 
-                // Automatisch letzte Suche wiederholen wenn offline war
                 if (this.lastQuery && this.retryCount > 0) {
                     this.search();
                 }
@@ -171,7 +507,6 @@
                 this.showOfflineMessage();
             });
 
-            // Initial Status prüfen
             if (!navigator.onLine) {
                 this.isOnline = false;
                 this.showOfflineMessage();
@@ -180,8 +515,8 @@
 
         showOfflineMessage() {
             const offlineHtml = `
-                <div class="yadore-offline-message">
-                    <span class="yadore-offline-icon">📡</span>
+                <div class="yadore-offline-message" role="alert">
+                    <span class="yadore-offline-icon" aria-hidden="true">📡</span>
                     <span>${yadoreSearch.i18n.offline || 'Keine Internetverbindung'}</span>
                 </div>
             `;
@@ -202,29 +537,28 @@
             
             if (status === 'timeout' || status === 'error') {
                 if (this.retryCount <= this.maxRetries && this.isOnline) {
-                    // Automatischer Retry mit exponential backoff
                     const delay = Math.min(1000 * Math.pow(2, this.retryCount - 1), 10000);
                     
                     this.showStatus(
-                        (yadoreSearch.i18n.retrying || 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...').replace('{s}', Math.ceil(delay / 1000)),
+                        (yadoreSearch.i18n.retrying || 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...')
+                            .replace('{s}', Math.ceil(delay / 1000)),
                         'info'
                     );
                     
                     setTimeout(() => {
-                        this.search(true); // true = isRetry
+                        this.search(true);
                     }, delay);
                     
-                    return true; // Retry wird durchgeführt
+                    return true;
                 }
             }
             
-            // Max Retries erreicht oder anderer Fehler
             this.retryCount = 0;
             return false;
         }
 
         // =========================================
-        // SUCHE
+        // SUCHE - MIT SORTIERUNGS-SYNCHRONISATION
         // =========================================
 
         search(isRetry = false) {
@@ -243,7 +577,8 @@
             if (query.length < this.settings.minChars) {
                 if (query.length > 0) {
                     this.showStatus(
-                        yadoreSearch.i18n.min_chars.replace('%d', this.settings.minChars),
+                        (yadoreSearch.i18n.min_chars || 'Bitte mindestens %d Zeichen eingeben.')
+                            .replace('%d', this.settings.minChars),
                         'info'
                     );
                 } else if (this.isShowingResults) {
@@ -252,8 +587,8 @@
                 return;
             }
 
-            // Gleiche Suche nicht wiederholen (außer bei Retry)
-            if (query === this.lastQuery && this.isShowingResults && !isRetry) {
+            // Gleiche Suche nicht wiederholen (außer bei Retry oder Sortierungs-/Filter-Änderung)
+            if (query === this.lastQuery && this.isShowingResults && !isRetry && this.allProducts.length > 0) {
                 return;
             }
             
@@ -270,51 +605,95 @@
             }
 
             this.setLoading(true);
-            this.showStatus(yadoreSearch.i18n.searching, 'loading');
+            this.showStatus(yadoreSearch.i18n.searching || 'Suche läuft...', 'loading');
 
+            // AJAX Request mit Sortierung und Filtern
             this.currentRequest = $.ajax({
                 url: yadoreSearch.ajaxurl,
                 type: 'POST',
-                timeout: 30000, // 30 Sekunden Timeout
+                timeout: 30000,
                 data: {
-                    action: 'yadore_product_search',
+                    action: 'yaa_product_search',
                     nonce: yadoreSearch.nonce,
-                    query: query,
+                    keyword: query,
+                    page: this.currentPage,
+                    per_page: this.settings.resultsPerPage,
+                    // WICHTIG: Sortierung mitsenden
+                    sort: this.currentSort,
+                    api_source: this.settings.apiSource,
                     network: this.settings.network,
                     max_results: this.settings.maxResults,
-                    sort: this.settings.sort,
                     merchant_filter: this.settings.merchantFilter,
+                    // Filter
+                    min_price: this.activeFilters.minPrice,
+                    max_price: this.activeFilters.maxPrice,
+                    prime_only: this.activeFilters.primeOnly ? '1' : '0',
+                    min_rating: this.activeFilters.minRating,
+                    category: this.activeFilters.category,
+                    // Display Options
                     show_price: this.settings.showPrice ? '1' : '0',
                     show_merchant: this.settings.showMerchant ? '1' : '0',
                     new_tab: this.settings.newTab ? '1' : '0',
                 },
                 success: (response) => {
                     this.setLoading(false);
-                    this.retryCount = 0; // Reset bei Erfolg
+                    this.retryCount = 0;
                     
-                    if (response.success && response.data.products.length > 0) {
-                        this.allProducts = response.data.products;
-                        this.totalResults = response.data.total;
-                        this.renderResults(response.data);
+                    if (response.success) {
+                        const data = response.data;
+                        
+                        // WICHTIG: Sortierung vom Server synchronisieren
+                        if (data.current_sort) {
+                            this.syncSortFromServer(data.current_sort, data.sort_label);
+                        }
+                        
+                        if (data.products && data.products.length > 0) {
+                            this.allProducts = data.products;
+                            this.totalResults = data.total;
+                            this.renderResults(data);
+                            
+                            // Analytics tracken
+                            if (this.settings.enableAnalytics) {
+                                this.trackSearch(query, data.products.length, data.total);
+                            }
+                        } else {
+                            this.showNoResults(query);
+                        }
                     } else {
-                        this.showStatus(yadoreSearch.i18n.no_results, 'empty');
-                        // Initial-Produkte ausblenden, leere Ergebnisse zeigen
-                        this.$initialProducts.slideUp(200);
-                        this.$results.hide();
-                        this.isShowingResults = true;
+                        this.showStatus(
+                            response.data?.message || yadoreSearch.i18n.error || 'Fehler bei der Suche.',
+                            'error'
+                        );
                     }
                 },
                 error: (xhr, status) => {
                     this.setLoading(false);
                     
                     if (status !== 'abort') {
-                        // Retry-Logik
                         if (!this.handleNetworkError(xhr, status)) {
-                            this.showStatus(yadoreSearch.i18n.error, 'error');
+                            this.showStatus(yadoreSearch.i18n.error || 'Fehler bei der Suche.', 'error');
                         }
                     }
                 }
             });
+        }
+
+        showNoResults(query) {
+            this.showStatus(yadoreSearch.i18n.no_results || 'Keine Produkte gefunden.', 'empty');
+            this.$initialProducts.slideUp(200);
+            this.$resultsGrid.empty();
+            
+            // No Results Template
+            const noResultsHtml = `
+                <div class="yadore-no-results">
+                    <div class="yadore-no-results-icon" aria-hidden="true">🔍</div>
+                    <h3>${yadoreSearch.i18n.no_results || 'Keine Produkte gefunden'}</h3>
+                    <p>${yadoreSearch.i18n.try_different || 'Versuchen Sie es mit einem anderen Suchbegriff.'}</p>
+                </div>
+            `;
+            this.$resultsGrid.html(noResultsHtml);
+            this.$results.slideDown(200);
+            this.isShowingResults = true;
         }
 
         setLoading(isLoading) {
@@ -322,13 +701,17 @@
             this.$buttonText.toggle(!isLoading);
             this.$spinner.toggle(isLoading);
             this.$container.toggleClass('yadore-loading', isLoading);
+            
+            // ARIA für Screenreader
+            this.$container.attr('aria-busy', isLoading ? 'true' : 'false');
         }
 
         showStatus(message, type) {
             this.$status
-                .removeClass('yadore-status-loading yadore-status-error yadore-status-empty yadore-status-info')
+                .removeClass('yadore-status-loading yadore-status-error yadore-status-empty yadore-status-info yadore-status-success')
                 .addClass('yadore-status-' + type)
                 .html(message)
+                .attr('role', type === 'error' ? 'alert' : 'status')
                 .show();
         }
 
@@ -344,8 +727,19 @@
             this.$initialProducts.slideUp(200);
             
             // Header aktualisieren
-            this.$resultsCount.text(data.total + ' Ergebnis' + (data.total !== 1 ? 'se' : ''));
-            this.$resultsQuery.text(yadoreSearch.i18n.results_for + ' "' + data.query + '"');
+            const resultText = data.total === 1 
+                ? (yadoreSearch.i18n.one_result || '1 Ergebnis')
+                : (yadoreSearch.i18n.multiple_results || '%d Ergebnisse').replace('%d', data.total);
+            
+            this.$resultsCount.text(resultText);
+            this.$resultsQuery.text(
+                (yadoreSearch.i18n.results_for || 'Ergebnisse für') + ' "' + this.escapeHtml(data.keyword || this.lastQuery) + '"'
+            );
+
+            // Sortierungs-Info anzeigen wenn verfügbar
+            if (data.sort_label && this.$container.find('.yadore-current-sort').length) {
+                this.$container.find('.yadore-current-sort').text(data.sort_label);
+            }
 
             // Grid leeren und neu befüllen
             this.$resultsGrid.empty();
@@ -364,8 +758,8 @@
             });
 
             // Pagination Button hinzufügen wenn nötig
-            if (this.settings.enablePagination && data.products.length > this.settings.resultsPerPage) {
-                this.renderLoadMoreButton();
+            if (this.settings.enablePagination && data.total > this.settings.resultsPerPage) {
+                this.renderLoadMoreButton(data);
             }
 
             // Reset-Button nur anzeigen wenn Initial-Produkte vorhanden
@@ -374,14 +768,20 @@
             }
 
             this.$results.slideDown(300, () => {
-                // Nach dem Einblenden: Bild-Fehlerbehandlung und Lazy Loading
                 this.initImageErrorHandling(this.$results);
                 this.observeImages(this.$resultsGrid);
             });
 
             // Scroll zu Ergebnissen
+            this.scrollToResults();
+        }
+
+        scrollToResults() {
             const containerTop = this.$container.offset().top;
-            if (containerTop < $(window).scrollTop() || containerTop > $(window).scrollTop() + $(window).height()) {
+            const windowTop = $(window).scrollTop();
+            const windowHeight = $(window).height();
+            
+            if (containerTop < windowTop || containerTop > windowTop + windowHeight) {
                 $('html, body').animate({
                     scrollTop: containerTop - 20
                 }, 300);
@@ -392,11 +792,10 @@
         // PAGINATION
         // =========================================
 
-        renderLoadMoreButton() {
-            // Bestehenden Button entfernen
+        renderLoadMoreButton(data) {
             this.$container.find('.yadore-load-more-wrapper').remove();
             
-            const remaining = this.allProducts.length - this.displayedProducts.length;
+            const remaining = (data?.total || this.allProducts.length) - this.displayedProducts.length;
             
             if (remaining <= 0) {
                 return;
@@ -417,14 +816,13 @@
                         </span>
                     </button>
                     <div class="yadore-pagination-info">
-                        ${this.displayedProducts.length} / ${this.allProducts.length} ${yadoreSearch.i18n.products || 'Produkte'}
+                        ${this.displayedProducts.length} / ${data?.total || this.allProducts.length} ${yadoreSearch.i18n.products || 'Produkte'}
                     </div>
                 </div>
             `;
 
             this.$results.append(buttonHtml);
 
-            // Event Handler für Load More
             this.$container.find('.yadore-load-more-button').on('click', () => {
                 this.loadMoreProducts();
             });
@@ -439,12 +837,18 @@
             $text.hide();
             $spinner.show();
 
-            // Nächste Seite laden
+            // Bei Server-Side Pagination: Neue Seite laden
+            if (this.displayedProducts.length >= this.allProducts.length && this.totalResults > this.allProducts.length) {
+                this.currentPage++;
+                this.loadNextPage($button, $text, $spinner);
+                return;
+            }
+
+            // Client-Side: Nächste Produkte aus Cache zeigen
             const startIndex = this.displayedProducts.length;
             const endIndex = Math.min(startIndex + this.settings.resultsPerPage, this.allProducts.length);
             const newProducts = this.allProducts.slice(startIndex, endIndex);
 
-            // Kleine Verzögerung für bessere UX
             setTimeout(() => {
                 newProducts.forEach((product, index) => {
                     const $card = $(this.createProductCard(product));
@@ -453,23 +857,79 @@
                     this.displayedProducts.push(product);
                 });
 
-                // Bild-Fehlerbehandlung für neue Karten
                 this.initImageErrorHandling(this.$resultsGrid);
                 this.observeImages(this.$resultsGrid);
 
-                // Button aktualisieren oder entfernen
                 $button.prop('disabled', false);
                 $text.show();
                 $spinner.hide();
 
-                if (this.displayedProducts.length >= this.allProducts.length) {
+                if (this.displayedProducts.length >= this.totalResults) {
                     this.$container.find('.yadore-load-more-wrapper').fadeOut(300, function() {
                         $(this).remove();
                     });
                 } else {
-                    this.renderLoadMoreButton();
+                    this.renderLoadMoreButton({ total: this.totalResults });
                 }
             }, 300);
+        }
+
+        loadNextPage($button, $text, $spinner) {
+            $.ajax({
+                url: yadoreSearch.ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'yaa_product_search',
+                    nonce: yadoreSearch.nonce,
+                    keyword: this.lastQuery,
+                    page: this.currentPage,
+                    per_page: this.settings.resultsPerPage,
+                    sort: this.currentSort,
+                    api_source: this.settings.apiSource,
+                    min_price: this.activeFilters.minPrice,
+                    max_price: this.activeFilters.maxPrice,
+                    prime_only: this.activeFilters.primeOnly ? '1' : '0',
+                    min_rating: this.activeFilters.minRating,
+                },
+                success: (response) => {
+                    if (response.success && response.data.products.length > 0) {
+                        // Sortierung synchronisieren
+                        if (response.data.current_sort) {
+                            this.syncSortFromServer(response.data.current_sort, response.data.sort_label);
+                        }
+
+                        response.data.products.forEach((product, index) => {
+                            const $card = $(this.createProductCard(product));
+                            $card.css('animation-delay', (index * 0.05) + 's');
+                            this.$resultsGrid.append($card);
+                            this.allProducts.push(product);
+                            this.displayedProducts.push(product);
+                        });
+
+                        this.initImageErrorHandling(this.$resultsGrid);
+                        this.observeImages(this.$resultsGrid);
+                    }
+
+                    $button.prop('disabled', false);
+                    $text.show();
+                    $spinner.hide();
+
+                    if (!response.data.has_more) {
+                        this.$container.find('.yadore-load-more-wrapper').fadeOut(300, function() {
+                            $(this).remove();
+                        });
+                    } else {
+                        this.renderLoadMoreButton({ total: this.totalResults });
+                    }
+                },
+                error: () => {
+                    $button.prop('disabled', false);
+                    $text.show();
+                    $spinner.hide();
+                    
+                    this.showStatus(yadoreSearch.i18n.error || 'Fehler beim Laden.', 'error');
+                }
+            });
         }
 
         // =========================================
@@ -485,6 +945,15 @@
             this.$input.val('');
             this.$status.hide();
             
+            // Sortierung auf Default zurücksetzen
+            this.currentSort = this.settings.defaultSort;
+            if (this.$sortSelect.length) {
+                this.$sortSelect.val(this.currentSort);
+            }
+            
+            // Filter zurücksetzen
+            this.resetFilters();
+            
             // Pagination-Elemente entfernen
             this.$container.find('.yadore-load-more-wrapper').remove();
             
@@ -493,13 +962,37 @@
                 this.$resultsGrid.empty();
             });
             
+            // Reset-Button verstecken
+            this.$resetButton.hide();
+            
             // Initial-Produkte wieder einblenden
             if (this.settings.hasInitial) {
                 this.$initialProducts.slideDown(300);
             }
 
+            // Clear-Button verstecken
+            this.$container.find('.yadore-search-clear, .yaa-search-clear').hide();
+
             // Focus zurück auf Input
             this.$input.focus();
+            
+            this.log('Reset to initial state');
+        }
+
+        resetFilters() {
+            this.activeFilters = {
+                minPrice: this.settings.minPrice,
+                maxPrice: this.settings.maxPrice,
+                primeOnly: this.settings.primeOnly,
+                minRating: this.settings.minRating,
+                category: this.settings.category,
+            };
+
+            // UI zurücksetzen
+            this.$container.find('.yadore-min-price, .yaa-min-price').val(this.settings.minPrice);
+            this.$container.find('.yadore-max-price, .yaa-max-price').val(this.settings.maxPrice);
+            this.$container.find('.yadore-prime-checkbox, .yaa-prime-checkbox').prop('checked', this.settings.primeOnly);
+            this.$container.find('.yadore-min-rating-select, .yaa-min-rating-select').val(this.settings.minRating);
         }
 
         // =========================================
@@ -507,62 +1000,175 @@
         // =========================================
 
         createProductCard(product) {
-            const target = product.new_tab ? ' target="_blank" rel="noopener noreferrer"' : '';
+            const target = this.settings.target;
+            const rel = this.buildRelAttribute(product);
             
-            let imageHtml = '';
-            if (product.image) {
-                // Lazy Loading Attribute für späteres Laden
-                imageHtml = `
+            // Bild
+            let imageHtml = this.createImageHtml(product);
+            
+            // Badges
+            let badgesHtml = this.createBadgesHtml(product);
+            
+            // Content
+            let contentHtml = this.createContentHtml(product);
+            
+            // Actions
+            let actionsHtml = this.createActionsHtml(product, target, rel);
+
+            return `
+                <article class="yadore-product-card" 
+                         data-product-id="${this.escapeHtml(product.id || product.asin || '')}" 
+                         data-asin="${this.escapeHtml(product.asin || '')}"
+                         tabindex="0">
+                    <a href="${this.escapeHtml(product.url || '#')}" 
+                       target="${target}" 
+                       rel="${rel}"
+                       class="yadore-product-link">
+                        ${badgesHtml}
+                        ${imageHtml}
+                        ${contentHtml}
+                    </a>
+                    ${actionsHtml}
+                </article>
+            `;
+        }
+
+        buildRelAttribute(product) {
+            let rel = [];
+            
+            if (this.settings.nofollow) {
+                rel.push('nofollow');
+            }
+            if (this.settings.sponsored || product.sponsored) {
+                rel.push('sponsored');
+            }
+            if (this.settings.target === '_blank') {
+                rel.push('noopener', 'noreferrer');
+            }
+            
+            return rel.join(' ');
+        }
+
+        createImageHtml(product) {
+            if (product.image_url || product.image) {
+                const imageSrc = product.image_url || product.image;
+                return `
                     <div class="yadore-product-image">
                         <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-                             data-src="${this.escapeHtml(product.image)}" 
-                             alt="${this.escapeHtml(product.title)}" 
+                             data-src="${this.escapeHtml(imageSrc)}" 
+                             alt="${this.escapeHtml(product.title || '')}" 
                              class="yadore-lazy-image"
                              data-fallback-attempted="false"
-                             data-product-id="${this.escapeHtml(product.id || '')}">
+                             loading="lazy">
                         <div class="yadore-image-loader"></div>
                     </div>
                 `;
-            } else {
-                imageHtml = `
-                    <div class="yadore-product-image yadore-no-image">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                        </svg>
+            }
+            
+            return `
+                <div class="yadore-product-image yadore-no-image">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                    </svg>
+                </div>
+            `;
+        }
+
+        createBadgesHtml(product) {
+            let badges = '';
+            
+            // Prime Badge
+            if (this.settings.showPrime && product.is_prime) {
+                badges += '<span class="yadore-prime-badge" title="Amazon Prime">Prime</span>';
+            }
+            
+            // Discount Badge
+            if (product.discount_percent) {
+                badges += `<span class="yadore-discount-badge">-${product.discount_percent}%</span>`;
+            }
+            
+            // Source Badge
+            if (product.source || product.shop) {
+                const source = product.source || product.shop;
+                badges += `<span class="yadore-source-badge yadore-source-${this.escapeHtml(source)}">${this.escapeHtml(source)}</span>`;
+            }
+            
+            return badges;
+        }
+
+        createContentHtml(product) {
+            let html = '<div class="yadore-product-content">';
+            
+            // Title
+            html += `<h3 class="yadore-product-title">${this.escapeHtml(product.title || '')}</h3>`;
+            
+            // Rating
+            if (this.settings.showRating && product.rating) {
+                html += `
+                    <div class="yadore-product-rating" aria-label="Bewertung: ${product.rating} von 5 Sternen">
+                        <span class="yadore-stars" style="--rating: ${product.rating};"></span>
+                        ${product.reviews_count ? `<span class="yadore-reviews-count">(${product.reviews_count})</span>` : ''}
                     </div>
                 `;
             }
-
-            let merchantHtml = '';
-            if (product.merchant) {
-                merchantHtml = `<div class="yadore-product-merchant">${this.escapeHtml(product.merchant)}</div>`;
+            
+            // Description
+            if (this.settings.showDescription && product.description) {
+                const truncated = this.truncateText(product.description, this.settings.descriptionLength);
+                html += `<p class="yadore-product-description">${this.escapeHtml(truncated)}</p>`;
             }
-
-            let priceHtml = '';
-            if (product.price) {
-                priceHtml = `<div class="yadore-product-price">${this.escapeHtml(product.price)}</div>`;
+            
+            // Merchant
+            if (this.settings.showMerchant && product.merchant) {
+                html += `<div class="yadore-product-merchant">${this.escapeHtml(product.merchant)}</div>`;
             }
-
-            // Source Badge
-            let sourceBadge = '';
-            if (product.source) {
-                sourceBadge = `<span class="yadore-product-source yadore-source-${this.escapeHtml(product.source)}"></span>`;
+            
+            // Price
+            if (this.settings.showPrice && product.price) {
+                html += '<div class="yadore-product-price-wrapper">';
+                html += `<span class="yadore-product-price">${this.escapeHtml(product.price)}</span>`;
+                
+                if (product.price_old) {
+                    html += `<span class="yadore-product-price-old">${this.escapeHtml(product.price_old)}</span>`;
+                }
+                html += '</div>';
             }
+            
+            // Availability
+            if (this.settings.showAvailability && product.availability) {
+                const statusClass = product.availability_status || 'unknown';
+                html += `<div class="yadore-product-availability yadore-availability-${statusClass}">${this.escapeHtml(product.availability)}</div>`;
+            }
+            
+            // Sponsored Label
+            if (this.settings.sponsored && product.sponsored) {
+                html += `<span class="yadore-sponsored-label">${yadoreSearch.i18n.sponsored || 'Anzeige'}</span>`;
+            }
+            
+            html += '</div>';
+            return html;
+        }
 
+        createActionsHtml(product, target, rel) {
             return `
-                <div class="yadore-product-card" data-product-id="${this.escapeHtml(product.id)}" tabindex="0">
-                    <a href="${this.escapeHtml(product.url)}"${target} class="yadore-product-link">
-                        ${sourceBadge}
-                        ${imageHtml}
-                        <div class="yadore-product-content">
-                            <h4 class="yadore-product-title">${this.escapeHtml(product.title)}</h4>
-                            ${merchantHtml}
-                            ${priceHtml}
-                            <span class="yadore-product-cta">${yadoreSearch.i18n.view_offer} →</span>
-                        </div>
+                <div class="yadore-product-actions">
+                    <a href="${this.escapeHtml(product.url || '#')}" 
+                       target="${target}" 
+                       rel="${rel}"
+                       class="yadore-product-button"
+                       data-product-id="${this.escapeHtml(product.id || product.asin || '')}">
+                        ${yadoreSearch.i18n.view_offer || 'Zum Angebot'}
+                        <span class="yadore-external-icon" aria-hidden="true">↗</span>
                     </a>
                 </div>
             `;
+        }
+
+        truncateText(text, maxLength) {
+            if (!text || text.length <= maxLength) {
+                return text || '';
+            }
+            return text.substring(0, maxLength).trim() + '…';
         }
 
         // =========================================
@@ -570,7 +1176,6 @@
         // =========================================
 
         initLazyLoading() {
-            // IntersectionObserver für Lazy Loading
             if ('IntersectionObserver' in window) {
                 this.imageObserver = new IntersectionObserver((entries, observer) => {
                     entries.forEach(entry => {
@@ -581,18 +1186,16 @@
                         }
                     });
                 }, {
-                    rootMargin: '100px 0px', // 100px vor dem Viewport laden
+                    rootMargin: '100px 0px',
                     threshold: 0.01
                 });
             }
 
-            // Initial-Bilder observieren
             this.observeImages(this.$initialProducts);
         }
 
         observeImages($container) {
             if (!this.imageObserver) {
-                // Fallback: Alle Bilder sofort laden
                 $container.find('.yadore-lazy-image').each((i, img) => {
                     this.loadImage(img);
                 });
@@ -614,10 +1217,8 @@
             const $img = $(img);
             const $wrapper = $img.closest('.yadore-product-image');
 
-            // Loading-Indikator anzeigen
             $wrapper.addClass('yadore-image-loading');
 
-            // Bild laden
             const tempImg = new Image();
             
             tempImg.onload = () => {
@@ -628,7 +1229,6 @@
             };
 
             tempImg.onerror = () => {
-                // Fallback-Kette starten
                 this.handleImageError(img);
             };
 
@@ -641,7 +1241,6 @@
 
         initImageErrorHandling($container) {
             $container.find('.yadore-product-image img').each((i, img) => {
-                // Nur wenn noch nicht behandelt
                 if (img.dataset.errorHandlerAttached) return;
                 img.dataset.errorHandlerAttached = 'true';
 
@@ -649,7 +1248,6 @@
                     this.handleImageError(img);
                 });
 
-                // Prüfen ob Bild bereits geladen und fehlgeschlagen
                 if (img.complete && img.naturalWidth === 0 && img.src && !img.src.startsWith('data:')) {
                     this.handleImageError(img);
                 }
@@ -661,9 +1259,7 @@
             const $wrapper = $img.closest('.yadore-product-image');
             const fallbackAttempted = img.dataset.fallbackAttempted || 'false';
 
-            // Fallback-Kette
             if (fallbackAttempted === 'false') {
-                // Versuch 1: Proxy-URL wenn verfügbar
                 const originalSrc = img.dataset.src || img.src;
                 
                 if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.enabled) {
@@ -680,7 +1276,6 @@
                 img.dataset.fallbackAttempted = 'placeholder';
             }
 
-            // Endgültiger Fallback: Placeholder anzeigen
             if (img.dataset.fallbackAttempted === 'placeholder' || fallbackAttempted === 'placeholder') {
                 img.dataset.fallbackAttempted = 'complete';
                 $wrapper.addClass('yadore-image-error');
@@ -688,11 +1283,10 @@
                 
                 $img.hide();
                 
-                // Placeholder einfügen wenn nicht vorhanden
                 if (!$wrapper.find('.yadore-placeholder-icon').length) {
                     $wrapper.append(`
                         <div class="yadore-placeholder-icon">
-                            <svg viewBox="0 0 24 24" fill="currentColor">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                 <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
                             </svg>
                         </div>
@@ -706,12 +1300,10 @@
         // =========================================
 
         initTouchEvents() {
-            // Touch-Feedback für Produkt-Karten
             this.$container.on('touchstart', '.yadore-product-card', (e) => {
                 const $card = $(e.currentTarget);
                 $card.addClass('yadore-touch-active');
                 
-                // Touch-Position speichern für Swipe-Detection
                 const touch = e.originalEvent.touches[0];
                 this.touchStartX = touch.clientX;
                 this.touchStartY = touch.clientY;
@@ -725,7 +1317,6 @@
                 const diffX = Math.abs(touch.clientX - this.touchStartX);
                 const diffY = Math.abs(touch.clientY - this.touchStartY);
                 
-                // Wenn mehr horizontal als vertikal bewegt wird, ist es ein Swipe
                 if (diffX > 10 || diffY > 10) {
                     this.isSwiping = true;
                     $(e.currentTarget).removeClass('yadore-touch-active');
@@ -735,70 +1326,12 @@
             this.$container.on('touchend touchcancel', '.yadore-product-card', (e) => {
                 const $card = $(e.currentTarget);
                 
-                // Verzögerte Entfernung für visuelles Feedback
                 setTimeout(() => {
                     $card.removeClass('yadore-touch-active');
                 }, 150);
                 
                 this.touchStartX = 0;
                 this.touchStartY = 0;
-            });
-
-            // Pull-to-Refresh für Such-Ergebnisse (optional)
-            let pullStartY = 0;
-            let isPulling = false;
-
-            this.$resultsGrid.on('touchstart', (e) => {
-                if (this.$resultsGrid.scrollTop() === 0) {
-                    pullStartY = e.originalEvent.touches[0].clientY;
-                    isPulling = true;
-                }
-            });
-
-            this.$resultsGrid.on('touchmove', (e) => {
-                if (!isPulling) return;
-                
-                const currentY = e.originalEvent.touches[0].clientY;
-                const diff = currentY - pullStartY;
-                
-                if (diff > 80 && this.$resultsGrid.scrollTop() === 0) {
-                    // Pull-to-Refresh Indikator anzeigen
-                    if (!this.$container.find('.yadore-pull-refresh').length) {
-                        this.$results.prepend('<div class="yadore-pull-refresh">↻ Loslassen zum Aktualisieren</div>');
-                    }
-                }
-            });
-
-            this.$resultsGrid.on('touchend', (e) => {
-                if (isPulling && this.$container.find('.yadore-pull-refresh').length) {
-                    this.$container.find('.yadore-pull-refresh').remove();
-                    // Suche erneut ausführen
-                    this.search(true);
-                }
-                isPulling = false;
-                pullStartY = 0;
-            });
-
-            // Swipe zum Zurücksetzen (links wischen)
-            let swipeStartX = 0;
-            
-            this.$results.on('touchstart', (e) => {
-                swipeStartX = e.originalEvent.touches[0].clientX;
-            });
-
-            this.$results.on('touchend', (e) => {
-                if (!swipeStartX) return;
-                
-                const swipeEndX = e.originalEvent.changedTouches[0].clientX;
-                const diff = swipeStartX - swipeEndX;
-                
-                // Rechts-nach-Links Swipe (min. 100px)
-                if (diff > 100 && this.isShowingResults && this.settings.hasInitial) {
-                    // Optional: Zurück zu Initial-Produkten
-                    // this.resetToInitial();
-                }
-                
-                swipeStartX = 0;
             });
         }
 
@@ -807,7 +1340,6 @@
         // =========================================
 
         initKeyboardNavigation() {
-            // Tab-Navigation durch Produkt-Karten
             this.$container.on('keydown', '.yadore-product-card', (e) => {
                 const $card = $(e.currentTarget);
                 const $cards = this.$container.find('.yadore-product-card:visible');
@@ -854,14 +1386,48 @@
                 }
             });
 
-            // Vom Input zu den Ergebnissen navigieren
             this.$input.on('keydown', (e) => {
-                if (e.which === 40) { // Down Arrow
+                if (e.which === 40) {
                     e.preventDefault();
                     const $firstCard = this.$container.find('.yadore-product-card:visible').first();
                     if ($firstCard.length) {
                         $firstCard.focus();
                     }
+                }
+            });
+        }
+
+        // =========================================
+        // ANALYTICS
+        // =========================================
+
+        trackSearch(keyword, resultsShown, totalResults) {
+            if (!this.settings.enableAnalytics || !yadoreSearch.enableAnalytics) {
+                return;
+            }
+
+            // Klick-Tracking für Produkte
+            this.$resultsGrid.off('click.analytics').on('click.analytics', '.yadore-product-button, .yadore-product-link', (e) => {
+                const $target = $(e.currentTarget);
+                const productId = $target.data('product-id') || $target.closest('.yadore-product-card').data('product-id');
+                
+                if (productId) {
+                    this.trackClick(productId);
+                }
+            });
+        }
+
+        trackClick(productId) {
+            if (!productId) return;
+
+            $.ajax({
+                url: yadoreSearch.ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'yaa_track_click',
+                    nonce: yadoreSearch.nonce,
+                    product_id: productId,
+                    keyword: this.lastQuery,
                 }
             });
         }
@@ -877,32 +1443,41 @@
             return div.innerHTML;
         }
 
-        // Öffentliche API
+        log(...args) {
+            if (typeof yadoreSearch !== 'undefined' && yadoreSearch.debug) {
+                console.log('[YadoreSearch]', ...args);
+            }
+        }
+
+        // =========================================
+        // ÖFFENTLICHE API
+        // =========================================
+
         destroy() {
-            // Event-Listener entfernen
             this.$form.off();
             this.$input.off();
             this.$resetButton.off();
+            this.$sortSelect.off();
             this.$container.off();
             
-            // Observer stoppen
             if (this.imageObserver) {
                 this.imageObserver.disconnect();
             }
             
-            // Timer löschen
             clearTimeout(this.debounceTimer);
             
-            // Request abbrechen
             if (this.currentRequest) {
                 this.currentRequest.abort();
             }
         }
 
         refresh() {
-            // Bilder neu laden
             this.observeImages(this.$container);
             this.initImageErrorHandling(this.$container);
+        }
+
+        setSort(sort) {
+            this.handleSortChange(sort);
         }
 
         getState() {
@@ -912,17 +1487,20 @@
                 totalResults: this.totalResults,
                 displayedProducts: this.displayedProducts.length,
                 isOnline: this.isOnline,
-                currentPage: this.currentPage
+                currentPage: this.currentPage,
+                currentSort: this.currentSort,
+                sortFromServer: this.sortFromServer,
+                activeFilters: { ...this.activeFilters },
             };
         }
     }
 
     // =========================================
-    // ZUSÄTZLICHES CSS (inline eingefügt)
+    // ZUSÄTZLICHES CSS
     // =========================================
 
     const additionalStyles = `
-        <style>
+        <style id="yadore-search-dynamic-styles">
             /* Offline-Nachricht */
             .yadore-offline-message {
                 display: flex;
@@ -942,6 +1520,11 @@
             }
             
             /* Image Loading */
+            .yadore-product-image {
+                position: relative;
+                overflow: hidden;
+            }
+            
             .yadore-product-image.yadore-image-loading .yadore-image-loader {
                 position: absolute;
                 top: 50%;
@@ -957,6 +1540,11 @@
             
             @keyframes yadore-spin {
                 to { transform: translate(-50%, -50%) rotate(360deg); }
+            }
+            
+            @keyframes yadore-fade-in {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             /* Lazy Image Fade-In */
@@ -993,6 +1581,7 @@
             .yadore-product-card.yadore-touch-active {
                 transform: scale(0.98);
                 opacity: 0.9;
+                transition: transform 0.1s ease, opacity 0.1s ease;
             }
             
             /* Load More Button */
@@ -1042,20 +1631,6 @@
                 color: var(--yadore-text-muted, #6b7280);
             }
             
-            /* Pull to Refresh */
-            .yadore-pull-refresh {
-                text-align: center;
-                padding: 15px;
-                color: var(--yadore-primary, #2563eb);
-                font-weight: 600;
-                animation: yadore-pulse 1s ease infinite;
-            }
-            
-            @keyframes yadore-pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
-            }
-            
             /* Focus States für Keyboard Navigation */
             .yadore-product-card:focus {
                 outline: 3px solid var(--yadore-primary, #2563eb);
@@ -1067,7 +1642,112 @@
                 outline-offset: 2px;
             }
             
-            /* Dark Mode Anpassungen */
+            /* No Results */
+            .yadore-no-results {
+                text-align: center;
+                padding: 40px 20px;
+                color: var(--yadore-text-muted, #6b7280);
+            }
+            
+            .yadore-no-results-icon {
+                font-size: 3rem;
+                margin-bottom: 15px;
+            }
+            
+            .yadore-no-results h3 {
+                margin: 0 0 10px;
+                color: var(--yadore-text, #1f2937);
+            }
+            
+            /* Stars Rating */
+            .yadore-stars {
+                --percent: calc(var(--rating) / 5 * 100%);
+                display: inline-block;
+                font-size: 1rem;
+                line-height: 1;
+                background: linear-gradient(90deg, #fbbf24 var(--percent), #e5e7eb var(--percent));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+            
+            .yadore-stars::before {
+                content: '★★★★★';
+            }
+            
+            /* Suggestions */
+            .yadore-search-suggestions {
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: #fff;
+                border: 1px solid #e5e7eb;
+                border-radius: 0 0 8px 8px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                z-index: 100;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            
+            .yadore-suggestion-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 10px 15px;
+                cursor: pointer;
+                transition: background 0.15s ease;
+            }
+            
+            .yadore-suggestion-item:hover,
+            .yadore-suggestion-item.active {
+                background: #f3f4f6;
+            }
+            
+            .yadore-suggestion-icon {
+                font-size: 0.9rem;
+            }
+            
+            /* Badges */
+            .yadore-prime-badge {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: #00a8e1;
+                color: #fff;
+                font-size: 0.7rem;
+                font-weight: 700;
+                padding: 3px 6px;
+                border-radius: 4px;
+                text-transform: uppercase;
+            }
+            
+            .yadore-discount-badge {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: #dc2626;
+                color: #fff;
+                font-size: 0.75rem;
+                font-weight: 700;
+                padding: 3px 8px;
+                border-radius: 4px;
+            }
+            
+            .yadore-source-badge {
+                position: absolute;
+                bottom: 10px;
+                left: 10px;
+                font-size: 0.65rem;
+                font-weight: 600;
+                padding: 2px 6px;
+                border-radius: 3px;
+                background: rgba(0, 0, 0, 0.6);
+                color: #fff;
+                text-transform: uppercase;
+            }
+            
+            /* Dark Mode */
             @media (prefers-color-scheme: dark) {
                 .yadore-offline-message {
                     background: #450a0a;
@@ -1082,27 +1762,47 @@
                 .yadore-placeholder-icon {
                     color: #4b5563;
                 }
+                
+                .yadore-search-suggestions {
+                    background: #1f2937;
+                    border-color: #374151;
+                }
+                
+                .yadore-suggestion-item:hover,
+                .yadore-suggestion-item.active {
+                    background: #374151;
+                }
+            }
+            
+            /* Responsive */
+            @media (max-width: 768px) {
+                .yadore-load-more-button {
+                    width: 100%;
+                }
             }
         </style>
     `;
 
     // CSS einmalig zum DOM hinzufügen
-    if (!document.getElementById('yadore-search-extra-styles')) {
+    if (!document.getElementById('yadore-search-dynamic-styles')) {
         const styleContainer = document.createElement('div');
-        styleContainer.id = 'yadore-search-extra-styles';
         styleContainer.innerHTML = additionalStyles;
         document.head.appendChild(styleContainer.querySelector('style'));
     }
 
     // =========================================
-    // I18N DEFAULTS (falls nicht vom Server geladen)
+    // I18N DEFAULTS
     // =========================================
 
     if (typeof yadoreSearch === 'undefined') {
         window.yadoreSearch = {
             ajaxurl: '/wp-admin/admin-ajax.php',
             nonce: '',
-            i18n: {}
+            i18n: {},
+            sortOptions: {},
+            enableSuggestions: false,
+            enableAnalytics: false,
+            debug: false,
         };
     }
 
@@ -1110,6 +1810,7 @@
     yadoreSearch.i18n = Object.assign({
         searching: 'Suche läuft...',
         no_results: 'Keine Produkte gefunden.',
+        try_different: 'Versuchen Sie es mit einem anderen Suchbegriff.',
         error: 'Fehler bei der Suche. Bitte erneut versuchen.',
         min_chars: 'Bitte mindestens %d Zeichen eingeben.',
         view_offer: 'Zum Angebot',
@@ -1118,18 +1819,31 @@
         load_more: 'Mehr laden',
         products: 'Produkte',
         offline: 'Keine Internetverbindung',
-        retrying: 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...'
+        retrying: 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...',
+        one_result: '1 Ergebnis',
+        multiple_results: '%d Ergebnisse',
+        sponsored: 'Anzeige',
     }, yadoreSearch.i18n || {});
+
+    // Default Sort Options
+    yadoreSearch.sortOptions = Object.assign({
+        'relevance': 'Relevanz',
+        'price_asc': 'Preis aufsteigend',
+        'price_desc': 'Preis absteigend',
+        'title_asc': 'Name A-Z',
+        'title_desc': 'Name Z-A',
+        'rating_desc': 'Beste Bewertung',
+        'newest': 'Neueste zuerst',
+    }, yadoreSearch.sortOptions || {});
 
     // =========================================
     // INITIALISIERUNG
     // =========================================
 
     $(document).ready(function() {
-        $('.yadore-search-container').each(function() {
+        // Standard-Container
+        $('.yadore-search-container, .yaa-search-wrapper').each(function() {
             const instance = new YadoreProductSearch(this);
-            
-            // Instanz am Element speichern für externe Zugriffe
             $(this).data('yadoreSearch', instance);
         });
     });

@@ -1,1854 +1,1159 @@
 /**
- * Yadore Amazon API - Interaktive Produktsuche
- * Mit Sortierung, Initial-Produkten, Reset-Funktion und erweiterten Features
+ * Yadore Amazon API - Search Shortcode Styles
  * 
  * @package Yadore_Amazon_API
- * @since 1.7.0
- * 
- * Features:
- * - Live-Suche mit Debouncing
- * - Sortierung mit Server-Synchronisation
- * - Initial-Produkte
- * - Reset-Funktion
- * - Bild-Fehlerbehandlung mit Fallback-Kette
- * - Lazy-Loading für Bilder
- * - Offline-/Netzwerkfehler-Behandlung
- * - Pagination (Load More)
- * - Touch-Events für Mobile
- * - Keyboard-Navigation
- * - Analytics-Tracking
+ * @since 1.0.0
  */
 
-(function($) {
-    'use strict';
-
-    // =========================================
-    // HAUPTKLASSE
-    // =========================================
-
-    class YadoreProductSearch {
-        constructor(container) {
-            this.$container = $(container);
-            this.$form = this.$container.find('.yadore-search-form');
-            this.$input = this.$container.find('.yadore-search-input');
-            this.$button = this.$container.find('.yadore-search-button');
-            this.$buttonText = this.$container.find('.yadore-search-button-text');
-            this.$spinner = this.$container.find('.yadore-search-spinner');
-            this.$status = this.$container.find('.yadore-search-status');
-            
-            // Initial-Produkte Container
-            this.$initialProducts = this.$container.find('.yadore-initial-products');
-            
-            // Such-Ergebnisse Container
-            this.$results = this.$container.find('.yadore-search-results');
-            this.$resultsGrid = this.$results.find('.yadore-search-results-grid');
-            this.$resultsCount = this.$container.find('.yadore-search-results-count');
-            this.$resultsQuery = this.$container.find('.yadore-search-results-query');
-            this.$resetButton = this.$container.find('.yadore-reset-button');
-            
-            // Sortierung
-            this.$sortSelect = this.$container.find('.yadore-sort-select, .yaa-sort-select');
-            this.$filtersWrapper = this.$container.find('.yadore-filters-wrapper, .yaa-search-filters');
-
-            // Einstellungen aus data-Attributen
-            this.settings = {
-                network: this.$container.data('network') || '',
-                apiSource: this.$container.data('api-source') || '',
-                maxResults: this.$container.data('max-results') || 12,
-                columns: this.$container.data('columns') || 3,
-                minChars: this.$container.data('min-chars') || 3,
-                showPrice: this.$container.data('show-price') === 1,
-                showMerchant: this.$container.data('show-merchant') === 1,
-                showRating: this.$container.data('show-rating') !== false,
-                showPrime: this.$container.data('show-prime') !== false,
-                showAvailability: this.$container.data('show-availability') !== false,
-                showDescription: this.$container.data('show-description') === true,
-                descriptionLength: this.$container.data('description-length') || 150,
-                newTab: this.$container.data('new-tab') === 1 || this.$container.data('target') === '_blank',
-                target: this.$container.data('target') || '_blank',
-                nofollow: this.$container.data('nofollow') !== false,
-                sponsored: this.$container.data('sponsored') !== false,
-                debounce: this.$container.data('debounce') || 500,
-                liveSearch: this.$container.data('live-search') === 1,
-                // WICHTIG: Sortierung
-                sort: this.$container.data('sort') || this.$container.data('default-sort') || 'relevance',
-                defaultSort: this.$container.data('default-sort') || 'relevance',
-                merchantFilter: this.$container.data('merchant-filter') || '',
-                showInitial: this.$container.data('show-initial') === 1,
-                showReset: this.$container.data('show-reset') === 1,
-                hasInitial: this.$container.data('has-initial') === 1,
-                // Pagination
-                resultsPerPage: this.$container.data('results-per-page') || this.$container.data('per-page') || 12,
-                enablePagination: this.$container.data('enable-pagination') !== 0,
-                // Filter
-                minPrice: this.$container.data('min-price') || '',
-                maxPrice: this.$container.data('max-price') || '',
-                primeOnly: this.$container.data('prime-only') === true,
-                minRating: this.$container.data('min-rating') || '',
-                category: this.$container.data('category') || '',
-                // Analytics
-                enableAnalytics: this.$container.data('analytics') !== false,
-            };
-
-            // State
-            this.debounceTimer = null;
-            this.currentRequest = null;
-            this.lastQuery = '';
-            this.isShowingResults = false;
-            this.isOnline = navigator.onLine;
-            this.retryCount = 0;
-            this.maxRetries = 3;
-            
-            // Pagination State
-            this.currentPage = 1;
-            this.totalResults = 0;
-            this.allProducts = [];
-            this.displayedProducts = [];
-            
-            // Sortierung State - WICHTIG FÜR SYNCHRONISATION
-            this.currentSort = this.settings.sort;
-            this.sortFromServer = null;
-            
-            // Filter State
-            this.activeFilters = {
-                minPrice: this.settings.minPrice,
-                maxPrice: this.settings.maxPrice,
-                primeOnly: this.settings.primeOnly,
-                minRating: this.settings.minRating,
-                category: this.settings.category,
-            };
-            
-            // Touch State
-            this.touchStartX = 0;
-            this.touchStartY = 0;
-            this.isSwiping = false;
-
-            // Lazy Loading Observer
-            this.imageObserver = null;
-            
-            // Instance ID für mehrere Instanzen
-            this.instanceId = this.$container.attr('id') || 'yadore-search-' + Math.random().toString(36).substr(2, 9);
-
-            this.init();
-        }
-
-        // =========================================
-        // INITIALISIERUNG
-        // =========================================
-
-        init() {
-            // Form Submit
-            this.$form.on('submit', (e) => {
-                e.preventDefault();
-                this.search();
-            });
-
-            // Live-Suche
-            if (this.settings.liveSearch) {
-                this.$input.on('input', () => {
-                    clearTimeout(this.debounceTimer);
-                    
-                    const query = this.$input.val().trim();
-                    
-                    // Bei leerem Input zurück zu Initial-Produkten
-                    if (query.length === 0 && this.isShowingResults) {
-                        this.resetToInitial();
-                        return;
-                    }
-                    
-                    this.debounceTimer = setTimeout(() => {
-                        this.search();
-                    }, this.settings.debounce);
-                });
-            }
-
-            // Enter-Taste
-            this.$input.on('keypress', (e) => {
-                if (e.which === 13) {
-                    e.preventDefault();
-                    clearTimeout(this.debounceTimer);
-                    this.search();
-                }
-            });
-
-            // Reset-Button
-            this.$resetButton.on('click', () => {
-                this.resetToInitial();
-            });
-
-            // ESC-Taste zum Zurücksetzen
-            this.$input.on('keydown', (e) => {
-                if (e.which === 27 && this.isShowingResults) {
-                    this.resetToInitial();
-                }
-            });
-
-            // WICHTIG: Sortierung Event Handler
-            this.initSortingHandler();
-            
-            // Filter Event Handler
-            this.initFilterHandlers();
-
-            // Keyboard Navigation für Ergebnisse
-            this.initKeyboardNavigation();
-
-            // Online/Offline Events
-            this.initNetworkHandling();
-
-            // Lazy Loading initialisieren
-            this.initLazyLoading();
-
-            // Touch Events initialisieren
-            this.initTouchEvents();
-
-            // Bild-Fehlerbehandlung für Initial-Produkte
-            this.initImageErrorHandling(this.$initialProducts);
-            
-            // Clear-Button initialisieren
-            this.initClearButton();
-            
-            // Suggestions initialisieren
-            this.initSuggestions();
-
-            this.log('Initialized', this.settings);
-        }
-
-        // =========================================
-        // SORTIERUNG - WICHTIGE ÄNDERUNGEN
-        // =========================================
-
-        initSortingHandler() {
-            // Sort-Dropdown Event Handler
-            this.$sortSelect.on('change', (e) => {
-                const newSort = $(e.target).val();
-                this.handleSortChange(newSort);
-            });
-
-            // Initial-Sortierung setzen
-            if (this.$sortSelect.length) {
-                this.$sortSelect.val(this.currentSort);
-            }
-        }
-
-        handleSortChange(newSort) {
-            // Validieren
-            const validSorts = Object.keys(this.getSortOptions());
-            if (!validSorts.includes(newSort)) {
-                this.log('Invalid sort option:', newSort);
-                newSort = this.settings.defaultSort;
-            }
-
-            this.currentSort = newSort;
-            this.log('Sort changed to:', newSort);
-
-            // Wenn bereits Suchergebnisse vorhanden, neu suchen
-            if (this.isShowingResults && this.lastQuery) {
-                this.currentPage = 1;
-                this.allProducts = [];
-                this.displayedProducts = [];
-                this.search();
-            }
-        }
-
-        getSortOptions() {
-            // Fallback zu Defaults wenn nicht vom Server geladen
-            return yadoreSearch.sortOptions || {
-                'relevance': 'Relevanz',
-                'price_asc': 'Preis aufsteigend',
-                'price_desc': 'Preis absteigend',
-                'title_asc': 'Name A-Z',
-                'title_desc': 'Name Z-A',
-                'rating_desc': 'Beste Bewertung',
-                'newest': 'Neueste zuerst',
-            };
-        }
-
-        syncSortFromServer(serverSort, sortLabel) {
-            // Synchronisiere Sortierung mit Server-Antwort
-            if (serverSort && serverSort !== this.currentSort) {
-                this.log('Syncing sort from server:', serverSort, '(was:', this.currentSort + ')');
-                this.currentSort = serverSort;
-                this.sortFromServer = serverSort;
-                
-                // UI aktualisieren
-                if (this.$sortSelect.length) {
-                    this.$sortSelect.val(serverSort);
-                }
-            }
-        }
-
-        // =========================================
-        // FILTER HANDLING
-        // =========================================
-
-        initFilterHandlers() {
-            // Preis-Filter
-            this.$container.find('.yadore-min-price, .yaa-min-price').on('change', (e) => {
-                this.activeFilters.minPrice = $(e.target).val();
-                this.triggerFilteredSearch();
-            });
-
-            this.$container.find('.yadore-max-price, .yaa-max-price').on('change', (e) => {
-                this.activeFilters.maxPrice = $(e.target).val();
-                this.triggerFilteredSearch();
-            });
-
-            // Prime-Filter
-            this.$container.find('.yadore-prime-checkbox, .yaa-prime-checkbox').on('change', (e) => {
-                this.activeFilters.primeOnly = $(e.target).is(':checked');
-                this.triggerFilteredSearch();
-            });
-
-            // Rating-Filter
-            this.$container.find('.yadore-min-rating-select, .yaa-min-rating-select').on('change', (e) => {
-                this.activeFilters.minRating = $(e.target).val();
-                this.triggerFilteredSearch();
-            });
-
-            // Source-Filter
-            this.$container.find('.yadore-source-select, .yaa-source-select').on('change', (e) => {
-                this.settings.apiSource = $(e.target).val();
-                this.triggerFilteredSearch();
-            });
-
-            // Advanced Filters Toggle
-            this.$container.find('.yadore-toggle-filters, .yaa-toggle-filters').on('click', (e) => {
-                const $button = $(e.currentTarget);
-                const $content = $button.next('.yadore-advanced-filters-content, .yaa-advanced-filters-content');
-                const isExpanded = $button.attr('aria-expanded') === 'true';
-                
-                $button.attr('aria-expanded', !isExpanded);
-                $content.prop('hidden', isExpanded);
-                $button.find('.yadore-toggle-icon, .yaa-toggle-icon').toggleClass('rotated', !isExpanded);
-            });
-        }
-
-        triggerFilteredSearch() {
-            if (this.isShowingResults && this.lastQuery) {
-                this.currentPage = 1;
-                this.allProducts = [];
-                this.displayedProducts = [];
-                this.search();
-            }
-        }
-
-        // =========================================
-        // CLEAR BUTTON
-        // =========================================
-
-        initClearButton() {
-            const $clearButton = this.$container.find('.yadore-search-clear, .yaa-search-clear');
-            
-            // Zeigen/Verstecken basierend auf Input-Inhalt
-            this.$input.on('input', () => {
-                const hasValue = this.$input.val().trim().length > 0;
-                $clearButton.toggle(hasValue);
-            });
-
-            $clearButton.on('click', () => {
-                this.$input.val('').trigger('input');
-                this.$input.focus();
-                
-                if (this.isShowingResults) {
-                    this.resetToInitial();
-                }
-            });
-        }
-
-        // =========================================
-        // SUGGESTIONS
-        // =========================================
-
-        initSuggestions() {
-            if (!yadoreSearch.enableSuggestions) {
-                return;
-            }
-
-            const $suggestions = this.$container.find('.yadore-search-suggestions, .yaa-search-suggestions');
-            
-            if (!$suggestions.length) {
-                return;
-            }
-
-            let suggestionTimer = null;
-
-            this.$input.on('input', () => {
-                clearTimeout(suggestionTimer);
-                
-                const query = this.$input.val().trim();
-                
-                if (query.length < 2) {
-                    $suggestions.hide().empty();
-                    return;
-                }
-
-                suggestionTimer = setTimeout(() => {
-                    this.fetchSuggestions(query, $suggestions);
-                }, 200);
-            });
-
-            this.$input.on('focus', () => {
-                if ($suggestions.children().length > 0) {
-                    $suggestions.show();
-                }
-            });
-
-            this.$input.on('blur', () => {
-                // Verzögern um Klick auf Suggestion zu ermöglichen
-                setTimeout(() => {
-                    $suggestions.hide();
-                }, 200);
-            });
-
-            // Keyboard Navigation in Suggestions
-            this.$input.on('keydown', (e) => {
-                if (!$suggestions.is(':visible')) {
-                    return;
-                }
-
-                const $items = $suggestions.find('.yadore-suggestion-item');
-                const $active = $items.filter('.active');
-                let index = $items.index($active);
-
-                switch (e.which) {
-                    case 40: // Down
-                        e.preventDefault();
-                        index = Math.min(index + 1, $items.length - 1);
-                        $items.removeClass('active').eq(index).addClass('active');
-                        break;
-                        
-                    case 38: // Up
-                        e.preventDefault();
-                        index = Math.max(index - 1, 0);
-                        $items.removeClass('active').eq(index).addClass('active');
-                        break;
-                        
-                    case 13: // Enter
-                        if ($active.length) {
-                            e.preventDefault();
-                            const term = $active.data('term');
-                            this.$input.val(term);
-                            $suggestions.hide();
-                            this.search();
-                        }
-                        break;
-                        
-                    case 27: // Escape
-                        $suggestions.hide();
-                        break;
-                }
-            });
-        }
-
-        fetchSuggestions(query, $suggestions) {
-            $.ajax({
-                url: yadoreSearch.ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'yaa_search_suggestions',
-                    nonce: yadoreSearch.nonce,
-                    keyword: query,
-                },
-                success: (response) => {
-                    if (response.success && response.data.suggestions.length > 0) {
-                        this.renderSuggestions(response.data.suggestions, $suggestions);
-                    } else {
-                        $suggestions.hide().empty();
-                    }
-                },
-                error: () => {
-                    $suggestions.hide().empty();
-                }
-            });
-        }
-
-        renderSuggestions(suggestions, $suggestions) {
-            let html = '';
-            
-            suggestions.forEach((item, index) => {
-                const icon = item.type === 'recent' ? '🕐' : '🔥';
-                html += `
-                    <div class="yadore-suggestion-item ${index === 0 ? 'active' : ''}" 
-                         data-term="${this.escapeHtml(item.term)}"
-                         role="option">
-                        <span class="yadore-suggestion-icon">${icon}</span>
-                        <span class="yadore-suggestion-text">${this.escapeHtml(item.term)}</span>
-                    </div>
-                `;
-            });
-
-            $suggestions.html(html).show();
-
-            // Click Handler
-            $suggestions.find('.yadore-suggestion-item').on('click', (e) => {
-                const term = $(e.currentTarget).data('term');
-                this.$input.val(term);
-                $suggestions.hide();
-                this.search();
-            });
-        }
-
-        // =========================================
-        // NETZWERK-FEHLERBEHANDLUNG
-        // =========================================
-
-        initNetworkHandling() {
-            window.addEventListener('online', () => {
-                this.isOnline = true;
-                this.hideOfflineMessage();
-                
-                if (this.lastQuery && this.retryCount > 0) {
-                    this.search();
-                }
-            });
-
-            window.addEventListener('offline', () => {
-                this.isOnline = false;
-                this.showOfflineMessage();
-            });
-
-            if (!navigator.onLine) {
-                this.isOnline = false;
-                this.showOfflineMessage();
-            }
-        }
-
-        showOfflineMessage() {
-            const offlineHtml = `
-                <div class="yadore-offline-message" role="alert">
-                    <span class="yadore-offline-icon" aria-hidden="true">📡</span>
-                    <span>${yadoreSearch.i18n.offline || 'Keine Internetverbindung'}</span>
-                </div>
-            `;
-            
-            if (!this.$container.find('.yadore-offline-message').length) {
-                this.$container.prepend(offlineHtml);
-            }
-        }
-
-        hideOfflineMessage() {
-            this.$container.find('.yadore-offline-message').fadeOut(300, function() {
-                $(this).remove();
-            });
-        }
-
-        handleNetworkError(xhr, status) {
-            this.retryCount++;
-            
-            if (status === 'timeout' || status === 'error') {
-                if (this.retryCount <= this.maxRetries && this.isOnline) {
-                    const delay = Math.min(1000 * Math.pow(2, this.retryCount - 1), 10000);
-                    
-                    this.showStatus(
-                        (yadoreSearch.i18n.retrying || 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...')
-                            .replace('{s}', Math.ceil(delay / 1000)),
-                        'info'
-                    );
-                    
-                    setTimeout(() => {
-                        this.search(true);
-                    }, delay);
-                    
-                    return true;
-                }
-            }
-            
-            this.retryCount = 0;
-            return false;
-        }
-
-        // =========================================
-        // SUCHE - MIT SORTIERUNGS-SYNCHRONISATION
-        // =========================================
-
-        search(isRetry = false) {
-            const query = this.$input.val().trim();
-
-            // Offline-Check
-            if (!this.isOnline) {
-                this.showStatus(
-                    yadoreSearch.i18n.offline || 'Keine Internetverbindung. Bitte später erneut versuchen.',
-                    'error'
-                );
-                return;
-            }
-
-            // Validierung
-            if (query.length < this.settings.minChars) {
-                if (query.length > 0) {
-                    this.showStatus(
-                        (yadoreSearch.i18n.min_chars || 'Bitte mindestens %d Zeichen eingeben.')
-                            .replace('%d', this.settings.minChars),
-                        'info'
-                    );
-                } else if (this.isShowingResults) {
-                    this.resetToInitial();
-                }
-                return;
-            }
-
-            // Gleiche Suche nicht wiederholen (außer bei Retry oder Sortierungs-/Filter-Änderung)
-            if (query === this.lastQuery && this.isShowingResults && !isRetry && this.allProducts.length > 0) {
-                return;
-            }
-            
-            if (!isRetry) {
-                this.lastQuery = query;
-                this.retryCount = 0;
-                this.currentPage = 1;
-                this.allProducts = [];
-            }
-
-            // Vorherige Anfrage abbrechen
-            if (this.currentRequest) {
-                this.currentRequest.abort();
-            }
-
-            this.setLoading(true);
-            this.showStatus(yadoreSearch.i18n.searching || 'Suche läuft...', 'loading');
-
-            // AJAX Request mit Sortierung und Filtern
-            this.currentRequest = $.ajax({
-                url: yadoreSearch.ajaxurl,
-                type: 'POST',
-                timeout: 30000,
-                data: {
-                    action: 'yaa_product_search',
-                    nonce: yadoreSearch.nonce,
-                    keyword: query,
-                    page: this.currentPage,
-                    per_page: this.settings.resultsPerPage,
-                    // WICHTIG: Sortierung mitsenden
-                    sort: this.currentSort,
-                    api_source: this.settings.apiSource,
-                    network: this.settings.network,
-                    max_results: this.settings.maxResults,
-                    merchant_filter: this.settings.merchantFilter,
-                    // Filter
-                    min_price: this.activeFilters.minPrice,
-                    max_price: this.activeFilters.maxPrice,
-                    prime_only: this.activeFilters.primeOnly ? '1' : '0',
-                    min_rating: this.activeFilters.minRating,
-                    category: this.activeFilters.category,
-                    // Display Options
-                    show_price: this.settings.showPrice ? '1' : '0',
-                    show_merchant: this.settings.showMerchant ? '1' : '0',
-                    new_tab: this.settings.newTab ? '1' : '0',
-                },
-                success: (response) => {
-                    this.setLoading(false);
-                    this.retryCount = 0;
-                    
-                    if (response.success) {
-                        const data = response.data;
-                        
-                        // WICHTIG: Sortierung vom Server synchronisieren
-                        if (data.current_sort) {
-                            this.syncSortFromServer(data.current_sort, data.sort_label);
-                        }
-                        
-                        if (data.products && data.products.length > 0) {
-                            this.allProducts = data.products;
-                            this.totalResults = data.total;
-                            this.renderResults(data);
-                            
-                            // Analytics tracken
-                            if (this.settings.enableAnalytics) {
-                                this.trackSearch(query, data.products.length, data.total);
-                            }
-                        } else {
-                            this.showNoResults(query);
-                        }
-                    } else {
-                        this.showStatus(
-                            response.data?.message || yadoreSearch.i18n.error || 'Fehler bei der Suche.',
-                            'error'
-                        );
-                    }
-                },
-                error: (xhr, status) => {
-                    this.setLoading(false);
-                    
-                    if (status !== 'abort') {
-                        if (!this.handleNetworkError(xhr, status)) {
-                            this.showStatus(yadoreSearch.i18n.error || 'Fehler bei der Suche.', 'error');
-                        }
-                    }
-                }
-            });
-        }
-
-        showNoResults(query) {
-            this.showStatus(yadoreSearch.i18n.no_results || 'Keine Produkte gefunden.', 'empty');
-            this.$initialProducts.slideUp(200);
-            this.$resultsGrid.empty();
-            
-            // No Results Template
-            const noResultsHtml = `
-                <div class="yadore-no-results">
-                    <div class="yadore-no-results-icon" aria-hidden="true">🔍</div>
-                    <h3>${yadoreSearch.i18n.no_results || 'Keine Produkte gefunden'}</h3>
-                    <p>${yadoreSearch.i18n.try_different || 'Versuchen Sie es mit einem anderen Suchbegriff.'}</p>
-                </div>
-            `;
-            this.$resultsGrid.html(noResultsHtml);
-            this.$results.slideDown(200);
-            this.isShowingResults = true;
-        }
-
-        setLoading(isLoading) {
-            this.$button.prop('disabled', isLoading);
-            this.$buttonText.toggle(!isLoading);
-            this.$spinner.toggle(isLoading);
-            this.$container.toggleClass('yadore-loading', isLoading);
-            
-            // ARIA für Screenreader
-            this.$container.attr('aria-busy', isLoading ? 'true' : 'false');
-        }
-
-        showStatus(message, type) {
-            this.$status
-                .removeClass('yadore-status-loading yadore-status-error yadore-status-empty yadore-status-info yadore-status-success')
-                .addClass('yadore-status-' + type)
-                .html(message)
-                .attr('role', type === 'error' ? 'alert' : 'status')
-                .show();
-        }
-
-        // =========================================
-        // ERGEBNISSE RENDERN
-        // =========================================
-
-        renderResults(data) {
-            this.$status.hide();
-            this.isShowingResults = true;
-            
-            // Initial-Produkte ausblenden
-            this.$initialProducts.slideUp(200);
-            
-            // Header aktualisieren
-            const resultText = data.total === 1 
-                ? (yadoreSearch.i18n.one_result || '1 Ergebnis')
-                : (yadoreSearch.i18n.multiple_results || '%d Ergebnisse').replace('%d', data.total);
-            
-            this.$resultsCount.text(resultText);
-            this.$resultsQuery.text(
-                (yadoreSearch.i18n.results_for || 'Ergebnisse für') + ' "' + this.escapeHtml(data.keyword || this.lastQuery) + '"'
-            );
-
-            // Sortierungs-Info anzeigen wenn verfügbar
-            if (data.sort_label && this.$container.find('.yadore-current-sort').length) {
-                this.$container.find('.yadore-current-sort').text(data.sort_label);
-            }
-
-            // Grid leeren und neu befüllen
-            this.$resultsGrid.empty();
-
-            // Pagination: Nur erste Seite anzeigen
-            const productsToShow = this.settings.enablePagination 
-                ? data.products.slice(0, this.settings.resultsPerPage)
-                : data.products;
-            
-            this.displayedProducts = productsToShow;
-
-            productsToShow.forEach((product, index) => {
-                const $card = $(this.createProductCard(product));
-                $card.css('animation-delay', (index * 0.05) + 's');
-                this.$resultsGrid.append($card);
-            });
-
-            // Pagination Button hinzufügen wenn nötig
-            if (this.settings.enablePagination && data.total > this.settings.resultsPerPage) {
-                this.renderLoadMoreButton(data);
-            }
-
-            // Reset-Button nur anzeigen wenn Initial-Produkte vorhanden
-            if (this.settings.hasInitial && this.settings.showReset) {
-                this.$resetButton.show();
-            }
-
-            this.$results.slideDown(300, () => {
-                this.initImageErrorHandling(this.$results);
-                this.observeImages(this.$resultsGrid);
-            });
-
-            // Scroll zu Ergebnissen
-            this.scrollToResults();
-        }
-
-        scrollToResults() {
-            const containerTop = this.$container.offset().top;
-            const windowTop = $(window).scrollTop();
-            const windowHeight = $(window).height();
-            
-            if (containerTop < windowTop || containerTop > windowTop + windowHeight) {
-                $('html, body').animate({
-                    scrollTop: containerTop - 20
-                }, 300);
-            }
-        }
-
-        // =========================================
-        // PAGINATION
-        // =========================================
-
-        renderLoadMoreButton(data) {
-            this.$container.find('.yadore-load-more-wrapper').remove();
-            
-            const remaining = (data?.total || this.allProducts.length) - this.displayedProducts.length;
-            
-            if (remaining <= 0) {
-                return;
-            }
-
-            const buttonHtml = `
-                <div class="yadore-load-more-wrapper">
-                    <button type="button" class="yadore-load-more-button">
-                        <span class="yadore-load-more-text">
-                            ${(yadoreSearch.i18n.load_more || 'Mehr laden')} (${remaining})
-                        </span>
-                        <span class="yadore-load-more-spinner" style="display: none;">
-                            <svg class="yadore-spinner-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-dasharray="31.4 31.4">
-                                    <animateTransform attributeName="transform" type="rotate" dur="1s" from="0 12 12" to="360 12 12" repeatCount="indefinite"/>
-                                </circle>
-                            </svg>
-                        </span>
-                    </button>
-                    <div class="yadore-pagination-info">
-                        ${this.displayedProducts.length} / ${data?.total || this.allProducts.length} ${yadoreSearch.i18n.products || 'Produkte'}
-                    </div>
-                </div>
-            `;
-
-            this.$results.append(buttonHtml);
-
-            this.$container.find('.yadore-load-more-button').on('click', () => {
-                this.loadMoreProducts();
-            });
-        }
-
-        loadMoreProducts() {
-            const $button = this.$container.find('.yadore-load-more-button');
-            const $text = $button.find('.yadore-load-more-text');
-            const $spinner = $button.find('.yadore-load-more-spinner');
-            
-            $button.prop('disabled', true);
-            $text.hide();
-            $spinner.show();
-
-            // Bei Server-Side Pagination: Neue Seite laden
-            if (this.displayedProducts.length >= this.allProducts.length && this.totalResults > this.allProducts.length) {
-                this.currentPage++;
-                this.loadNextPage($button, $text, $spinner);
-                return;
-            }
-
-            // Client-Side: Nächste Produkte aus Cache zeigen
-            const startIndex = this.displayedProducts.length;
-            const endIndex = Math.min(startIndex + this.settings.resultsPerPage, this.allProducts.length);
-            const newProducts = this.allProducts.slice(startIndex, endIndex);
-
-            setTimeout(() => {
-                newProducts.forEach((product, index) => {
-                    const $card = $(this.createProductCard(product));
-                    $card.css('animation-delay', (index * 0.05) + 's');
-                    this.$resultsGrid.append($card);
-                    this.displayedProducts.push(product);
-                });
-
-                this.initImageErrorHandling(this.$resultsGrid);
-                this.observeImages(this.$resultsGrid);
-
-                $button.prop('disabled', false);
-                $text.show();
-                $spinner.hide();
-
-                if (this.displayedProducts.length >= this.totalResults) {
-                    this.$container.find('.yadore-load-more-wrapper').fadeOut(300, function() {
-                        $(this).remove();
-                    });
-                } else {
-                    this.renderLoadMoreButton({ total: this.totalResults });
-                }
-            }, 300);
-        }
-
-        loadNextPage($button, $text, $spinner) {
-            $.ajax({
-                url: yadoreSearch.ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'yaa_product_search',
-                    nonce: yadoreSearch.nonce,
-                    keyword: this.lastQuery,
-                    page: this.currentPage,
-                    per_page: this.settings.resultsPerPage,
-                    sort: this.currentSort,
-                    api_source: this.settings.apiSource,
-                    min_price: this.activeFilters.minPrice,
-                    max_price: this.activeFilters.maxPrice,
-                    prime_only: this.activeFilters.primeOnly ? '1' : '0',
-                    min_rating: this.activeFilters.minRating,
-                },
-                success: (response) => {
-                    if (response.success && response.data.products.length > 0) {
-                        // Sortierung synchronisieren
-                        if (response.data.current_sort) {
-                            this.syncSortFromServer(response.data.current_sort, response.data.sort_label);
-                        }
-
-                        response.data.products.forEach((product, index) => {
-                            const $card = $(this.createProductCard(product));
-                            $card.css('animation-delay', (index * 0.05) + 's');
-                            this.$resultsGrid.append($card);
-                            this.allProducts.push(product);
-                            this.displayedProducts.push(product);
-                        });
-
-                        this.initImageErrorHandling(this.$resultsGrid);
-                        this.observeImages(this.$resultsGrid);
-                    }
-
-                    $button.prop('disabled', false);
-                    $text.show();
-                    $spinner.hide();
-
-                    if (!response.data.has_more) {
-                        this.$container.find('.yadore-load-more-wrapper').fadeOut(300, function() {
-                            $(this).remove();
-                        });
-                    } else {
-                        this.renderLoadMoreButton({ total: this.totalResults });
-                    }
-                },
-                error: () => {
-                    $button.prop('disabled', false);
-                    $text.show();
-                    $spinner.hide();
-                    
-                    this.showStatus(yadoreSearch.i18n.error || 'Fehler beim Laden.', 'error');
-                }
-            });
-        }
-
-        // =========================================
-        // RESET
-        // =========================================
-
-        resetToInitial() {
-            this.lastQuery = '';
-            this.isShowingResults = false;
-            this.currentPage = 1;
-            this.allProducts = [];
-            this.displayedProducts = [];
-            this.$input.val('');
-            this.$status.hide();
-            
-            // Sortierung auf Default zurücksetzen
-            this.currentSort = this.settings.defaultSort;
-            if (this.$sortSelect.length) {
-                this.$sortSelect.val(this.currentSort);
-            }
-            
-            // Filter zurücksetzen
-            this.resetFilters();
-            
-            // Pagination-Elemente entfernen
-            this.$container.find('.yadore-load-more-wrapper').remove();
-            
-            // Such-Ergebnisse ausblenden
-            this.$results.slideUp(200, () => {
-                this.$resultsGrid.empty();
-            });
-            
-            // Reset-Button verstecken
-            this.$resetButton.hide();
-            
-            // Initial-Produkte wieder einblenden
-            if (this.settings.hasInitial) {
-                this.$initialProducts.slideDown(300);
-            }
-
-            // Clear-Button verstecken
-            this.$container.find('.yadore-search-clear, .yaa-search-clear').hide();
-
-            // Focus zurück auf Input
-            this.$input.focus();
-            
-            this.log('Reset to initial state');
-        }
-
-        resetFilters() {
-            this.activeFilters = {
-                minPrice: this.settings.minPrice,
-                maxPrice: this.settings.maxPrice,
-                primeOnly: this.settings.primeOnly,
-                minRating: this.settings.minRating,
-                category: this.settings.category,
-            };
-
-            // UI zurücksetzen
-            this.$container.find('.yadore-min-price, .yaa-min-price').val(this.settings.minPrice);
-            this.$container.find('.yadore-max-price, .yaa-max-price').val(this.settings.maxPrice);
-            this.$container.find('.yadore-prime-checkbox, .yaa-prime-checkbox').prop('checked', this.settings.primeOnly);
-            this.$container.find('.yadore-min-rating-select, .yaa-min-rating-select').val(this.settings.minRating);
-        }
-
-        // =========================================
-        // PRODUKT-KARTE ERSTELLEN
-        // =========================================
-
-        createProductCard(product) {
-            const target = this.settings.target;
-            const rel = this.buildRelAttribute(product);
-            
-            // Bild
-            let imageHtml = this.createImageHtml(product);
-            
-            // Badges
-            let badgesHtml = this.createBadgesHtml(product);
-            
-            // Content
-            let contentHtml = this.createContentHtml(product);
-            
-            // Actions
-            let actionsHtml = this.createActionsHtml(product, target, rel);
-
-            return `
-                <article class="yadore-product-card" 
-                         data-product-id="${this.escapeHtml(product.id || product.asin || '')}" 
-                         data-asin="${this.escapeHtml(product.asin || '')}"
-                         tabindex="0">
-                    <a href="${this.escapeHtml(product.url || '#')}" 
-                       target="${target}" 
-                       rel="${rel}"
-                       class="yadore-product-link">
-                        ${badgesHtml}
-                        ${imageHtml}
-                        ${contentHtml}
-                    </a>
-                    ${actionsHtml}
-                </article>
-            `;
-        }
-
-        buildRelAttribute(product) {
-            let rel = [];
-            
-            if (this.settings.nofollow) {
-                rel.push('nofollow');
-            }
-            if (this.settings.sponsored || product.sponsored) {
-                rel.push('sponsored');
-            }
-            if (this.settings.target === '_blank') {
-                rel.push('noopener', 'noreferrer');
-            }
-            
-            return rel.join(' ');
-        }
-
-        createImageHtml(product) {
-            if (product.image_url || product.image) {
-                const imageSrc = product.image_url || product.image;
-                return `
-                    <div class="yadore-product-image">
-                        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-                             data-src="${this.escapeHtml(imageSrc)}" 
-                             alt="${this.escapeHtml(product.title || '')}" 
-                             class="yadore-lazy-image"
-                             data-fallback-attempted="false"
-                             loading="lazy">
-                        <div class="yadore-image-loader"></div>
-                    </div>
-                `;
-            }
-            
-            return `
-                <div class="yadore-product-image yadore-no-image">
-                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                    </svg>
-                </div>
-            `;
-        }
-
-        createBadgesHtml(product) {
-            let badges = '';
-            
-            // Prime Badge
-            if (this.settings.showPrime && product.is_prime) {
-                badges += '<span class="yadore-prime-badge" title="Amazon Prime">Prime</span>';
-            }
-            
-            // Discount Badge
-            if (product.discount_percent) {
-                badges += `<span class="yadore-discount-badge">-${product.discount_percent}%</span>`;
-            }
-            
-            // Source Badge
-            if (product.source || product.shop) {
-                const source = product.source || product.shop;
-                badges += `<span class="yadore-source-badge yadore-source-${this.escapeHtml(source)}">${this.escapeHtml(source)}</span>`;
-            }
-            
-            return badges;
-        }
-
-        createContentHtml(product) {
-            let html = '<div class="yadore-product-content">';
-            
-            // Title
-            html += `<h3 class="yadore-product-title">${this.escapeHtml(product.title || '')}</h3>`;
-            
-            // Rating
-            if (this.settings.showRating && product.rating) {
-                html += `
-                    <div class="yadore-product-rating" aria-label="Bewertung: ${product.rating} von 5 Sternen">
-                        <span class="yadore-stars" style="--rating: ${product.rating};"></span>
-                        ${product.reviews_count ? `<span class="yadore-reviews-count">(${product.reviews_count})</span>` : ''}
-                    </div>
-                `;
-            }
-            
-            // Description
-            if (this.settings.showDescription && product.description) {
-                const truncated = this.truncateText(product.description, this.settings.descriptionLength);
-                html += `<p class="yadore-product-description">${this.escapeHtml(truncated)}</p>`;
-            }
-            
-            // Merchant
-            if (this.settings.showMerchant && product.merchant) {
-                html += `<div class="yadore-product-merchant">${this.escapeHtml(product.merchant)}</div>`;
-            }
-            
-            // Price
-            if (this.settings.showPrice && product.price) {
-                html += '<div class="yadore-product-price-wrapper">';
-                html += `<span class="yadore-product-price">${this.escapeHtml(product.price)}</span>`;
-                
-                if (product.price_old) {
-                    html += `<span class="yadore-product-price-old">${this.escapeHtml(product.price_old)}</span>`;
-                }
-                html += '</div>';
-            }
-            
-            // Availability
-            if (this.settings.showAvailability && product.availability) {
-                const statusClass = product.availability_status || 'unknown';
-                html += `<div class="yadore-product-availability yadore-availability-${statusClass}">${this.escapeHtml(product.availability)}</div>`;
-            }
-            
-            // Sponsored Label
-            if (this.settings.sponsored && product.sponsored) {
-                html += `<span class="yadore-sponsored-label">${yadoreSearch.i18n.sponsored || 'Anzeige'}</span>`;
-            }
-            
-            html += '</div>';
-            return html;
-        }
-
-        createActionsHtml(product, target, rel) {
-            return `
-                <div class="yadore-product-actions">
-                    <a href="${this.escapeHtml(product.url || '#')}" 
-                       target="${target}" 
-                       rel="${rel}"
-                       class="yadore-product-button"
-                       data-product-id="${this.escapeHtml(product.id || product.asin || '')}">
-                        ${yadoreSearch.i18n.view_offer || 'Zum Angebot'}
-                        <span class="yadore-external-icon" aria-hidden="true">↗</span>
-                    </a>
-                </div>
-            `;
-        }
-
-        truncateText(text, maxLength) {
-            if (!text || text.length <= maxLength) {
-                return text || '';
-            }
-            return text.substring(0, maxLength).trim() + '…';
-        }
-
-        // =========================================
-        // LAZY LOADING
-        // =========================================
-
-        initLazyLoading() {
-            if ('IntersectionObserver' in window) {
-                this.imageObserver = new IntersectionObserver((entries, observer) => {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            const img = entry.target;
-                            this.loadImage(img);
-                            observer.unobserve(img);
-                        }
-                    });
-                }, {
-                    rootMargin: '100px 0px',
-                    threshold: 0.01
-                });
-            }
-
-            this.observeImages(this.$initialProducts);
-        }
-
-        observeImages($container) {
-            if (!this.imageObserver) {
-                $container.find('.yadore-lazy-image').each((i, img) => {
-                    this.loadImage(img);
-                });
-                return;
-            }
-
-            $container.find('.yadore-lazy-image').each((i, img) => {
-                if (!img.dataset.observed) {
-                    img.dataset.observed = 'true';
-                    this.imageObserver.observe(img);
-                }
-            });
-        }
-
-        loadImage(img) {
-            const src = img.dataset.src;
-            if (!src) return;
-
-            const $img = $(img);
-            const $wrapper = $img.closest('.yadore-product-image');
-
-            $wrapper.addClass('yadore-image-loading');
-
-            const tempImg = new Image();
-            
-            tempImg.onload = () => {
-                $img.attr('src', src);
-                $img.addClass('yadore-img-loaded');
-                $wrapper.removeClass('yadore-image-loading');
-                $wrapper.find('.yadore-image-loader').remove();
-            };
-
-            tempImg.onerror = () => {
-                this.handleImageError(img);
-            };
-
-            tempImg.src = src;
-        }
-
-        // =========================================
-        // BILD-FEHLERBEHANDLUNG
-        // =========================================
-
-        initImageErrorHandling($container) {
-            $container.find('.yadore-product-image img').each((i, img) => {
-                if (img.dataset.errorHandlerAttached) return;
-                img.dataset.errorHandlerAttached = 'true';
-
-                $(img).on('error', () => {
-                    this.handleImageError(img);
-                });
-
-                if (img.complete && img.naturalWidth === 0 && img.src && !img.src.startsWith('data:')) {
-                    this.handleImageError(img);
-                }
-            });
-        }
-
-        handleImageError(img) {
-            const $img = $(img);
-            const $wrapper = $img.closest('.yadore-product-image');
-            const fallbackAttempted = img.dataset.fallbackAttempted || 'false';
-
-            if (fallbackAttempted === 'false') {
-                const originalSrc = img.dataset.src || img.src;
-                
-                if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.enabled) {
-                    img.dataset.fallbackAttempted = 'proxy';
-                    const proxyUrl = window.yaaProxy.endpoint + '?action=' + window.yaaProxy.action + '&url=' + encodeURIComponent(originalSrc);
-                    $img.attr('src', proxyUrl);
-                    return;
-                }
-                
-                img.dataset.fallbackAttempted = 'placeholder';
-            }
-
-            if (fallbackAttempted === 'proxy') {
-                img.dataset.fallbackAttempted = 'placeholder';
-            }
-
-            if (img.dataset.fallbackAttempted === 'placeholder' || fallbackAttempted === 'placeholder') {
-                img.dataset.fallbackAttempted = 'complete';
-                $wrapper.addClass('yadore-image-error');
-                $wrapper.removeClass('yadore-image-loading');
-                
-                $img.hide();
-                
-                if (!$wrapper.find('.yadore-placeholder-icon').length) {
-                    $wrapper.append(`
-                        <div class="yadore-placeholder-icon">
-                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                            </svg>
-                        </div>
-                    `);
-                }
-            }
-        }
-
-        // =========================================
-        // TOUCH EVENTS
-        // =========================================
-
-        initTouchEvents() {
-            this.$container.on('touchstart', '.yadore-product-card', (e) => {
-                const $card = $(e.currentTarget);
-                $card.addClass('yadore-touch-active');
-                
-                const touch = e.originalEvent.touches[0];
-                this.touchStartX = touch.clientX;
-                this.touchStartY = touch.clientY;
-                this.isSwiping = false;
-            });
-
-            this.$container.on('touchmove', '.yadore-product-card', (e) => {
-                if (!this.touchStartX) return;
-                
-                const touch = e.originalEvent.touches[0];
-                const diffX = Math.abs(touch.clientX - this.touchStartX);
-                const diffY = Math.abs(touch.clientY - this.touchStartY);
-                
-                if (diffX > 10 || diffY > 10) {
-                    this.isSwiping = true;
-                    $(e.currentTarget).removeClass('yadore-touch-active');
-                }
-            });
-
-            this.$container.on('touchend touchcancel', '.yadore-product-card', (e) => {
-                const $card = $(e.currentTarget);
-                
-                setTimeout(() => {
-                    $card.removeClass('yadore-touch-active');
-                }, 150);
-                
-                this.touchStartX = 0;
-                this.touchStartY = 0;
-            });
-        }
-
-        // =========================================
-        // KEYBOARD NAVIGATION
-        // =========================================
-
-        initKeyboardNavigation() {
-            this.$container.on('keydown', '.yadore-product-card', (e) => {
-                const $card = $(e.currentTarget);
-                const $cards = this.$container.find('.yadore-product-card:visible');
-                const currentIndex = $cards.index($card);
-
-                switch (e.which) {
-                    case 13: // Enter
-                    case 32: // Space
-                        e.preventDefault();
-                        $card.find('.yadore-product-link')[0].click();
-                        break;
-                        
-                    case 37: // Left Arrow
-                        e.preventDefault();
-                        if (currentIndex > 0) {
-                            $cards.eq(currentIndex - 1).focus();
-                        }
-                        break;
-                        
-                    case 38: // Up Arrow
-                        e.preventDefault();
-                        const colsUp = this.settings.columns;
-                        if (currentIndex >= colsUp) {
-                            $cards.eq(currentIndex - colsUp).focus();
-                        } else {
-                            this.$input.focus();
-                        }
-                        break;
-                        
-                    case 39: // Right Arrow
-                        e.preventDefault();
-                        if (currentIndex < $cards.length - 1) {
-                            $cards.eq(currentIndex + 1).focus();
-                        }
-                        break;
-                        
-                    case 40: // Down Arrow
-                        e.preventDefault();
-                        const colsDown = this.settings.columns;
-                        if (currentIndex + colsDown < $cards.length) {
-                            $cards.eq(currentIndex + colsDown).focus();
-                        }
-                        break;
-                }
-            });
-
-            this.$input.on('keydown', (e) => {
-                if (e.which === 40) {
-                    e.preventDefault();
-                    const $firstCard = this.$container.find('.yadore-product-card:visible').first();
-                    if ($firstCard.length) {
-                        $firstCard.focus();
-                    }
-                }
-            });
-        }
-
-        // =========================================
-        // ANALYTICS
-        // =========================================
-
-        trackSearch(keyword, resultsShown, totalResults) {
-            if (!this.settings.enableAnalytics || !yadoreSearch.enableAnalytics) {
-                return;
-            }
-
-            // Klick-Tracking für Produkte
-            this.$resultsGrid.off('click.analytics').on('click.analytics', '.yadore-product-button, .yadore-product-link', (e) => {
-                const $target = $(e.currentTarget);
-                const productId = $target.data('product-id') || $target.closest('.yadore-product-card').data('product-id');
-                
-                if (productId) {
-                    this.trackClick(productId);
-                }
-            });
-        }
-
-        trackClick(productId) {
-            if (!productId) return;
-
-            $.ajax({
-                url: yadoreSearch.ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'yaa_track_click',
-                    nonce: yadoreSearch.nonce,
-                    product_id: productId,
-                    keyword: this.lastQuery,
-                }
-            });
-        }
-
-        // =========================================
-        // HILFSFUNKTIONEN
-        // =========================================
-
-        escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        log(...args) {
-            if (typeof yadoreSearch !== 'undefined' && yadoreSearch.debug) {
-                console.log('[YadoreSearch]', ...args);
-            }
-        }
-
-        // =========================================
-        // ÖFFENTLICHE API
-        // =========================================
-
-        destroy() {
-            this.$form.off();
-            this.$input.off();
-            this.$resetButton.off();
-            this.$sortSelect.off();
-            this.$container.off();
-            
-            if (this.imageObserver) {
-                this.imageObserver.disconnect();
-            }
-            
-            clearTimeout(this.debounceTimer);
-            
-            if (this.currentRequest) {
-                this.currentRequest.abort();
-            }
-        }
-
-        refresh() {
-            this.observeImages(this.$container);
-            this.initImageErrorHandling(this.$container);
-        }
-
-        setSort(sort) {
-            this.handleSortChange(sort);
-        }
-
-        getState() {
-            return {
-                query: this.lastQuery,
-                isShowingResults: this.isShowingResults,
-                totalResults: this.totalResults,
-                displayedProducts: this.displayedProducts.length,
-                isOnline: this.isOnline,
-                currentPage: this.currentPage,
-                currentSort: this.currentSort,
-                sortFromServer: this.sortFromServer,
-                activeFilters: { ...this.activeFilters },
-            };
-        }
+/* =========================================
+   CSS CUSTOM PROPERTIES (Variables)
+   ========================================= */
+
+.yaa-search-wrapper {
+    --yaa-primary: #2563eb;
+    --yaa-primary-hover: #1d4ed8;
+    --yaa-primary-light: #dbeafe;
+    --yaa-text: #1f2937;
+    --yaa-text-muted: #6b7280;
+    --yaa-text-light: #9ca3af;
+    --yaa-border: #e5e7eb;
+    --yaa-border-focus: #2563eb;
+    --yaa-bg: #ffffff;
+    --yaa-bg-hover: #f9fafb;
+    --yaa-bg-alt: #f3f4f6;
+    --yaa-success: #10b981;
+    --yaa-warning: #f59e0b;
+    --yaa-error: #ef4444;
+    --yaa-prime: #00a8e1;
+    --yaa-radius: 8px;
+    --yaa-radius-sm: 4px;
+    --yaa-radius-lg: 12px;
+    --yaa-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --yaa-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --yaa-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --yaa-transition: 0.2s ease;
+    --yaa-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    
+    font-family: var(--yaa-font);
+    max-width: 100%;
+    margin: 0 auto;
+    color: var(--yaa-text);
+}
+
+/* =========================================
+   SEARCH FORM
+   ========================================= */
+
+.yaa-search-form {
+    margin-bottom: 1.5rem;
+}
+
+.yaa-search-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 600px;
+    position: relative;
+}
+
+.yaa-search-input {
+    flex: 1;
+    padding: 0.875rem 2.5rem 0.875rem 1rem;
+    font-size: 1rem;
+    font-family: inherit;
+    border: 2px solid var(--yaa-border);
+    border-radius: var(--yaa-radius);
+    background: var(--yaa-bg);
+    color: var(--yaa-text);
+    transition: border-color var(--yaa-transition), box-shadow var(--yaa-transition);
+    outline: none;
+}
+
+.yaa-search-input:focus {
+    border-color: var(--yaa-border-focus);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.yaa-search-input::placeholder {
+    color: var(--yaa-text-muted);
+}
+
+/* Clear Button */
+.yaa-search-clear {
+    position: absolute;
+    right: 130px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: var(--yaa-bg-alt);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    color: var(--yaa-text-muted);
+    transition: all var(--yaa-transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.yaa-search-clear:hover {
+    background: var(--yaa-border);
+    color: var(--yaa-text);
+}
+
+/* Search Button */
+.yaa-search-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #fff;
+    background: var(--yaa-primary);
+    border: none;
+    border-radius: var(--yaa-radius);
+    cursor: pointer;
+    transition: background-color var(--yaa-transition), transform 0.1s ease;
+    min-width: 120px;
+}
+
+.yaa-search-button:hover:not(:disabled) {
+    background: var(--yaa-primary-hover);
+}
+
+.yaa-search-button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.yaa-search-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Button Variants */
+.yaa-button-secondary {
+    background: var(--yaa-bg-alt);
+    color: var(--yaa-text);
+    border: 1px solid var(--yaa-border);
+}
+
+.yaa-button-secondary:hover:not(:disabled) {
+    background: var(--yaa-border);
+}
+
+.yaa-button-outline {
+    background: transparent;
+    color: var(--yaa-primary);
+    border: 2px solid var(--yaa-primary);
+}
+
+.yaa-button-outline:hover:not(:disabled) {
+    background: var(--yaa-primary);
+    color: #fff;
+}
+
+/* Spinner */
+.yaa-search-button-spinner,
+.yaa-spinner {
+    display: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: yaa-spin 0.8s linear infinite;
+}
+
+.yaa-search-button:disabled .yaa-search-button-spinner {
+    display: inline-block;
+}
+
+.yaa-search-button:disabled .yaa-search-button-text {
+    display: none;
+}
+
+@keyframes yaa-spin {
+    to {
+        transform: rotate(360deg);
     }
+}
 
-    // =========================================
-    // ZUSÄTZLICHES CSS
-    // =========================================
+/* =========================================
+   FILTERS
+   ========================================= */
 
-    const additionalStyles = `
-        <style id="yadore-search-dynamic-styles">
-            /* Offline-Nachricht */
-            .yadore-offline-message {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                padding: 12px 16px;
-                background: #fef2f2;
-                border: 1px solid #fecaca;
-                border-radius: 8px;
-                color: #991b1b;
-                margin-bottom: 15px;
-                animation: yadore-fade-in 0.3s ease;
-            }
-            
-            .yadore-offline-icon {
-                font-size: 1.2rem;
-            }
-            
-            /* Image Loading */
-            .yadore-product-image {
-                position: relative;
-                overflow: hidden;
-            }
-            
-            .yadore-product-image.yadore-image-loading .yadore-image-loader {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                width: 30px;
-                height: 30px;
-                border: 3px solid #e5e7eb;
-                border-top-color: var(--yadore-primary, #2563eb);
-                border-radius: 50%;
-                animation: yadore-spin 0.8s linear infinite;
-            }
-            
-            @keyframes yadore-spin {
-                to { transform: translate(-50%, -50%) rotate(360deg); }
-            }
-            
-            @keyframes yadore-fade-in {
-                from { opacity: 0; transform: translateY(-10px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
-            
-            /* Lazy Image Fade-In */
-            .yadore-lazy-image {
-                opacity: 0;
-                transition: opacity 0.3s ease;
-            }
-            
-            .yadore-lazy-image.yadore-img-loaded {
-                opacity: 1;
-            }
-            
-            /* Image Error Placeholder */
-            .yadore-product-image.yadore-image-error {
-                background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-            }
-            
-            .yadore-placeholder-icon {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                width: 48px;
-                height: 48px;
-                color: #9ca3af;
-            }
-            
-            .yadore-placeholder-icon svg {
-                width: 100%;
-                height: 100%;
-            }
-            
-            /* Touch Active State */
-            .yadore-product-card.yadore-touch-active {
-                transform: scale(0.98);
-                opacity: 0.9;
-                transition: transform 0.1s ease, opacity 0.1s ease;
-            }
-            
-            /* Load More Button */
-            .yadore-load-more-wrapper {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                gap: 10px;
-                margin-top: 25px;
-                padding: 20px;
-            }
-            
-            .yadore-load-more-button {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                gap: 8px;
-                padding: 12px 24px;
-                font-size: 1rem;
-                font-weight: 600;
-                color: var(--yadore-primary, #2563eb);
-                background: transparent;
-                border: 2px solid var(--yadore-primary, #2563eb);
-                border-radius: 8px;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                min-width: 180px;
-            }
-            
-            .yadore-load-more-button:hover:not(:disabled) {
-                background: var(--yadore-primary, #2563eb);
-                color: #fff;
-            }
-            
-            .yadore-load-more-button:disabled {
-                opacity: 0.7;
-                cursor: not-allowed;
-            }
-            
-            .yadore-load-more-spinner .yadore-spinner-icon {
-                width: 20px;
-                height: 20px;
-            }
-            
-            .yadore-pagination-info {
-                font-size: 0.85rem;
-                color: var(--yadore-text-muted, #6b7280);
-            }
-            
-            /* Focus States für Keyboard Navigation */
-            .yadore-product-card:focus {
-                outline: 3px solid var(--yadore-primary, #2563eb);
-                outline-offset: 2px;
-            }
-            
-            .yadore-product-card:focus-visible {
-                outline: 3px solid var(--yadore-primary, #2563eb);
-                outline-offset: 2px;
-            }
-            
-            /* No Results */
-            .yadore-no-results {
-                text-align: center;
-                padding: 40px 20px;
-                color: var(--yadore-text-muted, #6b7280);
-            }
-            
-            .yadore-no-results-icon {
-                font-size: 3rem;
-                margin-bottom: 15px;
-            }
-            
-            .yadore-no-results h3 {
-                margin: 0 0 10px;
-                color: var(--yadore-text, #1f2937);
-            }
-            
-            /* Stars Rating */
-            .yadore-stars {
-                --percent: calc(var(--rating) / 5 * 100%);
-                display: inline-block;
-                font-size: 1rem;
-                line-height: 1;
-                background: linear-gradient(90deg, #fbbf24 var(--percent), #e5e7eb var(--percent));
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-            }
-            
-            .yadore-stars::before {
-                content: '★★★★★';
-            }
-            
-            /* Suggestions */
-            .yadore-search-suggestions {
-                position: absolute;
-                top: 100%;
-                left: 0;
-                right: 0;
-                background: #fff;
-                border: 1px solid #e5e7eb;
-                border-radius: 0 0 8px 8px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-                z-index: 100;
-                max-height: 300px;
-                overflow-y: auto;
-            }
-            
-            .yadore-suggestion-item {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                padding: 10px 15px;
-                cursor: pointer;
-                transition: background 0.15s ease;
-            }
-            
-            .yadore-suggestion-item:hover,
-            .yadore-suggestion-item.active {
-                background: #f3f4f6;
-            }
-            
-            .yadore-suggestion-icon {
-                font-size: 0.9rem;
-            }
-            
-            /* Badges */
-            .yadore-prime-badge {
-                position: absolute;
-                top: 10px;
-                right: 10px;
-                background: #00a8e1;
-                color: #fff;
-                font-size: 0.7rem;
-                font-weight: 700;
-                padding: 3px 6px;
-                border-radius: 4px;
-                text-transform: uppercase;
-            }
-            
-            .yadore-discount-badge {
-                position: absolute;
-                top: 10px;
-                left: 10px;
-                background: #dc2626;
-                color: #fff;
-                font-size: 0.75rem;
-                font-weight: 700;
-                padding: 3px 8px;
-                border-radius: 4px;
-            }
-            
-            .yadore-source-badge {
-                position: absolute;
-                bottom: 10px;
-                left: 10px;
-                font-size: 0.65rem;
-                font-weight: 600;
-                padding: 2px 6px;
-                border-radius: 3px;
-                background: rgba(0, 0, 0, 0.6);
-                color: #fff;
-                text-transform: uppercase;
-            }
-            
-            /* Dark Mode */
-            @media (prefers-color-scheme: dark) {
-                .yadore-offline-message {
-                    background: #450a0a;
-                    border-color: #991b1b;
-                    color: #fca5a5;
-                }
-                
-                .yadore-product-image.yadore-image-error {
-                    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-                }
-                
-                .yadore-placeholder-icon {
-                    color: #4b5563;
-                }
-                
-                .yadore-search-suggestions {
-                    background: #1f2937;
-                    border-color: #374151;
-                }
-                
-                .yadore-suggestion-item:hover,
-                .yadore-suggestion-item.active {
-                    background: #374151;
-                }
-            }
-            
-            /* Responsive */
-            @media (max-width: 768px) {
-                .yadore-load-more-button {
-                    width: 100%;
-                }
-            }
-        </style>
-    `;
+.yaa-search-filters {
+    margin-bottom: 1.5rem;
+}
 
-    // CSS einmalig zum DOM hinzufügen
-    if (!document.getElementById('yadore-search-dynamic-styles')) {
-        const styleContainer = document.createElement('div');
-        styleContainer.innerHTML = additionalStyles;
-        document.head.appendChild(styleContainer.querySelector('style'));
+.yaa-filters-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+}
+
+.yaa-filter-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--yaa-text-muted);
+    margin-right: 0.5rem;
+}
+
+.yaa-sort-wrapper,
+.yaa-source-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.yaa-sort-select,
+.yaa-source-select {
+    padding: 0.5rem 2rem 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    border: 1px solid var(--yaa-border);
+    border-radius: var(--yaa-radius-sm);
+    background: var(--yaa-bg);
+    color: var(--yaa-text);
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+}
+
+.yaa-sort-select:focus,
+.yaa-source-select:focus {
+    outline: none;
+    border-color: var(--yaa-primary);
+}
+
+/* Prime Filter */
+.yaa-prime-wrapper {
+    display: flex;
+    align-items: center;
+}
+
+.yaa-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--yaa-text);
+}
+
+.yaa-prime-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--yaa-prime);
+}
+
+.yaa-prime-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--yaa-prime);
+    border-radius: var(--yaa-radius-sm);
+}
+
+/* Advanced Filters */
+.yaa-advanced-filters {
+    margin-top: 1rem;
+}
+
+.yaa-toggle-filters {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--yaa-primary);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.yaa-toggle-filters:hover {
+    text-decoration: underline;
+}
+
+.yaa-toggle-icon {
+    transition: transform var(--yaa-transition);
+}
+
+.yaa-toggle-filters[aria-expanded="true"] .yaa-toggle-icon {
+    transform: rotate(180deg);
+}
+
+.yaa-advanced-filters-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--yaa-bg-alt);
+    border-radius: var(--yaa-radius);
+}
+
+.yaa-price-filter,
+.yaa-rating-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.yaa-min-price,
+.yaa-max-price {
+    width: 100px;
+    padding: 0.5rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--yaa-border);
+    border-radius: var(--yaa-radius-sm);
+    font-family: inherit;
+}
+
+.yaa-price-separator {
+    color: var(--yaa-text-muted);
+}
+
+.yaa-min-rating-select {
+    padding: 0.5rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--yaa-border);
+    border-radius: var(--yaa-radius-sm);
+    font-family: inherit;
+}
+
+/* =========================================
+   SEARCH SUGGESTIONS
+   ========================================= */
+
+.yaa-search-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--yaa-bg);
+    border: 1px solid var(--yaa-border);
+    border-radius: 0 0 var(--yaa-radius) var(--yaa-radius);
+    box-shadow: var(--yaa-shadow-md);
+    z-index: 100;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: -2px;
+}
+
+.yaa-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition: background var(--yaa-transition);
+}
+
+.yaa-suggestion-item:hover,
+.yaa-suggestion-item.active {
+    background: var(--yaa-bg-hover);
+}
+
+.yaa-suggestion-icon {
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.yaa-suggestion-text {
+    flex: 1;
+    font-size: 0.9rem;
+}
+
+/* =========================================
+   RESULTS INFO & STATUS
+   ========================================= */
+
+.yaa-search-results-info {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--yaa-border);
+}
+
+.yaa-search-results-count {
+    font-weight: 600;
+    color: var(--yaa-text);
+}
+
+.yaa-search-results-query {
+    font-size: 0.9rem;
+    color: var(--yaa-text-muted);
+}
+
+/* Status Messages */
+.yaa-status {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--yaa-radius);
+    text-align: center;
+}
+
+.yaa-status-loading {
+    background: var(--yaa-primary-light);
+    color: var(--yaa-primary);
+}
+
+.yaa-status-error {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.yaa-status-empty {
+    background: #fefce8;
+    color: #854d0e;
+}
+
+.yaa-status-info {
+    background: var(--yaa-bg-alt);
+    color: var(--yaa-text-muted);
+}
+
+/* =========================================
+   LOADING STATE
+   ========================================= */
+
+.yaa-search-loading {
+    display: none;
+    justify-content: center;
+    align-items: center;
+    padding: 3rem;
+}
+
+.yaa-search-wrapper.yaa-is-loading .yaa-search-loading {
+    display: flex;
+}
+
+.yaa-search-loading .yaa-spinner {
+    display: block;
+    width: 40px;
+    height: 40px;
+    border-width: 3px;
+    border-color: var(--yaa-border);
+    border-top-color: var(--yaa-primary);
+}
+
+/* =========================================
+   RESULTS GRID
+   ========================================= */
+
+.yaa-search-results {
+    margin-bottom: 2rem;
+}
+
+.yaa-search-results-inner {
+    display: grid;
+    gap: 1.5rem;
+}
+
+/* Column Variants */
+.yaa-columns-1 .yaa-search-results-inner {
+    grid-template-columns: 1fr;
+}
+
+.yaa-columns-2 .yaa-search-results-inner {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.yaa-columns-3 .yaa-search-results-inner {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.yaa-columns-4 .yaa-search-results-inner {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.yaa-columns-5 .yaa-search-results-inner {
+    grid-template-columns: repeat(5, 1fr);
+}
+
+.yaa-columns-6 .yaa-search-results-inner {
+    grid-template-columns: repeat(6, 1fr);
+}
+
+/* =========================================
+   PRODUCT CARD
+   ========================================= */
+
+.yaa-product-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--yaa-bg);
+    border: 1px solid var(--yaa-border);
+    border-radius: var(--yaa-radius);
+    overflow: hidden;
+    transition: box-shadow var(--yaa-transition), transform var(--yaa-transition);
+}
+
+.yaa-product-card:hover {
+    box-shadow: var(--yaa-shadow-lg);
+    transform: translateY(-2px);
+}
+
+.yaa-product-card:focus {
+    outline: 3px solid var(--yaa-primary);
+    outline-offset: 2px;
+}
+
+/* Product Link */
+.yaa-product-link {
+    text-decoration: none;
+    color: inherit;
+}
+
+/* Image Wrapper */
+.yaa-product-image-wrapper {
+    position: relative;
+    padding-top: 100%;
+    background: var(--yaa-bg-alt);
+    overflow: hidden;
+}
+
+.yaa-product-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 1rem;
+    transition: transform 0.3s ease;
+}
+
+.yaa-product-card:hover .yaa-product-image {
+    transform: scale(1.05);
+}
+
+/* No Image Placeholder */
+.yaa-product-no-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--yaa-text-light);
+    font-size: 0.875rem;
+}
+
+/* Badges */
+.yaa-prime-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 2;
+}
+
+.yaa-discount-badge {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+    background: var(--yaa-error);
+    border-radius: var(--yaa-radius-sm);
+    z-index: 2;
+}
+
+.yaa-source-badge {
+    position: absolute;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    padding: 0.125rem 0.375rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: var(--yaa-radius-sm);
+    z-index: 2;
+}
+
+.yaa-source-yadore {
+    background: var(--yaa-success);
+}
+
+.yaa-source-amazon {
+    background: var(--yaa-warning);
+}
+
+/* Product Content */
+.yaa-product-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+}
+
+.yaa-product-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--yaa-text);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.yaa-product-title a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.yaa-product-title a:hover {
+    color: var(--yaa-primary);
+}
+
+/* Rating */
+.yaa-product-rating {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+}
+
+.yaa-stars {
+    --percent: calc(var(--rating, 0) / 5 * 100%);
+    display: inline-block;
+    font-size: 0.9rem;
+    line-height: 1;
+    background: linear-gradient(90deg, #fbbf24 var(--percent), var(--yaa-border) var(--percent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.yaa-stars::before {
+    content: '★★★★★';
+}
+
+.yaa-reviews-count {
+    font-size: 0.8rem;
+    color: var(--yaa-text-muted);
+}
+
+/* Description */
+.yaa-product-description {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--yaa-text-muted);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Price */
+.yaa-product-price-wrapper {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.yaa-product-price {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--yaa-primary);
+}
+
+.yaa-product-price-old {
+    font-size: 0.85rem;
+    color: var(--yaa-text-muted);
+    text-decoration: line-through;
+}
+
+/* Availability */
+.yaa-product-availability {
+    font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+}
+
+.yaa-availability-in-stock {
+    color: var(--yaa-success);
+}
+
+.yaa-availability-low-stock {
+    color: var(--yaa-warning);
+}
+
+.yaa-availability-out-of-stock {
+    color: var(--yaa-error);
+}
+
+/* Sponsored Label */
+.yaa-sponsored-label {
+    display: inline-block;
+    margin-top: auto;
+    padding-top: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--yaa-text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Product Actions */
+.yaa-product-actions {
+    padding: 0 1rem 1rem;
+    margin-top: auto;
+}
+
+.yaa-product-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    width: 100%;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--yaa-primary);
+    background: transparent;
+    border: 2px solid var(--yaa-primary);
+    border-radius: var(--yaa-radius);
+    text-decoration: none;
+    cursor: pointer;
+    transition: all var(--yaa-transition);
+}
+
+.yaa-product-button:hover {
+    background: var(--yaa-primary);
+    color: #fff;
+}
+
+.yaa-external-icon {
+    font-size: 0.9em;
+    transition: transform var(--yaa-transition);
+}
+
+.yaa-product-button:hover .yaa-external-icon {
+    transform: translateX(2px) translateY(-2px);
+}
+
+/* =========================================
+   NO RESULTS / ERROR STATES
+   ========================================= */
+
+.yaa-no-results,
+.yaa-error {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    background: var(--yaa-bg-alt);
+    border-radius: var(--yaa-radius);
+}
+
+.yaa-no-results-icon,
+.yaa-error-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+.yaa-no-results h3,
+.yaa-error h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    color: var(--yaa-text);
+}
+
+.yaa-no-results p,
+.yaa-error p {
+    margin: 0;
+    color: var(--yaa-text-muted);
+}
+
+.yaa-retry-button {
+    margin-top: 1rem;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--yaa-primary);
+    border: none;
+    border-radius: var(--yaa-radius);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background var(--yaa-transition);
+}
+
+.yaa-retry-button:hover {
+    background: var(--yaa-primary-hover);
+}
+
+/* =========================================
+   PAGINATION
+   ========================================= */
+
+.yaa-search-pagination {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.yaa-load-more {
+    min-width: 200px;
+}
+
+.yaa-load-more-spinner {
+    display: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: yaa-spin 0.8s linear infinite;
+}
+
+.yaa-load-more:disabled .yaa-load-more-spinner {
+    display: inline-block;
+}
+
+.yaa-load-more:disabled .yaa-load-more-text {
+    display: none;
+}
+
+.yaa-pagination-info {
+    font-size: 0.85rem;
+    color: var(--yaa-text-muted);
+}
+
+/* =========================================
+   RESET BUTTON
+   ========================================= */
+
+.yaa-reset-button {
+    display: none;
+    margin-top: 1.5rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--yaa-primary);
+    background: transparent;
+    border: 1px solid var(--yaa-primary);
+    border-radius: var(--yaa-radius);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all var(--yaa-transition);
+}
+
+.yaa-reset-button:hover {
+    background: var(--yaa-primary);
+    color: #fff;
+}
+
+/* =========================================
+   NOTICES
+   ========================================= */
+
+.yaa-notice {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--yaa-radius);
+    font-size: 0.9rem;
+}
+
+.yaa-notice-warning {
+    background: #fefce8;
+    color: #854d0e;
+    border: 1px solid #fde047;
+}
+
+.yaa-notice a {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+}
+
+/* =========================================
+   ANIMATIONS
+   ========================================= */
+
+@keyframes yaa-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
     }
-
-    // =========================================
-    // I18N DEFAULTS
-    // =========================================
-
-    if (typeof yadoreSearch === 'undefined') {
-        window.yadoreSearch = {
-            ajaxurl: '/wp-admin/admin-ajax.php',
-            nonce: '',
-            i18n: {},
-            sortOptions: {},
-            enableSuggestions: false,
-            enableAnalytics: false,
-            debug: false,
-        };
+    to {
+        opacity: 1;
+        transform: translateY(0);
     }
+}
 
-    // Default-Übersetzungen
-    yadoreSearch.i18n = Object.assign({
-        searching: 'Suche läuft...',
-        no_results: 'Keine Produkte gefunden.',
-        try_different: 'Versuchen Sie es mit einem anderen Suchbegriff.',
-        error: 'Fehler bei der Suche. Bitte erneut versuchen.',
-        min_chars: 'Bitte mindestens %d Zeichen eingeben.',
-        view_offer: 'Zum Angebot',
-        reset: '← Zurück zu Empfehlungen',
-        results_for: 'Ergebnisse für',
-        load_more: 'Mehr laden',
-        products: 'Produkte',
-        offline: 'Keine Internetverbindung',
-        retrying: 'Verbindungsfehler. Neuer Versuch in {s} Sekunden...',
-        one_result: '1 Ergebnis',
-        multiple_results: '%d Ergebnisse',
-        sponsored: 'Anzeige',
-    }, yadoreSearch.i18n || {});
+.yaa-search-results .yaa-product-card {
+    animation: yaa-fade-in 0.3s ease forwards;
+    opacity: 0;
+}
 
-    // Default Sort Options
-    yadoreSearch.sortOptions = Object.assign({
-        'relevance': 'Relevanz',
-        'price_asc': 'Preis aufsteigend',
-        'price_desc': 'Preis absteigend',
-        'title_asc': 'Name A-Z',
-        'title_desc': 'Name Z-A',
-        'rating_desc': 'Beste Bewertung',
-        'newest': 'Neueste zuerst',
-    }, yadoreSearch.sortOptions || {});
+.yaa-search-results .yaa-product-card:nth-child(1) { animation-delay: 0.05s; }
+.yaa-search-results .yaa-product-card:nth-child(2) { animation-delay: 0.1s; }
+.yaa-search-results .yaa-product-card:nth-child(3) { animation-delay: 0.15s; }
+.yaa-search-results .yaa-product-card:nth-child(4) { animation-delay: 0.2s; }
+.yaa-search-results .yaa-product-card:nth-child(5) { animation-delay: 0.25s; }
+.yaa-search-results .yaa-product-card:nth-child(6) { animation-delay: 0.3s; }
+.yaa-search-results .yaa-product-card:nth-child(7) { animation-delay: 0.35s; }
+.yaa-search-results .yaa-product-card:nth-child(8) { animation-delay: 0.4s; }
+.yaa-search-results .yaa-product-card:nth-child(n+9) { animation-delay: 0.45s; }
 
-    // =========================================
-    // INITIALISIERUNG
-    // =========================================
+/* =========================================
+   RESPONSIVE - TABLET
+   ========================================= */
 
-    $(document).ready(function() {
-        // Standard-Container
-        $('.yadore-search-container, .yaa-search-wrapper').each(function() {
-            const instance = new YadoreProductSearch(this);
-            $(this).data('yadoreSearch', instance);
-        });
-    });
+@media (max-width: 1024px) {
+    .yaa-columns-5 .yaa-search-results-inner,
+    .yaa-columns-6 .yaa-search-results-inner {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
 
-    // Globale API exponieren
-    window.YadoreProductSearch = YadoreProductSearch;
+@media (max-width: 768px) {
+    .yaa-search-input-wrapper {
+        flex-direction: column;
+        max-width: 100%;
+    }
+    
+    .yaa-search-clear {
+        right: 10px;
+    }
+    
+    .yaa-search-button {
+        width: 100%;
+    }
+    
+    .yaa-filters-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .yaa-sort-wrapper,
+    .yaa-source-wrapper,
+    .yaa-prime-wrapper {
+        width: 100%;
+    }
+    
+    .yaa-sort-select,
+    .yaa-source-select {
+        width: 100%;
+    }
+    
+    .yaa-columns-3 .yaa-search-results-inner,
+    .yaa-columns-4 .yaa-search-results-inner,
+    .yaa-columns-5 .yaa-search-results-inner,
+    .yaa-columns-6 .yaa-search-results-inner {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .yaa-columns-tablet-1 .yaa-search-results-inner {
+        grid-template-columns: 1fr;
+    }
+    
+    .yaa-columns-tablet-2 .yaa-search-results-inner {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .yaa-columns-tablet-3 .yaa-search-results-inner {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    
+    .yaa-search-results-info {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .yaa-advanced-filters-content {
+        flex-direction: column;
+    }
+    
+    .yaa-price-filter {
+        flex-wrap: wrap;
+    }
+    
+    .yaa-min-price,
+    .yaa-max-price {
+        flex: 1;
+        min-width: 80px;
+    }
+}
 
-})(jQuery);
+/* =========================================
+   RESPONSIVE - MOBILE
+   ========================================= */
+
+@media (max-width: 480px) {
+    .yaa-columns-2 .yaa-search-results-inner,
+    .yaa-columns-3 .yaa-search-results-inner,
+    .yaa-columns-4 .yaa-search-results-inner,
+    .yaa-columns-5 .yaa-search-results-inner,
+    .yaa-columns-6 .yaa-search-results-inner {
+        grid-template-columns: 1fr;
+    }
+    
+    .yaa-columns-mobile-1 .yaa-search-results-inner {
+        grid-template-columns: 1fr;
+    }
+    
+    .yaa-columns-mobile-2 .yaa-search-results-inner {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .yaa-search-input {
+        padding: 0.75rem 2rem 0.75rem 0.75rem;
+    }
+    
+    .yaa-search-button {
+        padding: 0.75rem 1rem;
+    }
+    
+    .yaa-product-content {
+        padding: 0.75rem;
+    }
+    
+    .yaa-product-title {
+        font-size: 0.9rem;
+    }
+    
+    .yaa-product-price {
+        font-size: 1rem;
+    }
+    
+    .yaa-product-actions {
+        padding: 0 0.75rem 0.75rem;
+    }
+    
+    .yaa-load-more {
+        width: 100%;
+    }
+}
+
+/* =========================================
+   DARK MODE
+   ========================================= */
+
+@media (prefers-color-scheme: dark) {
+    .yaa-search-wrapper {
+        --yaa-text: #f3f4f6;
+        --yaa-text-muted: #9ca3af;
+        --yaa-text-light: #6b7280;
+        --yaa-border: #374151;
+        --yaa-bg: #1f2937;
+        --yaa-bg-hover: #374151;
+        --yaa-bg-alt: #111827;
+        --yaa-primary-light: #1e3a5f;
+    }
+    
+    .yaa-product-image-wrapper {
+        background: #374151;
+    }
+    
+    .yaa-status-loading {
+        background: #1e3a5f;
+        color: #93c5fd;
+    }
+    
+    .yaa-status-error {
+        background: #450a0a;
+        color: #fca5a5;
+    }
+    
+    .yaa-status-empty {
+        background: #422006;
+        color: #fcd34d;
+    }
+    
+    .yaa-notice-warning {
+        background: #422006;
+        border-color: #854d0e;
+    }
+    
+    .yaa-search-suggestions {
+        background: var(--yaa-bg);
+        border-color: var(--yaa-border);
+    }
+}
+
+/* =========================================
+   PRINT STYLES
+   ========================================= */
+
+@media print {
+    .yaa-search-form,
+    .yaa-search-filters,
+    .yaa-search-pagination,
+    .yaa-product-actions {
+        display: none !important;
+    }
+    
+    .yaa-product-card {
+        break-inside: avoid;
+        box-shadow: none;
+        border: 1px solid #ccc;
+    }
+}
+
+/* =========================================
+   ACCESSIBILITY
+   ========================================= */
+
+.screen-reader-text {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Focus Visible */
+.yaa-search-input:focus-visible,
+.yaa-search-button:focus-visible,
+.yaa-sort-select:focus-visible,
+.yaa-product-card:focus-visible {
+    outline: 3px solid var(--yaa-primary);
+    outline-offset: 2px;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
