@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.6.4
+ * Version: 1.7.0
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.6.4');
+define('YAA_VERSION', '1.7.0');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -119,7 +119,8 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Admin $admin;
     public readonly YAA_Image_Proxy $image_proxy;
     public readonly YAA_Search_Shortcode $search_shortcode;
-    
+    public readonly YAA_Banner_Shortcode $banner_shortcode; 
+
     /**
      * Get singleton instance
      */
@@ -163,6 +164,13 @@ final class Yadore_Amazon_API_Plugin {
             $this->amazon_api
         );
         
+        // Banner Shortcode Component (NEU)
+        $this->banner_shortcode = new YAA_Banner_Shortcode(
+            $this->yadore_api,
+            $this->amazon_api,
+            $this->custom_products
+        );
+
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
@@ -313,6 +321,7 @@ final class Yadore_Amazon_API_Plugin {
             'all_products',
             'fuzzy_products',
             'yadore_search', // NEU: Search Shortcode hinzugefügt
+            'yaa_banner',  // ← NEU
         ];
         
         $has_shortcode = false;
