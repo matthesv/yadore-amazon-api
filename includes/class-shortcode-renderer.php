@@ -2,7 +2,7 @@
 /**
  * Shortcode Renderer - Vollständige Version mit allen Features
  * PHP 8.3+ compatible
- * Version: 1.3.0
+ * Version: 1.5.0
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
@@ -13,6 +13,7 @@
  * - Merchant Filter (Whitelist/Blacklist) für Yadore
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
+ * - NEU: Sortierung nach Preis/CPC
  */
 
 declare(strict_types=1);
@@ -148,7 +149,7 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Render Yadore products - Mit Merchant Filter
+     * Render Yadore products - Mit Merchant Filter und Sortierung
      */
     public function render_yadore(array|string $atts = []): string {
         $atts = shortcode_atts([
@@ -157,6 +158,7 @@ final class YAA_Shortcode_Renderer {
             'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'columns'            => '',
             'class'              => '',
             'local_images'       => '',
@@ -201,6 +203,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $total_limit,
                 'market'             => (string) $atts['market'],
                 'precision'          => (string) $atts['precision'],
+                'sort'               => (string) $atts['sort'], // NEU
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -375,6 +378,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'shuffle'            => 'yes',
             'columns'            => '',
             'class'              => '',
@@ -431,7 +435,7 @@ final class YAA_Shortcode_Renderer {
                 $yadore_items = $this->fetch_multi_keywords_with_filter(
                     $keywords, 
                     $yadore_limit, 
-                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
                     $merchant_whitelist,
                     $merchant_blacklist
                 );
@@ -440,6 +444,7 @@ final class YAA_Shortcode_Renderer {
                     'keyword'            => $keyword,
                     'limit'              => $yadore_limit,
                     'market'             => (string) $atts['market'],
+                    'sort'               => (string) $atts['sort'], // NEU
                     'merchant_whitelist' => $merchant_whitelist,
                     'merchant_blacklist' => $merchant_blacklist,
                 ]);
@@ -493,6 +498,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'priority'           => 'custom,yadore,amazon',
             'shuffle'            => 'no',
             'columns'            => '',
@@ -553,7 +559,7 @@ final class YAA_Shortcode_Renderer {
                             $items = $this->fetch_multi_keywords_with_filter(
                                 $keywords, 
                                 $remaining, 
-                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
                                 $merchant_whitelist,
                                 $merchant_blacklist
                             );
@@ -562,6 +568,7 @@ final class YAA_Shortcode_Renderer {
                                 'keyword'            => $keyword,
                                 'limit'              => $remaining,
                                 'market'             => (string) $atts['market'],
+                                'sort'               => (string) $atts['sort'], // NEU
                                 'merchant_whitelist' => $merchant_whitelist,
                                 'merchant_blacklist' => $merchant_blacklist,
                             ]);
@@ -752,6 +759,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $limit_for_this,
                 'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
                 'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')), // NEU
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);

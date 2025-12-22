@@ -3,7 +3,15 @@
  * Admin Settings Page
  * Rendert alle Einstellungs-Tabs und verarbeitet Sanitization
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.5.0
+ * 
+ * Features:
+ * - Yadore API Konfiguration inkl. Merchant Filter
+ * - Amazon PA-API 5.0 Konfiguration
+ * - Eigene Produkte mit Fuzzy-Suche
+ * - Cache & Bilder (Redis, lokale Speicherung)
+ * - Darstellungs-Optionen
+ * - NEU: Sortierungs-Einstellungen (Preis/CPC)
  */
 
 declare(strict_types=1);
@@ -113,6 +121,11 @@ final class YAA_Admin_Settings {
             ? $input['yadore_precision'] : 'fuzzy';
         $sanitized['yadore_default_limit'] = max(1, min(50, (int) ($input['yadore_default_limit'] ?? 9)));
         
+        // NEU: Sortierung
+        $valid_sorts = ['rel_desc', 'price_asc', 'price_desc', 'cpc_desc', 'cpc_asc'];
+        $sanitized['yadore_default_sort'] = in_array($input['yadore_default_sort'] ?? '', $valid_sorts, true) 
+            ? $input['yadore_default_sort'] : 'rel_desc';
+        
         // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
         $sanitized['yadore_merchant_blacklist'] = $this->sanitize_merchant_list($input['yadore_merchant_blacklist'] ?? '');
@@ -192,7 +205,7 @@ final class YAA_Admin_Settings {
     }
     
     /**
-     * Render Yadore settings - MIT Merchant Filter
+     * Render Yadore settings - MIT Merchant Filter und Sortierung
      *
      * @param array<string, mixed> $options
      * @param array<string, string> $markets
@@ -204,6 +217,9 @@ final class YAA_Admin_Settings {
         
         $whitelist = $options['yadore_merchant_whitelist'] ?? '';
         $blacklist = $options['yadore_merchant_blacklist'] ?? '';
+        
+        // Sortieroptionen von der API holen
+        $sort_options = $this->yadore_api->get_sort_options();
         ?>
         <div class="yaa-card">
             <h2>📦 Yadore API Konfiguration</h2>
@@ -265,6 +281,22 @@ final class YAA_Admin_Settings {
                            value="<?php echo esc_attr($options['yadore_default_limit'] ?? '9'); ?>"
                            min="1" max="50">
                 </div>
+                
+                <!-- NEU: Sortierung -->
+                <div class="yaa-form-row">
+                    <label for="yadore_default_sort">Standard-Sortierung</label>
+                    <select id="yadore_default_sort" name="yaa_settings[yadore_default_sort]">
+                        <?php foreach ($sort_options as $value => $label): ?>
+                            <option value="<?php echo esc_attr($value); ?>" 
+                                <?php selected(($options['yadore_default_sort'] ?? 'rel_desc'), $value); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="description">
+                        Kann im Shortcode mit <code>sort="price_asc"</code> überschrieben werden.
+                    </p>
+                </div>
             </div>
             
             <div class="yaa-form-row">
@@ -272,6 +304,65 @@ final class YAA_Admin_Settings {
                     🔍 Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <!-- NEU: Sortierungs-Info -->
+        <div class="yaa-card">
+            <h2>📊 Sortierungs-Optionen</h2>
+            <p class="description">
+                Bestimme, in welcher Reihenfolge die Produkte angezeigt werden.
+            </p>
+            
+            <table class="widefat striped" style="margin-top: 15px;">
+                <thead>
+                    <tr>
+                        <th>Wert</th>
+                        <th>Beschreibung</th>
+                        <th>Shortcode-Beispiel</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>rel_desc</code></td>
+                        <td>Nach Relevanz (Standard der Yadore API)</td>
+                        <td><code>[yadore_products keyword="Laptop" sort="rel_desc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>price_asc</code></td>
+                        <td>Günstigste Produkte zuerst 💰</td>
+                        <td><code>[yadore_products keyword="Smartphone" sort="price_asc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>price_desc</code></td>
+                        <td>Teuerste Produkte zuerst</td>
+                        <td><code>[yadore_products keyword="Monitor" sort="price_desc"]</code></td>
+                    </tr>
+                    <tr style="background: #e8f5e9;">
+                        <td><code>cpc_desc</code></td>
+                        <td><strong>Höchste Vergütung zuerst</strong> 💵</td>
+                        <td><code>[yadore_products keyword="Kopfhörer" sort="cpc_desc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>cpc_asc</code></td>
+                        <td>Niedrigste Vergütung zuerst</td>
+                        <td><code>[yadore_products keyword="Tablet" sort="cpc_asc"]</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                Vergütung pro Klick zuerst angezeigt. So kannst du deinen Revenue maximieren!
+            </div>
+            
+            <div class="yaa-feature-box info" style="margin-top: 15px;">
+                <h4 style="margin-top: 0;">⚠️ Hinweis zur CPC-Sortierung</h4>
+                <p>
+                    Die CPC-Sortierung erfolgt <strong>nach dem API-Abruf</strong> im Plugin, da die Yadore API
+                    nur Preis- und Relevanz-Sortierung nativ unterstützt. Bei CPC-Sortierung werden automatisch
+                    mehr Produkte geladen, um nach der Sortierung genügend Ergebnisse zu haben.
+                </p>
             </div>
         </div>
         
@@ -310,7 +401,8 @@ final class YAA_Admin_Settings {
                         ✅ Whitelist (nur diese Händler anzeigen)
                     </label>
                     <?php if (!empty($merchants)): ?>
-                        <select name="yaa_settings_whitelist_select[]" multiple class="yaa-merchant-select">
+                        <select name="yaa_settings_whitelist_select[]" multiple class="yaa-merchant-select" 
+                                data-target="yadore_merchant_whitelist" style="height: 150px; width: 100%;">
                             <?php 
                             $whitelist_array = array_map('trim', explode(',', $whitelist));
                             foreach ($merchants as $merchant): 
@@ -340,7 +432,8 @@ final class YAA_Admin_Settings {
                         ❌ Blacklist (diese Händler ausschließen)
                     </label>
                     <?php if (!empty($merchants)): ?>
-                        <select name="yaa_settings_blacklist_select[]" multiple class="yaa-merchant-select">
+                        <select name="yaa_settings_blacklist_select[]" multiple class="yaa-merchant-select"
+                                data-target="yadore_merchant_blacklist" style="height: 150px; width: 100%;">
                             <?php 
                             $blacklist_array = array_map('trim', explode(',', $blacklist));
                             foreach ($merchants as $merchant): 
@@ -386,6 +479,7 @@ final class YAA_Admin_Settings {
                 Du kannst mehrere Keywords in einem Shortcode verwenden. Das Limit wird automatisch aufgeteilt.
             </p>
             <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
+            <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet" limit="6" sort="cpc_desc"]</div>
             <div class="yaa-tip">
                 <strong>Tipp:</strong> Bei 3 Keywords und limit="9" werden je 3 Produkte pro Keyword geladen.
             </div>
@@ -569,157 +663,126 @@ final class YAA_Admin_Settings {
             <div class="yaa-grid" style="margin: 20px 0;">
                 <div class="yaa-stat-box" style="background: #f0f6fc;">
                     <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $published_count; ?></div>
-                    <div class="yaa-stat-label">Veröffentlichte Produkte</div>
+                    <div class="yaa-stat-label">Produkte</div>
                 </div>
-                <div class="yaa-stat-box" style="background: #fef8ee;">
-                    <div class="yaa-stat-number" style="color: #996800;"><?php echo (int) $category_count; ?></div>
+                <div class="yaa-stat-box" style="background: #f0f9ff;">
+                    <div class="yaa-stat-number" style="color: #00a0d2;"><?php echo (int) $category_count; ?></div>
                     <div class="yaa-stat-label">Kategorien</div>
-                </div>
-                <div class="yaa-stat-box">
-                    <a href="<?php echo admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" 
-                       class="button button-primary button-hero" style="margin-top: 10px;">
-                        ➕ Neues Produkt
-                    </a>
                 </div>
             </div>
             
             <p>
-                <a href="<?php echo admin_url('edit.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button">
-                    📋 Alle Produkte verwalten
+                <a href="<?php echo esc_url(admin_url('edit.php?post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button button-primary">
+                    📦 Produkte verwalten
                 </a>
-                <a href="<?php echo admin_url('edit-tags.php?taxonomy=' . YAA_Custom_Products::get_taxonomy() . '&post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button" style="margin-left: 10px;">
-                    🏷️ Kategorien verwalten
+                <a href="<?php echo esc_url(admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button">
+                    ➕ Neues Produkt
+                </a>
+                <a href="<?php echo esc_url(admin_url('edit-tags.php?taxonomy=' . YAA_Custom_Products::get_taxonomy() . '&post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button">
+                    🏷️ Kategorien
                 </a>
             </p>
         </div>
         
         <div class="yaa-card">
-            <h2>🔍 Fuzzy-Suche Einstellungen</h2>
+            <h2>🔍 Fuzzy-Suche für eigene Produkte</h2>
             <p class="description">
-                Die Fuzzy-Suche findet eigene Produkte basierend auf ähnlichen Keywords, Titeln und Kategorien.
+                Die Fuzzy-Suche findet ähnliche Produkte auch bei Tippfehlern oder unvollständigen Suchbegriffen.
             </p>
             
             <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[enable_fuzzy_search]" value="yes" 
                         <?php checked(($options['enable_fuzzy_search'] ?? 'yes'), 'yes'); ?>>
-                    <strong>Fuzzy-Suche aktivieren</strong>
+                    Fuzzy-Suche aktivieren
                 </label>
-                <p class="description">
-                    Ermöglicht die Nutzung des <code>[fuzzy_products]</code> Shortcodes und der
-                    <code>keyword=""</code> Suche bei eigenen Produkten.
-                </p>
             </div>
             
             <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[fuzzy_auto_mix]" value="yes" 
                         <?php checked(($options['fuzzy_auto_mix'] ?? 'no'), 'yes'); ?>>
-                    <strong>Automatisch eigene Produkte einmischen</strong>
+                    Automatisch eigene Produkte in Yadore/Amazon-Ergebnisse einmischen
                 </label>
                 <p class="description">
-                    Mischt automatisch passende eigene Produkte in Yadore/Amazon Suchergebnisse ein.
-                    Kann auch per Shortcode mit <code>mix_custom="yes"</code> aktiviert werden.
+                    Wenn aktiviert, werden passende eigene Produkte automatisch bei allen Suchanfragen hinzugefügt.
                 </p>
             </div>
             
             <div class="yaa-form-row">
-                <label for="fuzzy_threshold">Mindest-Übereinstimmung (%)</label>
-                <input type="number" id="fuzzy_threshold" name="yaa_settings[fuzzy_threshold]" 
+                <label for="fuzzy_threshold">Mindest-Score für Treffer (%)</label>
+                <input type="range" id="fuzzy_threshold" name="yaa_settings[fuzzy_threshold]" 
                        value="<?php echo esc_attr($options['fuzzy_threshold'] ?? '30'); ?>"
-                       min="0" max="100" step="5" style="max-width: 100px;">
+                       min="0" max="100" step="5"
+                       oninput="document.getElementById('fuzzy_threshold_value').textContent = this.value + '%'">
+                <span id="fuzzy_threshold_value" style="margin-left: 10px; font-weight: bold;">
+                    <?php echo esc_html($options['fuzzy_threshold'] ?? '30'); ?>%
+                </span>
                 <p class="description">
-                    Produkte mit niedrigerem Score werden nicht angezeigt. Empfohlen: 25-40%
+                    Produkte mit einem Score unter diesem Wert werden nicht angezeigt. Niedriger = mehr Ergebnisse, höher = relevantere Treffer.
                 </p>
             </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>⚖️ Gewichtung der Suchfelder</h2>
+            <p class="description">
+                Bestimme, wie stark jedes Feld in die Berechnung des Scores einfließt. Die Summe sollte 1.0 ergeben.
+            </p>
             
-            <h4>Gewichtungen</h4>
-            <p class="description" style="margin-bottom: 15px;">Die Summe sollte ~1.0 (100%) ergeben.</p>
-            
-            <div class="yaa-grid-4">
+            <div class="yaa-grid">
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_title">Titel</label>
                     <input type="number" id="fuzzy_weight_title" name="yaa_settings[fuzzy_weight_title]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_title'] ?? '0.40'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_description">Beschreibung</label>
                     <input type="number" id="fuzzy_weight_description" name="yaa_settings[fuzzy_weight_description]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_description'] ?? '0.25'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_category">Kategorie</label>
                     <input type="number" id="fuzzy_weight_category" name="yaa_settings[fuzzy_weight_category]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_category'] ?? '0.20'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_merchant">Händler</label>
+                    <input type="number" id="fuzzy_weight_merchant" name="yaa_settings[fuzzy_weight_merchant]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_merchant'] ?? '0.10'); ?>"
+                           min="0" max="1" step="0.05">
+                </div>
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_keywords">Keywords</label>
                     <input type="number" id="fuzzy_weight_keywords" name="yaa_settings[fuzzy_weight_keywords]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_keywords'] ?? '0.05'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
             </div>
         </div>
         
         <div class="yaa-card">
-            <h2>📝 Shortcodes für eigene Produkte</h2>
+            <h2>📝 Shortcode-Beispiele</h2>
             
-            <h4>Nach IDs anzeigen:</h4>
+            <h4>Eigene Produkte anzeigen:</h4>
+            <div class="yaa-shortcode-box">[custom_products limit="6"]</div>
             <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
-            
-            <h4>Nach Kategorie anzeigen:</h4>
-            <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
+            <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="4"]</div>
             
             <h4>Fuzzy-Suche:</h4>
-            <div class="yaa-shortcode-box">[fuzzy_products keyword="Kopfhörer" limit="6"]</div>
-            <div class="yaa-shortcode-box">[custom_products keyword="Smartphone" fuzzy="yes"]</div>
+            <div class="yaa-shortcode-box">[fuzzy_products keyword="Smartphone" limit="5"]</div>
+            <div class="yaa-shortcode-box">[custom_products keyword="Laptop" fuzzy="yes"]</div>
             
-            <h4>Yadore/Amazon mit eigenen Produkten mischen:</h4>
-            <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" mix_custom="yes" custom_limit="2"]</div>
-            <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" mix_custom="yes" custom_position="alternate"]</div>
+            <h4>Eigene Produkte einmischen:</h4>
+            <div class="yaa-shortcode-box">[yadore_products keyword="Kopfhörer" mix_custom="yes" custom_limit="2"]</div>
+            <div class="yaa-shortcode-box">[amazon_products keyword="Tablet" mix_custom="yes" custom_position="alternate"]</div>
             
-            <div class="yaa-tip">
-                <strong>Tipp:</strong> Füge bei eigenen Produkten zusätzliche "Fuzzy-Keywords" hinzu, 
-                um die Trefferquote zu verbessern. Diese findest du im Produkt-Bearbeitungsformular.
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>🎨 Darstellung eigener Produkte</h2>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_custom_badge]" value="yes" 
-                        <?php checked(($options['show_custom_badge'] ?? 'yes'), 'yes'); ?>>
-                    Badge bei eigenen Produkten anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="custom_badge_text">Badge-Text</label>
-                <input type="text" id="custom_badge_text" name="yaa_settings[custom_badge_text]" 
-                       value="<?php echo esc_attr($options['custom_badge_text'] ?? 'Empfohlen'); ?>"
-                       placeholder="Empfohlen">
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="button_text_custom">Button-Text</label>
-                <input type="text" id="button_text_custom" name="yaa_settings[button_text_custom]" 
-                       value="<?php echo esc_attr($options['button_text_custom'] ?? 'Zum Angebot'); ?>">
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="color_custom">Farbe für eigene Produkte</label>
-                <input type="text" id="color_custom" name="yaa_settings[color_custom]" 
-                       value="<?php echo esc_attr($options['color_custom'] ?? '#4CAF50'); ?>"
-                       class="yaa-color-picker">
-            </div>
+            <p class="description" style="margin-top: 15px;">
+                <strong>custom_position</strong> Optionen: <code>start</code>, <code>end</code>, <code>shuffle</code>, <code>alternate</code>
+            </p>
         </div>
         <?php
     }
@@ -731,176 +794,87 @@ final class YAA_Admin_Settings {
      * @param array<string, mixed> $cache_status
      */
     private function render_cache_settings(array $options, array $cache_status): void {
-        $image_stats = $this->get_local_image_stats();
-        $can_resize = class_exists('YAA_Image_Handler') && YAA_Image_Handler::can_resize_images();
-        $image_library = class_exists('YAA_Image_Handler') ? YAA_Image_Handler::get_image_library() : 'Unknown';
         ?>
         <div class="yaa-card">
             <h2>⚡ Cache-Einstellungen</h2>
             
-            <div class="yaa-grid">
-                <div>
-                    <div class="yaa-form-row">
-                        <label for="cache_duration">Cache-Dauer (Stunden)</label>
-                        <input type="number" id="cache_duration" name="yaa_settings[cache_duration]" 
-                               value="<?php echo esc_attr($options['cache_duration'] ?? '6'); ?>"
-                               min="1" max="168">
-                        <p class="description">Wie lange API-Daten im Cache bleiben (1-168 Stunden).</p>
-                    </div>
-                    
-                    <div class="yaa-form-row">
-                        <label for="fallback_duration">Fallback-Dauer (Stunden)</label>
-                        <input type="number" id="fallback_duration" name="yaa_settings[fallback_duration]" 
-                               value="<?php echo esc_attr($options['fallback_duration'] ?? '24'); ?>"
-                               min="1" max="720">
-                        <p class="description">Backup-Cache bei API-Fehlern (1-720 Stunden).</p>
-                    </div>
-                </div>
-                
-                <div>
-                    <h4 style="margin-top: 0;">📊 Aktueller Status</h4>
-                    <table class="widefat" style="margin-top: 10px;">
-                        <tr>
-                            <td><strong>Backend:</strong></td>
-                            <td>
-                                <span class="yaa-status-badge <?php echo $cache_status['redis_available'] ? 'yaa-status-success' : 'yaa-status-warning'; ?>">
-                                    <?php echo esc_html($cache_status['cache_backend']); ?>
-                                </span>
-                            </td>
-                        </tr>
-                        <?php if (!empty($cache_status['redis_info'])): ?>
-                        <tr>
-                            <td><strong>Redis Version:</strong></td>
-                            <td><?php echo esc_html($cache_status['redis_info']['version']); ?></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Speicher:</strong></td>
-                            <td><?php echo esc_html($cache_status['redis_info']['used_memory']); ?></td>
-                        </tr>
-                        <?php endif; ?>
-                    </table>
-                </div>
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>🖼️ Lokale Bilderspeicherung</h2>
-            <p class="description">
-                Produktbilder können lokal gespeichert werden, um die Ladezeit zu verbessern und externe Anfragen zu reduzieren.
-            </p>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[enable_local_images]" value="yes" 
-                        <?php checked(($options['enable_local_images'] ?? 'yes'), 'yes'); ?>>
-                    <strong>Produktbilder lokal speichern</strong>
-                </label>
-                <p class="description">
-                    Lädt Produktbilder von Amazon/Yadore herunter und speichert sie unter 
-                    <code>/wp-content/uploads/yadore-amazon-api/</code>.
-                </p>
-            </div>
-            
-            <!-- Bildgrößen-Einstellung -->
-            <div class="yaa-feature-box info" style="margin-top: 20px;">
-                <h4 style="margin-top: 0;">🖼️ Bevorzugte Bildgröße</h4>
-                <p class="description" style="margin-bottom: 15px;">
-                    Diese Einstellung gilt für <strong>alle Quellen</strong> (Amazon, Yadore, eigene Produkte).
-                </p>
-                
-                <div class="yaa-form-row">
-                    <label for="preferred_image_size">Bildgröße auswählen</label>
-                    <select id="preferred_image_size" name="yaa_settings[preferred_image_size]">
-                        <option value="Large" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Large'); ?>>
-                            🖼️ Large (max. 500px) – Beste Qualität
-                        </option>
-                        <option value="Medium" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Medium'); ?>>
-                            🖼️ Medium (max. 160px) – Mittelgroß
-                        </option>
-                        <option value="Small" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Small'); ?>>
-                            🖼️ Small (max. 75px) – Thumbnail
-                        </option>
-                    </select>
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label>
-                        <input type="checkbox" name="yaa_settings[image_resize_enabled]" value="yes" 
-                            <?php checked(($options['image_resize_enabled'] ?? 'yes'), 'yes'); ?>
-                            <?php echo !$can_resize ? 'disabled' : ''; ?>>
-                        <strong>Bilder beim Speichern skalieren</strong>
-                    </label>
-                    <p class="description">
-                        Skaliert heruntergeladene Bilder auf die gewählte Maximalgröße.
-                    </p>
-                    <?php if (!$can_resize): ?>
-                        <p class="description" style="color: #dc3232;">
-                            ⚠️ Bildverarbeitung nicht verfügbar. Installieren Sie GD oder Imagick.
-                        </p>
-                    <?php else: ?>
-                        <p class="description">
-                            ✅ Bildverarbeitung: <strong><?php echo esc_html($image_library); ?></strong>
-                        </p>
+            <div class="yaa-cache-status">
+                <h4>Status</h4>
+                <table class="widefat striped">
+                    <tr>
+                        <td width="200"><strong>Cache-Typ:</strong></td>
+                        <td>
+                            <?php 
+                            $type = $cache_status['type'] ?? 'transient';
+                            echo $type === 'redis' ? '🚀 Redis' : '💾 WordPress Transients';
+                            ?>
+                        </td>
+                    </tr>
+                    <?php if ($type === 'redis'): ?>
+                    <tr>
+                        <td><strong>Redis-Status:</strong></td>
+                        <td>
+                            <?php if ($cache_status['connected'] ?? false): ?>
+                                ✅ Verbunden
+                            <?php else: ?>
+                                ❌ Nicht verbunden
+                            <?php endif; ?>
+                        </td>
+                    </tr>
                     <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- SEO-Dateinamen -->
-            <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
-                <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
-                <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
-                    <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
-                        🔍 SEO-optimiert (Produktname + Timestamp)
-                    </option>
-                    <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
-                        🔢 Technisch (Produkt-ID)
-                    </option>
-                </select>
-                <p class="description" style="margin-top: 8px;">
-                    <strong>SEO-optimiert:</strong> Die ersten 30 Zeichen des Produktnamens + Timestamp.
-                </p>
-                <div class="yaa-seo-example">
-                    <strong>Beispiel SEO:</strong> samsung-galaxy-s24-ultra-smart_1734686220.jpg<br>
-                    <strong>Beispiel ID:</strong> amazon_B0CXYZ12345.jpg
-                </div>
+                    <tr>
+                        <td><strong>Einträge:</strong></td>
+                        <td><?php echo number_format((int) ($cache_status['entries'] ?? 0), 0, ',', '.'); ?></td>
+                    </tr>
+                </table>
             </div>
             
             <div class="yaa-grid" style="margin-top: 20px;">
-                <div class="yaa-stat-box" style="background: #f0f6fc;">
-                    <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $image_stats['count']; ?></div>
-                    <div class="yaa-stat-label">Gespeicherte Bilder</div>
+                <div class="yaa-form-row">
+                    <label for="cache_duration">Cache-Dauer (Stunden)</label>
+                    <input type="number" id="cache_duration" name="yaa_settings[cache_duration]" 
+                           value="<?php echo esc_attr($options['cache_duration'] ?? '6'); ?>"
+                           min="1" max="168">
+                    <p class="description">Wie lange API-Ergebnisse gecacht werden.</p>
                 </div>
-                <div class="yaa-stat-box" style="background: #fef8ee;">
-                    <div class="yaa-stat-number" style="color: #996800;"><?php echo esc_html($image_stats['size']); ?></div>
-                    <div class="yaa-stat-label">Speicherverbrauch</div>
+                
+                <div class="yaa-form-row">
+                    <label for="fallback_duration">Fallback-Dauer (Stunden)</label>
+                    <input type="number" id="fallback_duration" name="yaa_settings[fallback_duration]" 
+                           value="<?php echo esc_attr($options['fallback_duration'] ?? '24'); ?>"
+                           min="1" max="720">
+                    <p class="description">Wie lange alte Daten bei API-Fehlern verwendet werden.</p>
                 </div>
-                <div class="yaa-stat-box">
-                    <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_images'), 'yaa_clear_images_nonce')); ?>" 
-                       class="button" 
-                       onclick="return confirm('Alle lokal gespeicherten Bilder löschen?');">
-                        🗑️ Bilder löschen
-                    </a>
-                </div>
+            </div>
+            
+            <div class="yaa-form-row" style="margin-top: 20px;">
+                <button type="button" class="button button-secondary" id="yaa-clear-cache">
+                    🗑️ Cache leeren
+                </button>
+                <button type="button" class="button" id="yaa-preload-cache" style="margin-left: 10px;">
+                    ⏳ Cache vorwärmen
+                </button>
+                <span id="yaa-cache-status" style="margin-left: 10px;"></span>
             </div>
         </div>
         
         <div class="yaa-card">
             <h2>🔴 Redis-Konfiguration</h2>
             <p class="description">
-                Redis bietet schnelleres Caching als WordPress-Transients.
+                Redis bietet schnelleres Caching als WordPress Transients. Optional.
             </p>
             
             <div class="yaa-form-row">
                 <label for="enable_redis">Redis verwenden</label>
                 <select id="enable_redis" name="yaa_settings[enable_redis]">
                     <option value="auto" <?php selected(($options['enable_redis'] ?? 'auto'), 'auto'); ?>>
-                        🔄 Automatisch erkennen
+                        Automatisch (wenn verfügbar)
                     </option>
                     <option value="yes" <?php selected(($options['enable_redis'] ?? 'auto'), 'yes'); ?>>
-                        ✅ Ja, Redis verwenden
+                        Immer verwenden
                     </option>
                     <option value="no" <?php selected(($options['enable_redis'] ?? 'auto'), 'no'); ?>>
-                        ❌ Nein, nur Transients
+                        Deaktiviert
                     </option>
                 </select>
             </div>
@@ -920,9 +894,10 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="redis_password">Passwort (optional)</label>
+                    <label for="redis_password">Passwort</label>
                     <input type="password" id="redis_password" name="yaa_settings[redis_password]" 
-                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>">
+                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>"
+                           placeholder="Optional">
                 </div>
                 
                 <div class="yaa-form-row">
@@ -933,11 +908,100 @@ final class YAA_Admin_Settings {
                 </div>
             </div>
             
-            <div class="yaa-form-row">
+            <div class="yaa-form-row" style="margin-top: 15px;">
                 <button type="button" class="button yaa-test-btn" data-action="yaa_test_redis">
                     🔍 Redis-Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🖼️ Lokale Bilderspeicherung</h2>
+            <p class="description">
+                Speichere Produktbilder lokal für schnellere Ladezeiten und mehr Kontrolle.
+            </p>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[enable_local_images]" value="yes" 
+                        <?php checked(($options['enable_local_images'] ?? 'yes'), 'yes'); ?>>
+                    Bilder lokal speichern
+                </label>
+                <p class="description">
+                    Bilder werden in <code>/wp-content/uploads/yaa-products/</code> gespeichert.
+                </p>
+            </div>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="preferred_image_size">Bevorzugte Bildgröße</label>
+                    <select id="preferred_image_size" name="yaa_settings[preferred_image_size]">
+                        <option value="Large" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Large'); ?>>
+                            Large (max. verfügbar)
+                        </option>
+                        <option value="Medium" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Medium'); ?>>
+                            Medium
+                        </option>
+                        <option value="Small" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Small'); ?>>
+                            Small (schneller)
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="image_filename_format">Dateiname-Format</label>
+                    <select id="image_filename_format" name="yaa_settings[image_filename_format]">
+                        <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
+                            SEO-freundlich (produktname-source.jpg)
+                        </option>
+                        <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
+                            ID-basiert (asin/ean_hash.jpg)
+                        </option>
+                    </select>
+                    <p class="description">
+                        SEO-freundliche Dateinamen können das Ranking in der Bildersuche verbessern.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[image_resize_enabled]" value="yes" 
+                        <?php checked(($options['image_resize_enabled'] ?? 'no'), 'yes'); ?>>
+                    Bilder auf max. 800px verkleinern (spart Speicherplatz)
+                </label>
+            </div>
+            
+            <?php
+            $upload_dir = wp_upload_dir();
+            $yaa_dir = $upload_dir['basedir'] . '/yaa-products';
+            $image_count = 0;
+            $total_size = 0;
+            
+            if (is_dir($yaa_dir)) {
+                $files = glob($yaa_dir . '/*/*.{jpg,jpeg,png,gif,webp}', GLOB_BRACE);
+                if ($files) {
+                    $image_count = count($files);
+                    foreach ($files as $file) {
+                        $total_size += filesize($file);
+                    }
+                }
+            }
+            ?>
+            
+            <div class="yaa-feature-box info" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">📊 Lokale Bilder-Statistik</h4>
+                <p>
+                    <strong><?php echo number_format($image_count, 0, ',', '.'); ?></strong> Bilder gespeichert<br>
+                    <strong><?php echo size_format($total_size); ?></strong> Speicherverbrauch
+                </p>
+                <p>
+                    <button type="button" class="button button-secondary" id="yaa-cleanup-images">
+                        🧹 Ungenutzte Bilder löschen
+                    </button>
+                    <span id="yaa-image-cleanup-status" style="margin-left: 10px;"></span>
+                </p>
             </div>
         </div>
         <?php
@@ -951,27 +1015,23 @@ final class YAA_Admin_Settings {
     private function render_display_settings(array $options): void {
         ?>
         <div class="yaa-card">
-            <h2>🎨 Styling Optionen</h2>
+            <h2>🎨 Darstellungs-Optionen</h2>
             
-            <div class="yaa-form-row" style="background: #fff0f0; padding: 15px; border-left: 4px solid #ff4444;">
+            <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[disable_default_css]" value="yes" 
                         <?php checked(($options['disable_default_css'] ?? 'no'), 'yes'); ?>>
-                    <strong>Standard-CSS komplett deaktivieren</strong>
+                    Standard-CSS deaktivieren (eigenes Styling verwenden)
                 </label>
-                <p class="description">
-                    Aktivieren Sie diese Option, wenn Sie das Grid-Layout <strong>vollständig über Ihr Theme oder Custom CSS</strong> steuern möchten.
-                </p>
             </div>
         </div>
-
+        
         <div class="yaa-card">
-            <h2>📐 Grid-Layout</h2>
-            <p class="description">Diese Einstellungen werden nur angewendet, wenn das Standard-CSS aktiv ist.</p>
+            <h2>📐 Grid-Spalten</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
-                    <label for="grid_columns_desktop">Spalten Desktop (>1024px)</label>
+                    <label for="grid_columns_desktop">Desktop (≥1024px)</label>
                     <select id="grid_columns_desktop" name="yaa_settings[grid_columns_desktop]">
                         <?php for ($i = 1; $i <= 6; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_desktop'] ?? 3), $i); ?>>
@@ -982,7 +1042,7 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="grid_columns_tablet">Spalten Tablet (601-1024px)</label>
+                    <label for="grid_columns_tablet">Tablet (768-1023px)</label>
                     <select id="grid_columns_tablet" name="yaa_settings[grid_columns_tablet]">
                         <?php for ($i = 1; $i <= 4; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_tablet'] ?? 2), $i); ?>>
@@ -993,7 +1053,7 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="grid_columns_mobile">Spalten Mobile (≤600px)</label>
+                    <label for="grid_columns_mobile">Mobile (<768px)</label>
                     <select id="grid_columns_mobile" name="yaa_settings[grid_columns_mobile]">
                         <?php for ($i = 1; $i <= 2; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_mobile'] ?? 1), $i); ?>>
@@ -1006,111 +1066,128 @@ final class YAA_Admin_Settings {
         </div>
         
         <div class="yaa-card">
-            <h2>🎨 Farben</h2>
+            <h2>🔘 Button-Texte</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
-                    <label for="color_primary">Primärfarbe (Yadore)</label>
-                    <input type="text" id="color_primary" name="yaa_settings[color_primary]" 
-                           value="<?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>"
-                           class="yaa-color-picker">
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label for="color_secondary">Sekundärfarbe</label>
-                    <input type="text" id="color_secondary" name="yaa_settings[color_secondary]" 
-                           value="<?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>"
-                           class="yaa-color-picker">
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label for="color_amazon">Amazon-Farbe</label>
-                    <input type="text" id="color_amazon" name="yaa_settings[color_amazon]" 
-                           value="<?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>"
-                           class="yaa-color-picker">
-                </div>
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>⚙️ Anzeige-Optionen</h2>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_prime_badge]" value="yes" 
-                        <?php checked(($options['show_prime_badge'] ?? 'yes'), 'yes'); ?>>
-                    Prime-Badge bei Amazon-Produkten anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_merchant]" value="yes" 
-                        <?php checked(($options['show_merchant'] ?? 'yes'), 'yes'); ?>>
-                    Händler-Namen anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_description]" value="yes" 
-                        <?php checked(($options['show_description'] ?? 'yes'), 'yes'); ?>>
-                    Produktbeschreibung anzeigen
-                </label>
-            </div>
-            
-            <hr style="margin: 20px 0;">
-            
-            <h3>Button-Texte</h3>
-            <div class="yaa-grid">
-                <div class="yaa-form-row">
-                    <label for="button_text_yadore">Button-Text (Yadore)</label>
+                    <label for="button_text_yadore">Yadore-Produkte</label>
                     <input type="text" id="button_text_yadore" name="yaa_settings[button_text_yadore]" 
                            value="<?php echo esc_attr($options['button_text_yadore'] ?? 'Zum Angebot'); ?>">
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="button_text_amazon">Button-Text (Amazon)</label>
+                    <label for="button_text_amazon">Amazon-Produkte</label>
                     <input type="text" id="button_text_amazon" name="yaa_settings[button_text_amazon]" 
                            value="<?php echo esc_attr($options['button_text_amazon'] ?? 'Bei Amazon kaufen'); ?>">
                 </div>
+                
+                <div class="yaa-form-row">
+                    <label for="button_text_custom">Eigene Produkte</label>
+                    <input type="text" id="button_text_custom" name="yaa_settings[button_text_custom]" 
+                           value="<?php echo esc_attr($options['button_text_custom'] ?? 'Zum Angebot'); ?>">
+                </div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>👁️ Anzeige-Optionen</h2>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_prime_badge]" value="yes" 
+                            <?php checked(($options['show_prime_badge'] ?? 'yes'), 'yes'); ?>>
+                        Prime-Badge anzeigen (Amazon)
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_merchant]" value="yes" 
+                            <?php checked(($options['show_merchant'] ?? 'yes'), 'yes'); ?>>
+                        Händlername anzeigen
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_description]" value="yes" 
+                            <?php checked(($options['show_description'] ?? 'yes'), 'yes'); ?>>
+                        Beschreibung anzeigen
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_custom_badge]" value="yes" 
+                            <?php checked(($options['show_custom_badge'] ?? 'yes'), 'yes'); ?>>
+                        Badge für eigene Produkte anzeigen
+                    </label>
+                </div>
+            </div>
+            
+            <div class="yaa-form-row" style="margin-top: 15px;">
+                <label for="custom_badge_text">Badge-Text für eigene Produkte</label>
+                <input type="text" id="custom_badge_text" name="yaa_settings[custom_badge_text]" 
+                       value="<?php echo esc_attr($options['custom_badge_text'] ?? 'Empfohlen'); ?>"
+                       style="width: 200px;">
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🎨 Farben</h2>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="color_primary">Primärfarbe (Yadore)</label>
+                    <input type="color" id="color_primary" name="yaa_settings[color_primary]" 
+                           value="<?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_secondary">Sekundärfarbe</label>
+                    <input type="color" id="color_secondary" name="yaa_settings[color_secondary]" 
+                           value="<?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_amazon">Amazon-Farbe</label>
+                    <input type="color" id="color_amazon" name="yaa_settings[color_amazon]" 
+                           value="<?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_custom">Eigene Produkte</label>
+                    <input type="color" id="color_custom" name="yaa_settings[color_custom]" 
+                           value="<?php echo esc_attr($options['color_custom'] ?? '#4CAF50'); ?>">
+                </div>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>Hinweis:</strong> Farben werden als CSS Custom Properties (<code>--yaa-color-*</code>) ausgegeben 
+                und können auch im Theme überschrieben werden.
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🔄 Plugin-Updates (GitHub)</h2>
+            <p class="description">
+                Das Plugin kann automatisch Updates von GitHub beziehen. Dafür ist ein Personal Access Token mit 
+                <code>repo</code>-Berechtigung erforderlich (für private Repositories).
+            </p>
+            
+            <div class="yaa-form-row">
+                <label for="github_token">GitHub Personal Access Token</label>
+                <input type="password" id="github_token" name="yaa_settings[github_token]" 
+                       value="<?php echo esc_attr($options['github_token'] ?? ''); ?>"
+                       placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+                <p class="description">
+                    <a href="https://github.com/settings/tokens/new?scopes=repo&description=YAA%20Plugin%20Updates" target="_blank" rel="noopener">
+                        Token erstellen →
+                    </a>
+                </p>
             </div>
         </div>
         <?php
-    }
-    
-    /**
-     * Get local image statistics
-     * 
-     * @return array{count: int, size: string}
-     */
-    private function get_local_image_stats(): array {
-        $upload_dir = wp_upload_dir();
-        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
-        
-        $count = 0;
-        $total_size = 0;
-        
-        if (is_dir($image_dir)) {
-            $files = glob($image_dir . '/*');
-            if ($files !== false) {
-                $count = count($files);
-                foreach ($files as $file) {
-                    if (is_file($file)) {
-                        $total_size += filesize($file);
-                    }
-                }
-            }
-        }
-        
-        if ($total_size < 1024) {
-            $size = $total_size . ' B';
-        } elseif ($total_size < 1024 * 1024) {
-            $size = round($total_size / 1024, 1) . ' KB';
-        } else {
-            $size = round($total_size / (1024 * 1024), 2) . ' MB';
-        }
-        
-        return ['count' => $count, 'size' => $size];
     }
 }
