@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.6.2
+ * Version: 1.6.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,11 +22,6 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * License: GPL v2 or later
  * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
- * 
- * CHANGELOG 1.6.1:
- * - Search Shortcode Komponente hinzugefügt
- * - Shortcode 'yadore_search' zu Asset-Loading hinzugefügt
- * - Dependency Injection für Search Shortcode korrigiert
  */
 
 declare(strict_types=1);
@@ -36,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.6.2');
+define('YAA_VERSION', '1.6.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -205,6 +200,8 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_precision'       => 'fuzzy',
             'yadore_default_limit'   => 9,
             'yadore_default_sort'    => 'rel_desc',
+            'search_default_sort'    => '', // Leer = yadore_default_sort verwenden
+            'yadore_featured_keywords' => '',
             
             // Amazon Settings
             'enable_amazon'          => 'yes',
@@ -480,2328 +477,77 @@ function yaa_plugin_action_links(array $links): array {
     array_unshift($links, $settings_link);
     return $links;
 }
-add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_links');
- 
+add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_links'); 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\frontend-grid.css 
  
-/**
- * Yadore-Amazon-API Frontend Grid Styles
- * Version 1.3.0 - PHP 8.3+ compatible
- * 
- * Features:
- * - CSS Custom Properties
- * - Responsive Grid
- * - Glassmorphism Design
- * - VERBESSERTES Image Error Placeholder Design (Anforderung 4)
- * - Accessibility Support
- * - Dark/Light Mode
- */
-
-/* =========================================
- * CSS CUSTOM PROPERTIES
- * ========================================= */
-.yaa-grid-container {
-    --yaa-primary: #ff00cc;
-    --yaa-secondary: #00ffff;
-    --yaa-amazon: #ff9900;
-    --yaa-custom: #4CAF50;
-    --yaa-dark-bg: #0a0a0a;
-    --yaa-glass-bg: rgba(255, 255, 255, 0.05);
-    --yaa-glass-border: rgba(255, 255, 255, 0.1);
-    --yaa-text-main: #ffffff;
-    --yaa-text-muted: #aaaaaa;
-    --yaa-columns-desktop: 3;
-    --yaa-columns-tablet: 2;
-    --yaa-columns-mobile: 1;
-}
-
-/* =========================================
- * GRID CONTAINER
- * ========================================= */
-.yaa-grid-container {
-    display: grid;
-    grid-template-columns: repeat(var(--yaa-columns-desktop), 1fr);
-    gap: 25px;
-    padding: 10px 0;
-    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-/* =========================================
- * PRODUCT CARD
- * ========================================= */
-.yaa-item {
-    background: var(--yaa-glass-bg);
-    border: 1px solid var(--yaa-glass-border);
-    border-bottom: 2px solid var(--yaa-primary);
-    border-radius: 12px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-    position: relative;
-}
-
-.yaa-item:nth-child(even) {
-    border-bottom-color: var(--yaa-secondary);
-}
-
-.yaa-item.yaa-amazon {
-    border-bottom-color: var(--yaa-amazon);
-}
-
-.yaa-item.yaa-custom {
-    border-bottom-color: var(--yaa-custom);
-}
-
-/* Hover Effects */
-.yaa-item:hover {
-    transform: translateY(-8px);
-    border-color: rgba(255, 255, 255, 0.3);
-    box-shadow: 
-        0 15px 40px rgba(0, 0, 0, 0.4),
-        0 0 30px color-mix(in srgb, var(--yaa-primary), transparent 80%);
-}
-
-.yaa-item:nth-child(even):hover {
-    box-shadow: 
-        0 15px 40px rgba(0, 0, 0, 0.4),
-        0 0 30px color-mix(in srgb, var(--yaa-secondary), transparent 80%);
-}
-
-.yaa-item.yaa-amazon:hover {
-    box-shadow: 
-        0 15px 40px rgba(0, 0, 0, 0.4),
-        0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 80%);
-}
-
-.yaa-item.yaa-custom:hover {
-    box-shadow: 
-        0 15px 40px rgba(0, 0, 0, 0.4),
-        0 0 30px color-mix(in srgb, var(--yaa-custom), transparent 80%);
-}
-
-/* =========================================
- * PRIME BADGE
- * ========================================= */
-.yaa-prime-badge {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    background: var(--yaa-amazon);
-    color: #000;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    z-index: 10;
-    box-shadow: 0 2px 8px rgba(255, 153, 0, 0.4);
-}
-
-/* =========================================
- * CUSTOM BADGE
- * ========================================= */
-.yaa-custom-badge {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    background: var(--yaa-custom);
-    color: #fff;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    z-index: 10;
-    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
-}
-
-/* When Prime AND Custom Badge exist */
-.yaa-item.yaa-custom .yaa-prime-badge {
-    top: 12px;
-    left: auto;
-    right: 12px;
-}
-
-/* =========================================
- * IMAGE WRAPPER
- * ========================================= */
-.yaa-image-wrapper {
-    position: relative;
-    width: 100%;
-    padding-top: 100%; /* 1:1 Aspect Ratio */
-    background: linear-gradient(180deg, 
-        rgba(10, 10, 10, 0.3) 0%, 
-        rgba(10, 10, 10, 0.6) 100%);
-    overflow: hidden;
-}
-
-.yaa-image-wrapper a {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-}
-
-.yaa-image-wrapper img {
-    width: 85%;
-    height: 85%;
-    object-fit: contain;
-    transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-    filter: brightness(0.95) saturate(0.95) drop-shadow(0 4px 20px rgba(0, 0, 0, 0.5));
-}
-
-/* Image loaded state */
-.yaa-image-wrapper img.yaa-img-loaded {
-    opacity: 1;
-}
-
-/* NEU: Image loading thumbnail state */
-.yaa-image-wrapper img.yaa-img-loading {
-    opacity: 0.7;
-    filter: blur(2px);
-}
-
-.yaa-item:hover .yaa-image-wrapper img {
-    transform: scale(1.08);
-    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 0, 204, 0.3));
-}
-
-.yaa-item.yaa-amazon:hover .yaa-image-wrapper img {
-    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 153, 0, 0.3));
-}
-
-.yaa-item.yaa-custom:hover .yaa-image-wrapper img {
-    filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(76, 175, 80, 0.3));
-}
-
-/* No Image Placeholder (static - when no URL provided) */
-.yaa-no-image {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
-}
-
-.yaa-no-image span {
-    font-size: 4rem;
-    opacity: 0.3;
-}
-
-/* =========================================
- * IMAGE ERROR / 404 PLACEHOLDER (JavaScript-generated)
- * VERBESSERTES DESIGN - Version 1.3.0
- * ========================================= */
-
-/* Wrapper with broken image */
-.yaa-image-wrapper.yaa-image-error {
-    background: linear-gradient(135deg, 
-        rgba(25, 25, 30, 0.9) 0%, 
-        rgba(15, 15, 20, 0.95) 100%);
-}
-
-/* CSS-only Placeholder (inserted by JS) - MODERNISIERT */
-.yaa-placeholder {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(145deg, 
-        rgba(30, 30, 35, 0.95) 0%, 
-        rgba(20, 20, 25, 0.98) 50%,
-        rgba(25, 25, 30, 0.95) 100%);
-    border-radius: inherit;
-    overflow: hidden;
-}
-
-/* Glassmorphism overlay effect */
-.yaa-placeholder::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 100px;
-    height: 100px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23666'/%3E%3Cstop offset='100%25' style='stop-color:%23444'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='15' y='20' width='70' height='50' rx='8' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Ccircle cx='32' cy='38' r='8' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3Cpath d='M18 58 L35 42 L50 52 L68 32 L82 48 L82 62 L18 62 Z' fill='%23333' fill-opacity='0.6'/%3E%3Cpath d='M50 72 L50 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M42 82 L58 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
-    opacity: 0.4;
-    transition: all 0.4s ease;
-}
-
-/* Subtle shimmer animation */
-.yaa-placeholder::after {
-    content: "Bild nicht verfügbar";
-    position: absolute;
-    bottom: 25%;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 0.65rem;
-    color: rgba(255, 255, 255, 0.35);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    white-space: nowrap;
-    font-weight: 500;
-    background: linear-gradient(90deg, 
-        rgba(255,255,255,0.2) 0%, 
-        rgba(255,255,255,0.4) 50%, 
-        rgba(255,255,255,0.2) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    animation: yaa-placeholder-shimmer 3s ease-in-out infinite;
-}
-
-@keyframes yaa-placeholder-shimmer {
-    0% { background-position: 200% center; }
-    100% { background-position: -200% center; }
-}
-
-/* Decorative corner accents */
-.yaa-placeholder .yaa-placeholder-corner {
-    position: absolute;
-    width: 20px;
-    height: 20px;
-    border-color: rgba(255, 255, 255, 0.1);
-    border-style: solid;
-    border-width: 0;
-}
-
-/* Hover effect on placeholder */
-.yaa-item:hover .yaa-placeholder::before {
-    opacity: 0.55;
-    transform: translate(-50%, -50%) scale(1.05);
-}
-
-.yaa-item:hover .yaa-placeholder::after {
-    color: rgba(255, 255, 255, 0.5);
-}
-
-/* =========================================
- * SOURCE-SPECIFIC PLACEHOLDER COLORS
- * Verbesserte farbliche Integration
- * ========================================= */
-
-/* Amazon Placeholder - Orange Akzent */
-.yaa-placeholder-amazon {
-    background: linear-gradient(145deg, 
-        rgba(40, 30, 20, 0.95) 0%, 
-        rgba(25, 20, 15, 0.98) 50%,
-        rgba(35, 25, 18, 0.95) 100%);
-    border-bottom: 2px solid rgba(255, 153, 0, 0.3);
-}
-
-.yaa-placeholder-amazon::before {
-    filter: sepia(50%) saturate(200%) hue-rotate(350deg) brightness(1.1);
-}
-
-.yaa-placeholder-amazon::after {
-    background: linear-gradient(90deg, 
-        rgba(255, 153, 0, 0.3) 0%, 
-        rgba(255, 180, 50, 0.5) 50%, 
-        rgba(255, 153, 0, 0.3) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-/* Custom Product Placeholder - Grüner Akzent */
-.yaa-placeholder-custom {
-    background: linear-gradient(145deg, 
-        rgba(20, 35, 25, 0.95) 0%, 
-        rgba(15, 25, 18, 0.98) 50%,
-        rgba(18, 30, 22, 0.95) 100%);
-    border-bottom: 2px solid rgba(76, 175, 80, 0.3);
-}
-
-.yaa-placeholder-custom::before {
-    filter: sepia(50%) saturate(200%) hue-rotate(80deg) brightness(1.1);
-}
-
-.yaa-placeholder-custom::after {
-    background: linear-gradient(90deg, 
-        rgba(76, 175, 80, 0.3) 0%, 
-        rgba(129, 199, 132, 0.5) 50%, 
-        rgba(76, 175, 80, 0.3) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-/* Yadore Placeholder - Magenta/Cyan Akzent */
-.yaa-placeholder-yadore {
-    background: linear-gradient(145deg, 
-        rgba(30, 20, 35, 0.95) 0%, 
-        rgba(20, 15, 25, 0.98) 50%,
-        rgba(25, 18, 30, 0.95) 100%);
-    border-bottom: 2px solid rgba(255, 0, 204, 0.3);
-}
-
-.yaa-placeholder-yadore::before {
-    filter: sepia(50%) saturate(250%) hue-rotate(280deg) brightness(1.1);
-}
-
-.yaa-placeholder-yadore::after {
-    background: linear-gradient(90deg, 
-        rgba(255, 0, 204, 0.3) 0%, 
-        rgba(0, 255, 255, 0.5) 50%, 
-        rgba(255, 0, 204, 0.3) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-/* =========================================
- * CONTENT SECTION
- * ========================================= */
-.yaa-content {
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    flex-grow: 1;
-    border-top: 1px solid var(--yaa-glass-border);
-}
-
-/* Title */
-.yaa-title {
-    font-family: 'Montserrat', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 700;
-    line-height: 1.4;
-    margin: 0 0 12px 0;
-    color: var(--yaa-text-main);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-height: 2.8em;
-}
-
-.yaa-title a {
-    color: var(--yaa-text-main);
-    text-decoration: none;
-    transition: all 0.3s ease;
-}
-
-.yaa-title a:hover {
-    color: var(--yaa-secondary);
-    text-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
-}
-
-.yaa-item.yaa-amazon .yaa-title a:hover {
-    color: var(--yaa-amazon);
-    text-shadow: 0 0 15px rgba(255, 153, 0, 0.5);
-}
-
-.yaa-item.yaa-custom .yaa-title a:hover {
-    color: var(--yaa-custom);
-    text-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
-}
-
-/* =========================================
- * DESCRIPTION
- * ========================================= */
-.yaa-description-wrapper {
-    position: relative;
-    margin-bottom: 15px;
-}
-
-.yaa-description {
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: var(--yaa-text-muted);
-    max-height: 4.8em;
-    overflow: hidden;
-    transition: max-height 0.4s ease-out;
-    position: relative;
-}
-
-.yaa-description::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2.4em;
-    background: linear-gradient(to bottom, transparent 0%, rgba(10, 10, 10, 0.9) 100%);
-    pointer-events: none;
-    transition: opacity 0.3s ease;
-}
-
-.yaa-description.expanded {
-    max-height: 500px;
-}
-
-.yaa-description.expanded::after {
-    opacity: 0;
-}
-
-/* Read More Button */
-.yaa-read-more {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--yaa-primary);
-    cursor: pointer;
-    margin-top: 8px;
-    padding: 5px 0;
-    border: none;
-    background: none;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: all 0.3s ease;
-}
-
-.yaa-read-more:hover {
-    color: var(--yaa-secondary);
-    text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
-}
-
-.yaa-read-more::after {
-    content: "▼";
-    font-size: 0.6rem;
-    transition: transform 0.3s ease;
-}
-
-.yaa-read-more.expanded::after {
-    transform: rotate(180deg);
-}
-
-.yaa-item.yaa-amazon .yaa-read-more {
-    color: var(--yaa-amazon);
-}
-
-.yaa-item.yaa-custom .yaa-read-more {
-    color: var(--yaa-custom);
-}
-
-.yaa-no-description {
-    font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.3);
-    font-style: italic;
-    margin-bottom: 15px;
-}
-
-/* =========================================
- * META & PRICE
- * ========================================= */
-.yaa-meta {
-    margin: 0 0 15px 0;
-}
-
-.yaa-price {
-    display: block;
-    font-family: 'Montserrat', sans-serif;
-    font-size: 1.6rem;
-    font-weight: 900;
-    background: linear-gradient(135deg, 
-        var(--yaa-primary) 0%, 
-        #ff66dd 50%, 
-        var(--yaa-secondary) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    animation: yaa-price-glow 3s ease-in-out infinite;
-    margin-bottom: 5px;
-}
-
-.yaa-item.yaa-amazon .yaa-price {
-    background: linear-gradient(135deg, 
-        var(--yaa-amazon) 0%, 
-        #ffb84d 50%, 
-        var(--yaa-amazon) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-.yaa-item.yaa-custom .yaa-price {
-    background: linear-gradient(135deg, 
-        var(--yaa-custom) 0%, 
-        #81C784 50%, 
-        var(--yaa-custom) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-@keyframes yaa-price-glow {
-    0%, 100% { background-position: 0% center; }
-    50% { background-position: 100% center; }
-}
-
-.yaa-merchant {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--yaa-text-muted);
-    font-weight: 600;
-}
-
-.yaa-merchant::before {
-    content: "via ";
-    color: var(--yaa-secondary);
-}
-
-.yaa-item.yaa-amazon .yaa-merchant::before {
-    color: var(--yaa-amazon);
-}
-
-.yaa-item.yaa-custom .yaa-merchant::before {
-    color: var(--yaa-custom);
-}
-
-/* =========================================
- * BUTTON
- * ========================================= */
-.yaa-button-wrapper {
-    margin-top: auto;
-}
-
-.yaa-button {
-    display: block;
-    width: 100%;
-    text-align: center;
-    background-color: transparent;
-    border: 2px solid var(--yaa-primary);
-    color: var(--yaa-primary);
-    padding: 14px 20px;
-    border-radius: 50px;
-    font-family: 'Montserrat', sans-serif;
-    font-size: 0.8rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-decoration: none;
-    cursor: pointer;
-    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-    box-sizing: border-box;
-}
-
-.yaa-button:hover {
-    background-color: var(--yaa-primary);
-    color: #000;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-primary), transparent 30%);
-    transform: translateY(-2px);
-    text-decoration: none;
-}
-
-/* Alternating Colors */
-.yaa-item:nth-child(even) .yaa-button {
-    border-color: var(--yaa-secondary);
-    color: var(--yaa-secondary);
-}
-
-.yaa-item:nth-child(even) .yaa-button:hover {
-    background-color: var(--yaa-secondary);
-    color: #000;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-secondary), transparent 30%);
-}
-
-/* Amazon Button */
-.yaa-item.yaa-amazon .yaa-button {
-    border-color: var(--yaa-amazon);
-    color: var(--yaa-amazon);
-}
-
-.yaa-item.yaa-amazon .yaa-button:hover {
-    background-color: var(--yaa-amazon);
-    color: #000;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-amazon), transparent 30%);
-}
-
-/* Custom Button */
-.yaa-item.yaa-custom .yaa-button {
-    border-color: var(--yaa-custom);
-    color: var(--yaa-custom);
-}
-
-.yaa-item.yaa-custom .yaa-button:hover {
-    background-color: var(--yaa-custom);
-    color: #fff;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--yaa-custom), transparent 30%);
-}
-
-/* =========================================
- * MESSAGE BOXES (Error, Empty, Loading)
- * ========================================= */
-.yaa-message {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 40px 20px;
-    background: var(--yaa-glass-bg);
-    border: 1px solid var(--yaa-glass-border);
-    border-radius: 12px;
-    text-align: center;
-    color: var(--yaa-text-muted);
-}
-
-.yaa-message .yaa-icon {
-    font-size: 3rem;
-    margin-bottom: 15px;
-    opacity: 0.6;
-}
-
-.yaa-message p {
-    margin: 0;
-    font-size: 1rem;
-    line-height: 1.5;
-}
-
-.yaa-error {
-    border-color: rgba(220, 53, 69, 0.3);
-    background: rgba(220, 53, 69, 0.1);
-}
-
-.yaa-error .yaa-icon {
-    color: #dc3545;
-}
-
-.yaa-empty {
-    border-color: rgba(255, 193, 7, 0.3);
-    background: rgba(255, 193, 7, 0.1);
-}
-
-.yaa-empty .yaa-icon {
-    color: #ffc107;
-}
-
-/* =========================================
- * LOADING STATE
- * ========================================= */
-.yaa-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 60px 20px;
-}
-
-.yaa-spinner {
-    width: 50px;
-    height: 50px;
-    border: 3px solid var(--yaa-glass-border);
-    border-top-color: var(--yaa-primary);
-    border-radius: 50%;
-    animation: yaa-spin 1s linear infinite;
-}
-
-@keyframes yaa-spin {
-    to { transform: rotate(360deg); }
-}
-
-/* =========================================
- * ACCESSIBILITY - Focus States
- * ========================================= */
-.yaa-button:focus,
-.yaa-read-more:focus,
-.yaa-title a:focus {
-    outline: 2px solid var(--yaa-primary);
-    outline-offset: 2px;
-}
-
-.yaa-item.yaa-amazon .yaa-button:focus,
-.yaa-item.yaa-amazon .yaa-title a:focus {
-    outline-color: var(--yaa-amazon);
-}
-
-.yaa-item.yaa-custom .yaa-button:focus,
-.yaa-item.yaa-custom .yaa-title a:focus {
-    outline-color: var(--yaa-custom);
-}
-
-/* Screen Reader Only Text */
-.screen-reader-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-}
-
-/* =========================================
- * RESPONSIVE BREAKPOINTS
- * ========================================= */
-
-/* Tablet (768px - 1023px) */
-@media (max-width: 1023px) {
-    .yaa-grid-container {
-        grid-template-columns: repeat(var(--yaa-columns-tablet), 1fr);
-        gap: 20px;
-    }
-    
-    .yaa-title {
-        font-size: 0.95rem;
-    }
-    
-    .yaa-price {
-        font-size: 1.4rem;
-    }
-    
-    .yaa-button {
-        padding: 12px 16px;
-        font-size: 0.75rem;
-    }
-}
-
-/* Mobile (< 768px) */
-@media (max-width: 767px) {
-    .yaa-grid-container {
-        grid-template-columns: repeat(var(--yaa-columns-mobile), 1fr);
-        gap: 15px;
-    }
-    
-    .yaa-item:hover {
-        transform: translateY(-4px);
-    }
-    
-    .yaa-content {
-        padding: 15px;
-    }
-    
-    .yaa-title {
-        font-size: 0.9rem;
-        min-height: auto;
-        -webkit-line-clamp: 3;
-    }
-    
-    .yaa-price {
-        font-size: 1.3rem;
-    }
-    
-    .yaa-description {
-        font-size: 0.8rem;
-    }
-    
-    .yaa-button {
-        padding: 12px 15px;
-        font-size: 0.7rem;
-        letter-spacing: 1px;
-    }
-    
-    .yaa-prime-badge,
-    .yaa-custom-badge {
-        font-size: 0.6rem;
-        padding: 3px 8px;
-    }
-    
-    .yaa-placeholder::before {
-        width: 70px;
-        height: 70px;
-    }
-    
-    .yaa-placeholder::after {
-        font-size: 0.55rem;
-        letter-spacing: 1.5px;
-    }
-}
-
-/* Small Mobile (< 480px) */
-@media (max-width: 479px) {
-    .yaa-grid-container {
-        gap: 12px;
-    }
-    
-    .yaa-content {
-        padding: 12px;
-    }
-    
-    .yaa-title {
-        font-size: 0.85rem;
-        margin-bottom: 8px;
-    }
-    
-    .yaa-price {
-        font-size: 1.2rem;
-    }
-    
-    .yaa-merchant {
-        font-size: 0.7rem;
-    }
-    
-    .yaa-button {
-        padding: 10px 12px;
-        font-size: 0.65rem;
-    }
-    
-    .yaa-placeholder::before {
-        width: 60px;
-        height: 60px;
-    }
-    
-    .yaa-placeholder::after {
-        font-size: 0.5rem;
-        bottom: 20%;
-    }
-}
-
-/* =========================================
- * PRINT STYLES
- * ========================================= */
-@media print {
-    .yaa-grid-container {
-        display: block;
-    }
-    
-    .yaa-item {
-        page-break-inside: avoid;
-        margin-bottom: 20px;
-        border: 1px solid #ccc;
-        box-shadow: none;
-        backdrop-filter: none;
-    }
-    
-    .yaa-item:hover {
-        transform: none;
-        box-shadow: none;
-    }
-    
-    .yaa-button {
-        background: #000 !important;
-        color: #fff !important;
-        border: none;
-    }
-    
-    .yaa-price {
-        color: #000 !important;
-        -webkit-text-fill-color: #000 !important;
-    }
-    
-    .yaa-placeholder {
-        background: #f5f5f5 !important;
-    }
-    
-    .yaa-placeholder::after {
-        color: #666 !important;
-        -webkit-text-fill-color: #666 !important;
-    }
-}
-
-/* =========================================
- * DARK/LIGHT MODE SUPPORT
- * ========================================= */
-
-/* Light Mode Override (wenn Theme hellen Hintergrund hat) */
-@media (prefers-color-scheme: light) {
-    .yaa-grid-container.yaa-light-mode {
-        --yaa-glass-bg: rgba(0, 0, 0, 0.03);
-        --yaa-glass-border: rgba(0, 0, 0, 0.1);
-        --yaa-text-main: #1a1a1a;
-        --yaa-text-muted: #666666;
-    }
-    
-    .yaa-grid-container.yaa-light-mode .yaa-item {
-        background: #fff;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-    
-    .yaa-grid-container.yaa-light-mode .yaa-description::after {
-        background: linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.9) 100%);
-    }
-}
-
-/* Forced Light Mode Class */
-.yaa-grid-container.yaa-theme-light {
-    --yaa-glass-bg: rgba(0, 0, 0, 0.03);
-    --yaa-glass-border: rgba(0, 0, 0, 0.1);
-    --yaa-text-main: #1a1a1a;
-    --yaa-text-muted: #666666;
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-item {
-    background: #fff;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-description::after {
-    background: linear-gradient(to bottom, transparent 0%, rgba(255, 255, 255, 0.9) 100%);
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-placeholder {
-    background: linear-gradient(145deg, 
-        rgba(245, 245, 248, 0.98) 0%, 
-        rgba(235, 235, 240, 0.98) 50%,
-        rgba(240, 240, 245, 0.98) 100%);
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-placeholder::before {
-    opacity: 0.3;
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-placeholder::after {
-    background: linear-gradient(90deg, 
-        rgba(100, 100, 100, 0.4) 0%, 
-        rgba(50, 50, 50, 0.6) 50%, 
-        rgba(100, 100, 100, 0.4) 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-/* =========================================
- * REDUCED MOTION SUPPORT
- * ========================================= */
-@media (prefers-reduced-motion: reduce) {
-    .yaa-item,
-    .yaa-button,
-    .yaa-image-wrapper img,
-    .yaa-description,
-    .yaa-read-more::after,
-    .yaa-placeholder::before {
-        transition: none;
-    }
-    
-    .yaa-item:hover {
-        transform: none;
-    }
-    
-    .yaa-item:hover .yaa-image-wrapper img {
-        transform: none;
-    }
-    
-    .yaa-price {
-        animation: none;
-    }
-    
-    .yaa-placeholder::after {
-        animation: none;
-    }
-    
-    .yaa-spinner {
-        animation: none;
-        border-top-color: var(--yaa-primary);
-        border-right-color: var(--yaa-primary);
-    }
-}
-/* =========================================
- * SHOP LOGO FALLBACK STYLES
- * Version 1.5.1 - Shop-Logo als Bild-Fallback
- * ========================================= */
-
-/* Shop-Logo als Fallback-Bild */
-.yaa-image-wrapper img.yaa-shop-logo-fallback {
-    width: 60% !important;
-    height: 60% !important;
-    object-fit: contain !important;
-    opacity: 0.9;
-    filter: brightness(1) saturate(1) drop-shadow(0 2px 10px rgba(0, 0, 0, 0.3));
-    transition: all 0.3s ease;
-}
-
-/* Hover-Effekt für Shop-Logo */
-.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
-    opacity: 1;
-    transform: scale(1.05);
-    filter: brightness(1.05) saturate(1.1) drop-shadow(0 4px 15px rgba(0, 0, 0, 0.4));
-}
-
-/* Hintergrund für Shop-Logo Container anpassen */
-.yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
-    background: linear-gradient(145deg, 
-        rgba(40, 40, 45, 0.95) 0%, 
-        rgba(30, 30, 35, 0.98) 50%,
-        rgba(35, 35, 40, 0.95) 100%);
-}
-
-/* Yadore-spezifischer Hintergrund für Shop-Logo */
-.yaa-item.yaa-yadore .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
-    background: linear-gradient(145deg, 
-        rgba(35, 25, 40, 0.95) 0%, 
-        rgba(25, 18, 30, 0.98) 50%,
-        rgba(30, 22, 35, 0.95) 100%);
-}
-
-/* Fallback für Browser ohne :has() Support */
-@supports not (selector(:has(*))) {
-    .yaa-image-wrapper img.yaa-shop-logo-fallback {
-        background: linear-gradient(145deg, 
-            rgba(40, 40, 45, 0.95) 0%, 
-            rgba(30, 30, 35, 0.98) 100%);
-        padding: 20%;
-        box-sizing: border-box;
-    }
-}
-
-/* Light Mode Support für Shop-Logo */
-.yaa-grid-container.yaa-theme-light .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
-    background: linear-gradient(145deg, 
-        rgba(250, 250, 252, 0.98) 0%, 
-        rgba(240, 240, 245, 0.98) 50%,
-        rgba(245, 245, 248, 0.98) 100%);
-}
-
-.yaa-grid-container.yaa-theme-light .yaa-image-wrapper img.yaa-shop-logo-fallback {
-    filter: brightness(1) saturate(1) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.15));
-}
-
-/* Responsive Anpassungen für Shop-Logo */
-@media (max-width: 767px) {
-    .yaa-image-wrapper img.yaa-shop-logo-fallback {
-        width: 50% !important;
-        height: 50% !important;
-    }
-}
-
-@media (max-width: 479px) {
-    .yaa-image-wrapper img.yaa-shop-logo-fallback {
-        width: 45% !important;
-        height: 45% !important;
-    }
-}
-
-/* Reduced Motion Support */
-@media (prefers-reduced-motion: reduce) {
-    .yaa-image-wrapper img.yaa-shop-logo-fallback {
-        transition: none;
-    }
-    
-    .yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
-        transform: none;
-    }
-}
- 
+.yaa-grid-container{--yaa-primary:#ff00cc;--yaa-secondary:#00ffff;--yaa-amazon:#ff9900;--yaa-custom:#4CAF50;--yaa-dark-bg:#0a0a0a;--yaa-glass-bg:rgba(255, 255, 255, 0.05);--yaa-glass-border:rgba(255, 255, 255, 0.1);--yaa-text-main:#ffffff;--yaa-text-muted:#aaaaaa;--yaa-columns-desktop:3;--yaa-columns-tablet:2;--yaa-columns-mobile:1}.yaa-grid-container{display:grid;grid-template-columns:repeat(var(--yaa-columns-desktop),1fr);gap:25px;padding:10px 0;font-family:'Montserrat',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.yaa-item{background:var(--yaa-glass-bg);border:1px solid var(--yaa-glass-border);border-bottom:2px solid var(--yaa-primary);border-radius:12px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);overflow:hidden;display:flex;flex-direction:column;transition:all 0.4s cubic-bezier(.25,.8,.25,1);position:relative}.yaa-item:nth-child(even){border-bottom-color:var(--yaa-secondary)}.yaa-item.yaa-amazon{border-bottom-color:var(--yaa-amazon)}.yaa-item.yaa-custom{border-bottom-color:var(--yaa-custom)}.yaa-item:hover{transform:translateY(-8px);border-color:rgb(255 255 255 / .3);box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-primary),transparent 80%)}.yaa-item:nth-child(even):hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-secondary),transparent 80%)}.yaa-item.yaa-amazon:hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-amazon),transparent 80%)}.yaa-item.yaa-custom:hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-custom),transparent 80%)}.yaa-prime-badge{position:absolute;top:12px;left:12px;background:var(--yaa-amazon);color:#000;font-size:.65rem;font-weight:700;padding:4px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;z-index:10;box-shadow:0 2px 8px rgb(255 153 0 / .4)}.yaa-custom-badge{position:absolute;top:12px;left:12px;background:var(--yaa-custom);color:#fff;font-size:.65rem;font-weight:700;padding:4px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;z-index:10;box-shadow:0 2px 8px rgb(76 175 80 / .4)}.yaa-item.yaa-custom .yaa-prime-badge{top:12px;left:auto;right:12px}.yaa-image-wrapper{position:relative;width:100%;padding-top:100%;background:linear-gradient(180deg,rgb(10 10 10 / .3) 0%,rgb(10 10 10 / .6) 100%);overflow:hidden}.yaa-image-wrapper a{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-decoration:none}.yaa-image-wrapper img{width:85%;height:85%;object-fit:contain;transition:all 0.5s cubic-bezier(.25,.8,.25,1);filter:brightness(.95) saturate(.95) drop-shadow(0 4px 20px rgb(0 0 0 / .5))}.yaa-image-wrapper img.yaa-img-loaded{opacity:1}.yaa-image-wrapper img.yaa-img-loading{opacity:.7;filter:blur(2px)}.yaa-item:hover .yaa-image-wrapper img{transform:scale(1.08);filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(255 0 204 / .3))}.yaa-item.yaa-amazon:hover .yaa-image-wrapper img{filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(255 153 0 / .3))}.yaa-item.yaa-custom:hover .yaa-image-wrapper img{filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(76 175 80 / .3))}.yaa-no-image{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,rgb(255 255 255 / .05) 0%,rgb(255 255 255 / .02) 100%)}.yaa-no-image span{font-size:4rem;opacity:.3}.yaa-image-wrapper.yaa-image-error{background:linear-gradient(135deg,rgb(25 25 30 / .9) 0%,rgb(15 15 20 / .95) 100%)}.yaa-placeholder{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(145deg,rgb(30 30 35 / .95) 0%,rgb(20 20 25 / .98) 50%,rgb(25 25 30 / .95) 100%);border-radius:inherit;overflow:hidden}.yaa-placeholder::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100px;height:100px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23666'/%3E%3Cstop offset='100%25' style='stop-color:%23444'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='15' y='20' width='70' height='50' rx='8' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Ccircle cx='32' cy='38' r='8' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3Cpath d='M18 58 L35 42 L50 52 L68 32 L82 48 L82 62 L18 62 Z' fill='%23333' fill-opacity='0.6'/%3E%3Cpath d='M50 72 L50 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M42 82 L58 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center;background-size:contain;opacity:.4;transition:all 0.4s ease}.yaa-placeholder::after{content:"Bild nicht verfügbar";position:absolute;bottom:25%;left:50%;transform:translateX(-50%);font-size:.65rem;color:rgb(255 255 255 / .35);text-transform:uppercase;letter-spacing:2px;white-space:nowrap;font-weight:500;background:linear-gradient(90deg,rgb(255 255 255 / .2) 0%,rgb(255 255 255 / .4) 50%,rgb(255 255 255 / .2) 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:#fff0;background-clip:text;animation:yaa-placeholder-shimmer 3s ease-in-out infinite}@keyframes yaa-placeholder-shimmer{0%{background-position:200% center}100%{background-position:-200% center}}.yaa-placeholder .yaa-placeholder-corner{position:absolute;width:20px;height:20px;border-color:rgb(255 255 255 / .1);border-style:solid;border-width:0}.yaa-item:hover .yaa-placeholder::before{opacity:.55;transform:translate(-50%,-50%) scale(1.05)}.yaa-item:hover .yaa-placeholder::after{color:rgb(255 255 255 / .5)}.yaa-placeholder-amazon{background:linear-gradient(145deg,rgb(40 30 20 / .95) 0%,rgb(25 20 15 / .98) 50%,rgb(35 25 18 / .95) 100%);border-bottom:2px solid rgb(255 153 0 / .3)}.yaa-placeholder-amazon::before{filter:sepia(50%) saturate(200%) hue-rotate(350deg) brightness(1.1)}.yaa-placeholder-amazon::after{background:linear-gradient(90deg,rgb(255 153 0 / .3) 0%,rgb(255 180 50 / .5) 50%,rgb(255 153 0 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-placeholder-custom{background:linear-gradient(145deg,rgb(20 35 25 / .95) 0%,rgb(15 25 18 / .98) 50%,rgb(18 30 22 / .95) 100%);border-bottom:2px solid rgb(76 175 80 / .3)}.yaa-placeholder-custom::before{filter:sepia(50%) saturate(200%) hue-rotate(80deg) brightness(1.1)}.yaa-placeholder-custom::after{background:linear-gradient(90deg,rgb(76 175 80 / .3) 0%,rgb(129 199 132 / .5) 50%,rgb(76 175 80 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-placeholder-yadore{background:linear-gradient(145deg,rgb(30 20 35 / .95) 0%,rgb(20 15 25 / .98) 50%,rgb(25 18 30 / .95) 100%);border-bottom:2px solid rgb(255 0 204 / .3)}.yaa-placeholder-yadore::before{filter:sepia(50%) saturate(250%) hue-rotate(280deg) brightness(1.1)}.yaa-placeholder-yadore::after{background:linear-gradient(90deg,rgb(255 0 204 / .3) 0%,rgb(0 255 255 / .5) 50%,rgb(255 0 204 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-content{padding:20px;display:flex;flex-direction:column;flex-grow:1;border-top:1px solid var(--yaa-glass-border)}.yaa-title{font-family:'Montserrat',sans-serif;font-size:1.05rem;font-weight:700;line-height:1.4;margin:0 0 12px 0;color:var(--yaa-text-main);text-transform:uppercase;letter-spacing:.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;min-height:2.8em}.yaa-title a{color:var(--yaa-text-main);text-decoration:none;transition:all 0.3s ease}.yaa-title a:hover{color:var(--yaa-secondary);text-shadow:0 0 15px rgb(0 255 255 / .5)}.yaa-item.yaa-amazon .yaa-title a:hover{color:var(--yaa-amazon);text-shadow:0 0 15px rgb(255 153 0 / .5)}.yaa-item.yaa-custom .yaa-title a:hover{color:var(--yaa-custom);text-shadow:0 0 15px rgb(76 175 80 / .5)}.yaa-description-wrapper{position:relative;margin-bottom:15px}.yaa-description{font-size:.85rem;line-height:1.6;color:var(--yaa-text-muted);max-height:4.8em;overflow:hidden;transition:max-height 0.4s ease-out;position:relative}.yaa-description::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2.4em;background:linear-gradient(to bottom,transparent 0%,rgb(10 10 10 / .9) 100%);pointer-events:none;transition:opacity 0.3s ease}.yaa-description.expanded{max-height:500px}.yaa-description.expanded::after{opacity:0}.yaa-read-more{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700;color:var(--yaa-primary);cursor:pointer;margin-top:8px;padding:5px 0;border:none;background:none;text-transform:uppercase;letter-spacing:1px;transition:all 0.3s ease}.yaa-read-more:hover{color:var(--yaa-secondary);text-shadow:0 0 10px rgb(0 255 255 / .5)}.yaa-read-more::after{content:"▼";font-size:.6rem;transition:transform 0.3s ease}.yaa-read-more.expanded::after{transform:rotate(180deg)}.yaa-item.yaa-amazon .yaa-read-more{color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-read-more{color:var(--yaa-custom)}.yaa-no-description{font-size:.8rem;color:rgb(255 255 255 / .3);font-style:italic;margin-bottom:15px}.yaa-meta{margin:0 0 15px 0}.yaa-price{display:block;font-family:'Montserrat',sans-serif;font-size:1.6rem;font-weight:900;background:linear-gradient(135deg,var(--yaa-primary) 0%,#ff66dd 50%,var(--yaa-secondary) 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:#fff0;background-clip:text;animation:yaa-price-glow 3s ease-in-out infinite;margin-bottom:5px}.yaa-item.yaa-amazon .yaa-price{background:linear-gradient(135deg,var(--yaa-amazon) 0%,#ffb84d 50%,var(--yaa-amazon) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-item.yaa-custom .yaa-price{background:linear-gradient(135deg,var(--yaa-custom) 0%,#81C784 50%,var(--yaa-custom) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}@keyframes yaa-price-glow{0%,100%{background-position:0% center}50%{background-position:100% center}}.yaa-merchant{font-size:.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--yaa-text-muted);font-weight:600}.yaa-merchant::before{content:"via ";color:var(--yaa-secondary)}.yaa-item.yaa-amazon .yaa-merchant::before{color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-merchant::before{color:var(--yaa-custom)}.yaa-button-wrapper{margin-top:auto}.yaa-button{display:block;width:100%;text-align:center;background-color:#fff0;border:2px solid var(--yaa-primary);color:var(--yaa-primary);padding:14px 20px;border-radius:50px;font-family:'Montserrat',sans-serif;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;text-decoration:none;cursor:pointer;transition:all 0.4s cubic-bezier(.25,.8,.25,1);box-sizing:border-box}.yaa-button:hover{background-color:var(--yaa-primary);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-primary),transparent 30%);transform:translateY(-2px);text-decoration:none}.yaa-item:nth-child(even) .yaa-button{border-color:var(--yaa-secondary);color:var(--yaa-secondary)}.yaa-item:nth-child(even) .yaa-button:hover{background-color:var(--yaa-secondary);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-secondary),transparent 30%)}.yaa-item.yaa-amazon .yaa-button{border-color:var(--yaa-amazon);color:var(--yaa-amazon)}.yaa-item.yaa-amazon .yaa-button:hover{background-color:var(--yaa-amazon);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-amazon),transparent 30%)}.yaa-item.yaa-custom .yaa-button{border-color:var(--yaa-custom);color:var(--yaa-custom)}.yaa-item.yaa-custom .yaa-button:hover{background-color:var(--yaa-custom);color:#fff;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-custom),transparent 30%)}.yaa-message{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;background:var(--yaa-glass-bg);border:1px solid var(--yaa-glass-border);border-radius:12px;text-align:center;color:var(--yaa-text-muted)}.yaa-message .yaa-icon{font-size:3rem;margin-bottom:15px;opacity:.6}.yaa-message p{margin:0;font-size:1rem;line-height:1.5}.yaa-error{border-color:rgb(220 53 69 / .3);background:rgb(220 53 69 / .1)}.yaa-error .yaa-icon{color:#dc3545}.yaa-empty{border-color:rgb(255 193 7 / .3);background:rgb(255 193 7 / .1)}.yaa-empty .yaa-icon{color:#ffc107}.yaa-loading{display:flex;align-items:center;justify-content:center;padding:60px 20px}.yaa-spinner{width:50px;height:50px;border:3px solid var(--yaa-glass-border);border-top-color:var(--yaa-primary);border-radius:50%;animation:yaa-spin 1s linear infinite}@keyframes yaa-spin{to{transform:rotate(360deg)}}.yaa-button:focus,.yaa-read-more:focus,.yaa-title a:focus{outline:2px solid var(--yaa-primary);outline-offset:2px}.yaa-item.yaa-amazon .yaa-button:focus,.yaa-item.yaa-amazon .yaa-title a:focus{outline-color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-button:focus,.yaa-item.yaa-custom .yaa-title a:focus{outline-color:var(--yaa-custom)}.screen-reader-text{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media (max-width:1023px){.yaa-grid-container{grid-template-columns:repeat(var(--yaa-columns-tablet),1fr);gap:20px}.yaa-title{font-size:.95rem}.yaa-price{font-size:1.4rem}.yaa-button{padding:12px 16px;font-size:.75rem}}@media (max-width:767px){.yaa-grid-container{grid-template-columns:repeat(var(--yaa-columns-mobile),1fr);gap:15px}.yaa-item:hover{transform:translateY(-4px)}.yaa-content{padding:15px}.yaa-title{font-size:.9rem;min-height:auto;-webkit-line-clamp:3}.yaa-price{font-size:1.3rem}.yaa-description{font-size:.8rem}.yaa-button{padding:12px 15px;font-size:.7rem;letter-spacing:1px}.yaa-prime-badge,.yaa-custom-badge{font-size:.6rem;padding:3px 8px}.yaa-placeholder::before{width:70px;height:70px}.yaa-placeholder::after{font-size:.55rem;letter-spacing:1.5px}}@media (max-width:479px){.yaa-grid-container{gap:12px}.yaa-content{padding:12px}.yaa-title{font-size:.85rem;margin-bottom:8px}.yaa-price{font-size:1.2rem}.yaa-merchant{font-size:.7rem}.yaa-button{padding:10px 12px;font-size:.65rem}.yaa-placeholder::before{width:60px;height:60px}.yaa-placeholder::after{font-size:.5rem;bottom:20%}}@media print{.yaa-grid-container{display:block}.yaa-item{page-break-inside:avoid;margin-bottom:20px;border:1px solid #ccc;box-shadow:none;backdrop-filter:none}.yaa-item:hover{transform:none;box-shadow:none}.yaa-button{background:#000!important;color:#fff!important;border:none}.yaa-price{color:#000!important;-webkit-text-fill-color:#000!important}.yaa-placeholder{background:#f5f5f5!important}.yaa-placeholder::after{color:#666!important;-webkit-text-fill-color:#666!important}}@media (prefers-color-scheme:light){.yaa-grid-container.yaa-light-mode{--yaa-glass-bg:rgba(0, 0, 0, 0.03);--yaa-glass-border:rgba(0, 0, 0, 0.1);--yaa-text-main:#1a1a1a;--yaa-text-muted:#666666}.yaa-grid-container.yaa-light-mode .yaa-item{background:#fff;box-shadow:0 2px 8px rgb(0 0 0 / .1)}.yaa-grid-container.yaa-light-mode .yaa-description::after{background:linear-gradient(to bottom,transparent 0%,rgb(255 255 255 / .9) 100%)}}.yaa-grid-container.yaa-theme-light{--yaa-glass-bg:rgba(0, 0, 0, 0.03);--yaa-glass-border:rgba(0, 0, 0, 0.1);--yaa-text-main:#1a1a1a;--yaa-text-muted:#666666}.yaa-grid-container.yaa-theme-light .yaa-item{background:#fff;box-shadow:0 2px 8px rgb(0 0 0 / .1)}.yaa-grid-container.yaa-theme-light .yaa-description::after{background:linear-gradient(to bottom,transparent 0%,rgb(255 255 255 / .9) 100%)}.yaa-grid-container.yaa-theme-light .yaa-placeholder{background:linear-gradient(145deg,rgb(245 245 248 / .98) 0%,rgb(235 235 240 / .98) 50%,rgb(240 240 245 / .98) 100%)}.yaa-grid-container.yaa-theme-light .yaa-placeholder::before{opacity:.3}.yaa-grid-container.yaa-theme-light .yaa-placeholder::after{background:linear-gradient(90deg,rgb(100 100 100 / .4) 0%,rgb(50 50 50 / .6) 50%,rgb(100 100 100 / .4) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}@media (prefers-reduced-motion:reduce){.yaa-item,.yaa-button,.yaa-image-wrapper img,.yaa-description,.yaa-read-more::after,.yaa-placeholder::before{transition:none}.yaa-item:hover{transform:none}.yaa-item:hover .yaa-image-wrapper img{transform:none}.yaa-price{animation:none}.yaa-placeholder::after{animation:none}.yaa-spinner{animation:none;border-top-color:var(--yaa-primary);border-right-color:var(--yaa-primary)}}.yaa-image-wrapper img.yaa-shop-logo-fallback{width:60%!important;height:60%!important;object-fit:contain!important;opacity:.9;filter:brightness(1) saturate(1) drop-shadow(0 2px 10px rgb(0 0 0 / .3));transition:all 0.3s ease}.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback{opacity:1;transform:scale(1.05);filter:brightness(1.05) saturate(1.1) drop-shadow(0 4px 15px rgb(0 0 0 / .4))}.yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(40 40 45 / .95) 0%,rgb(30 30 35 / .98) 50%,rgb(35 35 40 / .95) 100%)}.yaa-item.yaa-yadore .yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(35 25 40 / .95) 0%,rgb(25 18 30 / .98) 50%,rgb(30 22 35 / .95) 100%)}@supports not (selector(:has(*))){.yaa-image-wrapper img.yaa-shop-logo-fallback{background:linear-gradient(145deg,rgb(40 40 45 / .95) 0%,rgb(30 30 35 / .98) 100%);padding:20%;box-sizing:border-box}}.yaa-grid-container.yaa-theme-light .yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(250 250 252 / .98) 0%,rgb(240 240 245 / .98) 50%,rgb(245 245 248 / .98) 100%)}.yaa-grid-container.yaa-theme-light .yaa-image-wrapper img.yaa-shop-logo-fallback{filter:brightness(1) saturate(1) drop-shadow(0 2px 8px rgb(0 0 0 / .15))}@media (max-width:767px){.yaa-image-wrapper img.yaa-shop-logo-fallback{width:50%!important;height:50%!important}}@media (max-width:479px){.yaa-image-wrapper img.yaa-shop-logo-fallback{width:45%!important;height:45%!important}}@media (prefers-reduced-motion:reduce){.yaa-image-wrapper img.yaa-shop-logo-fallback{transition:none}.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback{transform:none}} 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\yaa-search.css 
  
-/**
- * Yadore Interaktive Produktsuche - Styles
- * Mit Initial-Produkten Support
- * 
- * @package Yadore_Amazon_API
- * @since 1.6.0
- */
-
-/* Container */
-.yadore-search-container {
-    --yadore-primary: #2563eb;
-    --yadore-primary-hover: #1d4ed8;
-    --yadore-text: #1f2937;
-    --yadore-text-muted: #6b7280;
-    --yadore-border: #e5e7eb;
-    --yadore-bg: #ffffff;
-    --yadore-bg-hover: #f9fafb;
-    --yadore-radius: 8px;
-    --yadore-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    --yadore-shadow-lg: 0 4px 6px -1px rgba(0,0,0,0.1);
-    
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 100%;
-    margin: 0 auto;
-}
-
-/* =====================
-   Suchformular
-   ===================== */
-.yadore-search-form {
-    margin-bottom: 1.5rem;
-}
-
-.yadore-search-input-wrapper {
-    display: flex;
-    gap: 0.5rem;
-    max-width: 600px;
-}
-
-.yadore-search-input {
-    flex: 1;
-    padding: 0.875rem 1rem;
-    font-size: 1rem;
-    border: 2px solid var(--yadore-border);
-    border-radius: var(--yadore-radius);
-    background: var(--yadore-bg);
-    color: var(--yadore-text);
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.yadore-search-input:focus {
-    outline: none;
-    border-color: var(--yadore-primary);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.yadore-search-input::placeholder {
-    color: var(--yadore-text-muted);
-}
-
-.yadore-search-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.875rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #fff;
-    background: var(--yadore-primary);
-    border: none;
-    border-radius: var(--yadore-radius);
-    cursor: pointer;
-    transition: background-color 0.2s, transform 0.1s;
-    min-width: 120px;
-}
-
-.yadore-search-button:hover:not(:disabled) {
-    background: var(--yadore-primary-hover);
-}
-
-.yadore-search-button:active:not(:disabled) {
-    transform: scale(0.98);
-}
-
-.yadore-search-button:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-}
-
-.yadore-search-spinner {
-    display: inline-flex;
-}
-
-.yadore-spinner-icon {
-    width: 20px;
-    height: 20px;
-}
-
-/* =====================
-   Status-Meldungen
-   ===================== */
-.yadore-search-status {
-    padding: 1rem;
-    margin-bottom: 1rem;
-    border-radius: var(--yadore-radius);
-    text-align: center;
-}
-
-.yadore-status-loading {
-    background: #eff6ff;
-    color: #1e40af;
-}
-
-.yadore-status-error {
-    background: #fef2f2;
-    color: #991b1b;
-}
-
-.yadore-status-empty {
-    background: #fefce8;
-    color: #854d0e;
-}
-
-.yadore-status-info {
-    background: #f3f4f6;
-    color: var(--yadore-text-muted);
-}
-
-/* =====================
-   Initial-Produkte
-   ===================== */
-.yadore-initial-products {
-    margin-bottom: 2rem;
-}
-
-.yadore-initial-header {
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--yadore-border);
-}
-
-.yadore-initial-title {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--yadore-text);
-}
-
-/* =====================
-   Such-Ergebnisse Header
-   ===================== */
-.yadore-search-results-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--yadore-border);
-}
-
-.yadore-search-results-info {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-    color: var(--yadore-text-muted);
-}
-
-.yadore-search-results-count {
-    font-weight: 600;
-    color: var(--yadore-text);
-}
-
-/* Reset-Button */
-.yadore-reset-button {
-    padding: 0.5rem 1rem;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--yadore-primary);
-    background: transparent;
-    border: 1px solid var(--yadore-primary);
-    border-radius: var(--yadore-radius);
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.yadore-reset-button:hover {
-    background: var(--yadore-primary);
-    color: #fff;
-}
-
-/* =====================
-   Produkt-Grid
-   ===================== */
-.yadore-search-results-grid {
-    display: grid;
-    gap: 1.5rem;
-}
-
-.yadore-columns-2 { grid-template-columns: repeat(2, 1fr); }
-.yadore-columns-3 { grid-template-columns: repeat(3, 1fr); }
-.yadore-columns-4 { grid-template-columns: repeat(4, 1fr); }
-
-/* =====================
-   Produkt-Karte
-   ===================== */
-.yadore-product-card {
-    position: relative;
-    background: var(--yadore-bg);
-    border: 1px solid var(--yadore-border);
-    border-radius: var(--yadore-radius);
-    overflow: hidden;
-    transition: box-shadow 0.2s, transform 0.2s;
-}
-
-.yadore-product-card:hover {
-    box-shadow: var(--yadore-shadow-lg);
-    transform: translateY(-2px);
-}
-
-.yadore-product-link {
-    display: block;
-    text-decoration: none;
-    color: inherit;
-}
-
-/* Source Badge */
-.yadore-product-source {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    z-index: 2;
-}
-
-.yadore-source-yadore {
-    background: #10b981; /* Grün */
-}
-
-.yadore-source-amazon {
-    background: #f59e0b; /* Orange/Amazon */
-}
-
-/* Produkt-Bild */
-.yadore-product-image {
-    position: relative;
-    padding-top: 100%;
-    background: #f9fafb;
-    overflow: hidden;
-}
-
-.yadore-product-image img {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    padding: 1rem;
-    transition: transform 0.3s;
-}
-
-.yadore-product-card:hover .yadore-product-image img {
-    transform: scale(1.05);
-}
-
-.yadore-product-image.yadore-no-image,
-.yadore-product-image.yadore-image-error {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #d1d5db;
-}
-
-.yadore-product-image.yadore-no-image svg,
-.yadore-product-image.yadore-image-error svg {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 48px;
-    height: 48px;
-}
-
-.yadore-product-image.yadore-image-error img {
-    display: none;
-}
-
-/* Produkt-Inhalt */
-.yadore-product-content {
-    padding: 1rem;
-}
-
-.yadore-product-title {
-    margin: 0 0 0.5rem;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: var(--yadore-text);
-    line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.yadore-product-merchant {
-    font-size: 0.8rem;
-    color: var(--yadore-text-muted);
-    margin-bottom: 0.5rem;
-}
-
-.yadore-product-price {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--yadore-primary);
-    margin-bottom: 0.75rem;
-}
-
-.yadore-product-cta {
-    display: inline-block;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--yadore-primary);
-    transition: transform 0.2s;
-}
-
-.yadore-product-card:hover .yadore-product-cta {
-    transform: translateX(4px);
-}
-
-/* =====================
-   Animationen
-   ===================== */
-@keyframes yadore-fade-in {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.yadore-search-results .yadore-product-card {
-    animation: yadore-fade-in 0.3s ease forwards;
-}
-
-.yadore-search-results .yadore-product-card:nth-child(1) { animation-delay: 0.05s; }
-.yadore-search-results .yadore-product-card:nth-child(2) { animation-delay: 0.1s; }
-.yadore-search-results .yadore-product-card:nth-child(3) { animation-delay: 0.15s; }
-.yadore-search-results .yadore-product-card:nth-child(4) { animation-delay: 0.2s; }
-.yadore-search-results .yadore-product-card:nth-child(5) { animation-delay: 0.25s; }
-.yadore-search-results .yadore-product-card:nth-child(6) { animation-delay: 0.3s; }
-
-/* =====================
-   Responsive
-   ===================== */
-@media (max-width: 768px) {
-    .yadore-search-input-wrapper {
-        flex-direction: column;
-    }
-    
-    .yadore-search-button {
-        width: 100%;
-    }
-    
-    .yadore-columns-3,
-    .yadore-columns-4 {
-        grid-template-columns: repeat(2, 1fr);
-    }
-    
-    .yadore-search-results-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    
-    .yadore-reset-button {
-        width: 100%;
-        text-align: center;
-    }
-}
-
-@media (max-width: 480px) {
-    .yadore-columns-2,
-    .yadore-columns-3,
-    .yadore-columns-4 {
-        grid-template-columns: 1fr;
-    }
-    
-    .yadore-search-input {
-        padding: 0.75rem;
-    }
-    
-    .yadore-search-button {
-        padding: 0.75rem 1rem;
-    }
-    
-    .yadore-initial-title {
-        font-size: 1.1rem;
-    }
-}
-
-/* =====================
-   Dark Mode Support
-   ===================== */
-@media (prefers-color-scheme: dark) {
-    .yadore-search-container {
-        --yadore-text: #f3f4f6;
-        --yadore-text-muted: #9ca3af;
-        --yadore-border: #374151;
-        --yadore-bg: #1f2937;
-        --yadore-bg-hover: #374151;
-    }
-    
-    .yadore-product-image {
-        background: #374151;
-    }
-    
-    .yadore-status-loading {
-        background: #1e3a5f;
-        color: #93c5fd;
-    }
-    
-    .yadore-status-error {
-        background: #450a0a;
-        color: #fca5a5;
-    }
-    
-    .yadore-status-empty {
-        background: #422006;
-        color: #fcd34d;
-    }
-    
-    .yadore-status-info {
-        background: #374151;
-        color: #9ca3af;
-    }
-}
- 
+.yadore-search-container{--yadore-primary:#2563eb;--yadore-primary-hover:#1d4ed8;--yadore-text:#1f2937;--yadore-text-muted:#6b7280;--yadore-border:#e5e7eb;--yadore-bg:#ffffff;--yadore-bg-hover:#f9fafb;--yadore-radius:8px;--yadore-shadow:0 1px 3px rgba(0,0,0,0.1);--yadore-shadow-lg:0 4px 6px -1px rgba(0,0,0,0.1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:100%;margin:0 auto}.yadore-search-form{margin-bottom:1.5rem}.yadore-search-input-wrapper{display:flex;gap:.5rem;max-width:600px}.yadore-search-input{flex:1;padding:.875rem 1rem;font-size:1rem;border:2px solid var(--yadore-border);border-radius:var(--yadore-radius);background:var(--yadore-bg);color:var(--yadore-text);transition:border-color 0.2s,box-shadow 0.2s}.yadore-search-input:focus{outline:none;border-color:var(--yadore-primary);box-shadow:0 0 0 3px rgb(37 99 235 / .1)}.yadore-search-input::placeholder{color:var(--yadore-text-muted)}.yadore-search-button{display:inline-flex;align-items:center;justify-content:center;padding:.875rem 1.5rem;font-size:1rem;font-weight:600;color:#fff;background:var(--yadore-primary);border:none;border-radius:var(--yadore-radius);cursor:pointer;transition:background-color 0.2s,transform 0.1s;min-width:120px}.yadore-search-button:hover:not(:disabled){background:var(--yadore-primary-hover)}.yadore-search-button:active:not(:disabled){transform:scale(.98)}.yadore-search-button:disabled{opacity:.7;cursor:not-allowed}.yadore-search-spinner{display:inline-flex}.yadore-spinner-icon{width:20px;height:20px}.yadore-search-status{padding:1rem;margin-bottom:1rem;border-radius:var(--yadore-radius);text-align:center}.yadore-status-loading{background:#eff6ff;color:#1e40af}.yadore-status-error{background:#fef2f2;color:#991b1b}.yadore-status-empty{background:#fefce8;color:#854d0e}.yadore-status-info{background:#f3f4f6;color:var(--yadore-text-muted)}.yadore-initial-products{margin-bottom:2rem}.yadore-initial-header{margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--yadore-border)}.yadore-initial-title{margin:0;font-size:1.25rem;font-weight:600;color:var(--yadore-text)}.yadore-search-results-header{display:flex;flex-wrap:wrap;align-items:center;gap:1rem;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--yadore-border)}.yadore-search-results-info{display:flex;gap:.5rem;font-size:.9rem;color:var(--yadore-text-muted)}.yadore-search-results-count{font-weight:600;color:var(--yadore-text)}.yadore-reset-button{padding:.5rem 1rem;font-size:.85rem;font-weight:500;color:var(--yadore-primary);background:#fff0;border:1px solid var(--yadore-primary);border-radius:var(--yadore-radius);cursor:pointer;transition:all 0.2s}.yadore-reset-button:hover{background:var(--yadore-primary);color:#fff}.yadore-search-results-grid{display:grid;gap:1.5rem}.yadore-columns-2{grid-template-columns:repeat(2,1fr)}.yadore-columns-3{grid-template-columns:repeat(3,1fr)}.yadore-columns-4{grid-template-columns:repeat(4,1fr)}.yadore-product-card{position:relative;background:var(--yadore-bg);border:1px solid var(--yadore-border);border-radius:var(--yadore-radius);overflow:hidden;transition:box-shadow 0.2s,transform 0.2s}.yadore-product-card:hover{box-shadow:var(--yadore-shadow-lg);transform:translateY(-2px)}.yadore-product-link{display:block;text-decoration:none;color:inherit}.yadore-product-source{position:absolute;top:.5rem;right:.5rem;width:8px;height:8px;border-radius:50%;z-index:2}.yadore-source-yadore{background:#10b981}.yadore-source-amazon{background:#f59e0b}.yadore-product-image{position:relative;padding-top:100%;background:#f9fafb;overflow:hidden}.yadore-product-image img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;padding:1rem;transition:transform 0.3s}.yadore-product-card:hover .yadore-product-image img{transform:scale(1.05)}.yadore-product-image.yadore-no-image,.yadore-product-image.yadore-image-error{display:flex;align-items:center;justify-content:center;color:#d1d5db}.yadore-product-image.yadore-no-image svg,.yadore-product-image.yadore-image-error svg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:48px;height:48px}.yadore-product-image.yadore-image-error img{display:none}.yadore-product-content{padding:1rem}.yadore-product-title{margin:0 0 .5rem;font-size:.95rem;font-weight:600;color:var(--yadore-text);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.yadore-product-merchant{font-size:.8rem;color:var(--yadore-text-muted);margin-bottom:.5rem}.yadore-product-price{font-size:1.1rem;font-weight:700;color:var(--yadore-primary);margin-bottom:.75rem}.yadore-product-cta{display:inline-block;font-size:.85rem;font-weight:600;color:var(--yadore-primary);transition:transform 0.2s}.yadore-product-card:hover .yadore-product-cta{transform:translateX(4px)}@keyframes yadore-fade-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.yadore-search-results .yadore-product-card{animation:yadore-fade-in 0.3s ease forwards}.yadore-search-results .yadore-product-card:nth-child(1){animation-delay:0.05s}.yadore-search-results .yadore-product-card:nth-child(2){animation-delay:0.1s}.yadore-search-results .yadore-product-card:nth-child(3){animation-delay:0.15s}.yadore-search-results .yadore-product-card:nth-child(4){animation-delay:0.2s}.yadore-search-results .yadore-product-card:nth-child(5){animation-delay:0.25s}.yadore-search-results .yadore-product-card:nth-child(6){animation-delay:0.3s}@media (max-width:768px){.yadore-search-input-wrapper{flex-direction:column}.yadore-search-button{width:100%}.yadore-columns-3,.yadore-columns-4{grid-template-columns:repeat(2,1fr)}.yadore-search-results-header{flex-direction:column;align-items:flex-start}.yadore-reset-button{width:100%;text-align:center}}@media (max-width:480px){.yadore-columns-2,.yadore-columns-3,.yadore-columns-4{grid-template-columns:1fr}.yadore-search-input{padding:.75rem}.yadore-search-button{padding:.75rem 1rem}.yadore-initial-title{font-size:1.1rem}}@media (prefers-color-scheme:dark){.yadore-search-container{--yadore-text:#f3f4f6;--yadore-text-muted:#9ca3af;--yadore-border:#374151;--yadore-bg:#1f2937;--yadore-bg-hover:#374151}.yadore-product-image{background:#374151}.yadore-status-loading{background:#1e3a5f;color:#93c5fd}.yadore-status-error{background:#450a0a;color:#fca5a5}.yadore-status-empty{background:#422006;color:#fcd34d}.yadore-status-info{background:#374151;color:#9ca3af}} 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\frontend-grid.js 
  
-/**
- * Yadore-Amazon-API Frontend JavaScript
- * Version 1.5.1 - Mit Shop-Logo Fallback
- * PHP 8.3+ compatible
- * 
- * Features:
- * - Read More/Less Toggle
- * - Lazy Load Fallback
- * - Accessibility Enhancements
- * - Image 404 Error Handling with extended Fallback Chain
- * - Server-seitiger Image Proxy
- * - NEU: Shop-Logo als Fallback vor Placeholder
- * - Public API
- * 
- * Fallback-Kette:
- * 1. Original Image → Error
- * 2. Thumbnail (data-thumbnail) → Error
- * 3. Server-seitiger Proxy (data-proxy-src) → Error
- * 4. Shop-Logo (data-shop-logo) → Error (NEU)
- * 5. CSS Placeholder
- */
-
-(function() {
-    'use strict';
-
-    /**
-     * Initialize when DOM is ready
-     */
-    document.addEventListener('DOMContentLoaded', function() {
-        initReadMoreButtons();
-        initLazyLoadImages();
-        initAccessibilityEnhancements();
-        initImageErrorHandling();
-    });
-
-    /**
-     * Initialize read more/less toggle buttons
-     */
-    function initReadMoreButtons() {
-        var buttons = document.querySelectorAll('.yaa-read-more');
-        
-        buttons.forEach(function(button) {
-            button.addEventListener('click', handleReadMoreClick);
-            button.addEventListener('keydown', handleReadMoreKeydown);
-        });
-    }
-
-    /**
-     * Handle read more button click
-     * @param {Event} event
-     */
-    function handleReadMoreClick(event) {
-        event.preventDefault();
-        
-        var button = event.currentTarget;
-        var targetId = button.getAttribute('data-target');
-        var description = document.getElementById('desc-' + targetId);
-        
-        if (!description) {
-            return;
-        }
-        
-        toggleDescription(description, button);
-    }
-
-    /**
-     * Handle keyboard navigation for read more
-     * @param {KeyboardEvent} event
-     */
-    function handleReadMoreKeydown(event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            handleReadMoreClick(event);
-        }
-    }
-
-    /**
-     * Toggle description expanded state
-     * @param {HTMLElement} description
-     * @param {HTMLElement} button
-     */
-    function toggleDescription(description, button) {
-        var isExpanded = description.classList.contains('expanded');
-        var expandText = button.getAttribute('data-expand-text') || 'mehr lesen';
-        var collapseText = button.getAttribute('data-collapse-text') || 'weniger';
-        
-        if (isExpanded) {
-            description.classList.remove('expanded');
-            button.classList.remove('expanded');
-            button.textContent = expandText;
-            button.setAttribute('aria-expanded', 'false');
-        } else {
-            description.classList.add('expanded');
-            button.classList.add('expanded');
-            button.textContent = collapseText;
-            button.setAttribute('aria-expanded', 'true');
-        }
-    }
-
-    /**
-     * Initialize lazy loading for images
-     * Fallback for browsers without native lazy loading
-     */
-    function initLazyLoadImages() {
-        // Check if native lazy loading is supported
-        if ('loading' in HTMLImageElement.prototype) {
-            return; // Native support, no need for JS
-        }
-
-        // Fallback for older browsers
-        var images = document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');
-        
-        if (images.length === 0) {
-            return;
-        }
-
-        // Use IntersectionObserver if available
-        if ('IntersectionObserver' in window) {
-            var imageObserver = new IntersectionObserver(function(entries, observer) {
-                entries.forEach(function(entry) {
-                    if (entry.isIntersecting) {
-                        var image = entry.target;
-                        if (image.dataset.src) {
-                            image.src = image.dataset.src;
-                            image.removeAttribute('data-src');
-                        }
-                        observer.unobserve(image);
-                    }
-                });
-            }, {
-                rootMargin: '50px 0px',
-                threshold: 0.01
-            });
-
-            images.forEach(function(image) {
-                imageObserver.observe(image);
-            });
-        }
-    }
-
-    /**
-     * Initialize image error handling for 404/broken images
-     */
-    function initImageErrorHandling() {
-        var images = document.querySelectorAll('.yaa-image-wrapper img');
-        
-        images.forEach(function(img) {
-            // Mark image as not yet processed for fallback
-            if (!img.hasAttribute('data-fallback-attempted')) {
-                img.setAttribute('data-fallback-attempted', 'false');
-            }
-            
-            // Prüfe auf leeres src mit vorhandener Alternative
-            var currentSrc = img.getAttribute('src') || '';
-            var proxySrc = img.getAttribute('data-proxy-src') || '';
-            var originalSrc = img.getAttribute('data-original-src') || '';
-            
-            // Wenn src leer ist aber Alternativen existieren, sofort laden
-            if (currentSrc === '' || currentSrc === window.location.href) {
-                if (proxySrc !== '') {
-                    if (window.console) {
-                        console.log('YAA: Empty src detected, using proxy:', proxySrc);
-                    }
-                    img.setAttribute('data-fallback-attempted', 'proxy');
-                    img.src = proxySrc;
-                    return;
-                } else if (originalSrc !== '') {
-                    if (window.console) {
-                        console.log('YAA: Empty src detected, using original:', originalSrc);
-                    }
-                    img.setAttribute('data-fallback-attempted', 'original');
-                    img.src = originalSrc;
-                    return;
-                }
-            }
-            
-            // Handle images that are already broken (cached or immediate 404)
-            if (img.complete) {
-                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                    attemptImageFallback(img);
-                } else {
-                    // Image loaded successfully
-                    img.classList.add('yaa-img-loaded');
-                }
-            }
-            
-            // Handle future load events
-            img.addEventListener('load', function() {
-                img.classList.add('yaa-img-loaded');
-                img.classList.remove('yaa-img-loading');
-            });
-            
-            // Handle future errors (async loading)
-            img.addEventListener('error', function() {
-                attemptImageFallback(img);
-            });
-        });
-    }
-
-    /**
-     * Attempt image fallback chain
-     * 
-     * Erweiterte Fallback-Reihenfolge (Version 1.5.1):
-     * 1. Original image (already failed)
-     * 2. Try thumbnail if available (data-thumbnail)
-     * 3. Try server-side proxy (data-proxy-src)
-     * 4. Try shop logo (data-shop-logo) - NEU
-     * 5. Fall back to CSS placeholder
-     * 
-     * @param {HTMLImageElement} img
-     */
-    function attemptImageFallback(img) {
-        var wrapper = img.closest('.yaa-image-wrapper');
-        
-        if (!wrapper) {
-            return;
-        }
-        
-        // Referrer-Policy setzen um Hotlink-Protection zu umgehen
-        if (!img.hasAttribute('referrerpolicy')) {
-            img.setAttribute('referrerpolicy', 'no-referrer');
-        }
-        
-        // Get fallback state
-        var fallbackAttempted = img.getAttribute('data-fallback-attempted');
-        var thumbnailUrl = img.getAttribute('data-thumbnail');
-        var originalSrc = img.getAttribute('data-original-src') || img.src;
-        var shopLogoUrl = img.getAttribute('data-shop-logo'); // NEU
-        
-        // Store original src on first attempt
-        if (!img.hasAttribute('data-original-src')) {
-            img.setAttribute('data-original-src', img.src);
-        }
-        
-        // ========================================
-        // ERWEITERTE FALLBACK CHAIN
-        // ========================================
-        
-        // Step 1: If we haven't tried thumbnail yet and it exists, try it
-        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
-            if (window.console) {
-                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'thumbnail');
-            img.classList.add('yaa-img-loading');
-            
-            // Try loading the thumbnail
-            img.src = thumbnailUrl;
-            return;
-        }
-        
-        // Step 2: If thumbnail failed or doesn't exist, try proxy
-        if (fallbackAttempted === 'thumbnail' || (fallbackAttempted === 'false' && !thumbnailUrl)) {
-            // Check if proxy is enabled and we have a proxy URL
-            if (isProxyEnabled()) {
-                var proxyUrl = img.getAttribute('data-proxy-src') || getProxyUrl(originalSrc);
-                
-                if (proxyUrl && proxyUrl !== '') {
-                    if (window.console) {
-                        console.log('YAA: Trying server-side proxy for:', originalSrc);
-                    }
-                    
-                    img.setAttribute('data-fallback-attempted', 'proxy');
-                    img.classList.add('yaa-img-loading');
-                    img.src = proxyUrl;
-                    return;
-                }
-            }
-            
-            // No proxy available, skip to shop logo
-            img.setAttribute('data-fallback-attempted', 'proxy-skipped');
-        }
-        
-        // Step 3: NEU - If proxy failed or not available, try shop logo
-        if (fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
-            (fallbackAttempted === 'false' && !thumbnailUrl && !isProxyEnabled())) {
-            
-            if (shopLogoUrl && shopLogoUrl !== '') {
-                if (window.console) {
-                    console.log('YAA: Trying shop logo as fallback:', shopLogoUrl);
-                }
-                
-                img.setAttribute('data-fallback-attempted', 'shop-logo');
-                img.classList.add('yaa-img-loading');
-                img.classList.add('yaa-shop-logo-fallback');
-                img.src = shopLogoUrl;
-                return;
-            }
-        }
-        
-        // Step 4: All fallbacks failed, show CSS placeholder
-        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || 
-            fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
-            fallbackAttempted === 'shop-logo') {
-            
-            if (window.console) {
-                var reason = 'Unknown';
-                if (fallbackAttempted === 'shop-logo') {
-                    reason = 'Shop logo also failed';
-                } else if (fallbackAttempted === 'proxy') {
-                    reason = 'Proxy failed, no shop logo available';
-                } else if (fallbackAttempted === 'thumbnail') {
-                    reason = 'Thumbnail failed, no proxy/shop logo available';
-                } else {
-                    reason = 'No fallbacks available';
-                }
-                console.warn('YAA: ' + reason + ', showing placeholder for:', originalSrc);
-            }
-            
-            img.setAttribute('data-fallback-attempted', 'complete');
-            showCSSPlaceholder(img, wrapper);
-        }
-    }
-
-    /**
-     * Check if image proxy is enabled
-     * @returns {boolean}
-     */
-    function isProxyEnabled() {
-        // Check global config from wp_localize_script
-        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.enabled) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Generate proxy URL for an image
-     * @param {string} originalUrl - The original image URL
-     * @returns {string|null} - Proxy URL or null if not available
-     */
-    function getProxyUrl(originalUrl) {
-        if (!originalUrl || originalUrl === '') {
-            return null;
-        }
-        
-        // Don't proxy local URLs
-        if (originalUrl.indexOf(window.location.origin) === 0) {
-            return null;
-        }
-        
-        // Don't proxy data URLs
-        if (originalUrl.indexOf('data:') === 0) {
-            return null;
-        }
-        
-        // Don't proxy already proxied URLs
-        if (originalUrl.indexOf('action=yaa_proxy_image') !== -1) {
-            return null;
-        }
-        
-        // Build proxy URL
-        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.endpoint) {
-            var params = new URLSearchParams();
-            params.append('action', window.yaaProxy.action || 'yaa_proxy_image');
-            params.append('url', originalUrl);
-            
-            return window.yaaProxy.endpoint + '?' + params.toString();
-        }
-        
-        return null;
-    }
-
-    /**
-     * Show CSS placeholder after all fallbacks failed
-     * 
-     * @param {HTMLImageElement} img
-     * @param {HTMLElement} wrapper
-     */
-    function showCSSPlaceholder(img, wrapper) {
-        // Prevent multiple executions
-        if (wrapper.classList.contains('yaa-image-error')) {
-            return;
-        }
-        
-        // Mark wrapper as having an error
-        wrapper.classList.add('yaa-image-error');
-        
-        // Hide the broken image
-        img.style.display = 'none';
-        img.style.visibility = 'hidden';
-        img.classList.remove('yaa-img-loading');
-        img.classList.remove('yaa-shop-logo-fallback');
-        
-        // Check if placeholder already exists
-        if (wrapper.querySelector('.yaa-placeholder')) {
-            return;
-        }
-        
-        // Create CSS placeholder element
-        var placeholder = document.createElement('div');
-        placeholder.className = 'yaa-placeholder';
-        placeholder.setAttribute('aria-hidden', 'true');
-        placeholder.setAttribute('role', 'img');
-        placeholder.setAttribute('aria-label', 'Bild nicht verfügbar');
-        
-        // Determine source type for colored placeholder
-        var item = wrapper.closest('.yaa-item');
-        if (item) {
-            if (item.classList.contains('yaa-amazon')) {
-                placeholder.classList.add('yaa-placeholder-amazon');
-            } else if (item.classList.contains('yaa-custom')) {
-                placeholder.classList.add('yaa-placeholder-custom');
-            } else if (item.classList.contains('yaa-yadore')) {
-                placeholder.classList.add('yaa-placeholder-yadore');
-            }
-        }
-        
-        // Insert placeholder (inside the link if exists, otherwise directly)
-        var link = wrapper.querySelector('a');
-        if (link) {
-            link.appendChild(placeholder);
-        } else {
-            wrapper.appendChild(placeholder);
-        }
-    }
-
-    /**
-     * Legacy function for backwards compatibility
-     * @deprecated Use attemptImageFallback instead
-     * @param {HTMLImageElement} img
-     */
-    function handleBrokenImage(img) {
-        attemptImageFallback(img);
-    }
-
-    /**
-     * Initialize accessibility enhancements
-     */
-    function initAccessibilityEnhancements() {
-        // Add ARIA labels to read more buttons
-        var buttons = document.querySelectorAll('.yaa-read-more');
-        buttons.forEach(function(button) {
-            if (!button.hasAttribute('aria-expanded')) {
-                button.setAttribute('aria-expanded', 'false');
-            }
-            if (!button.hasAttribute('role')) {
-                button.setAttribute('role', 'button');
-            }
-            if (!button.hasAttribute('tabindex')) {
-                button.setAttribute('tabindex', '0');
-            }
-        });
-
-        // Add ARIA labels to product links
-        var productLinks = document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');
-        productLinks.forEach(function(link) {
-            if (link.hasAttribute('target') && link.getAttribute('target') === '_blank') {
-                if (!link.querySelector('.screen-reader-text')) {
-                    var srText = document.createElement('span');
-                    srText.className = 'screen-reader-text';
-                    srText.textContent = ' (öffnet in neuem Tab)';
-                    srText.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
-                    link.appendChild(srText);
-                }
-            }
-        });
-    }
-
-    /**
-     * Public API for external access
-     */
-    window.YAA = window.YAA || {};
-    
-    /**
-     * Toggle description by ID
-     * @param {string} id - The description ID (without 'desc-' prefix)
-     */
-    window.YAA.toggleDescription = function(id) {
-        var description = document.getElementById('desc-' + id);
-        var button = description ? description.parentElement.querySelector('.yaa-read-more') : null;
-        
-        if (description && button) {
-            toggleDescription(description, button);
-        }
-    };
-
-    /**
-     * Refresh all components (useful after AJAX content load)
-     */
-    window.YAA.refresh = function() {
-        initReadMoreButtons();
-        initLazyLoadImages();
-        initAccessibilityEnhancements();
-        initImageErrorHandling();
-    };
-
-    /**
-     * Manually check all images for errors
-     * Useful after dynamically loading content
-     */
-    window.YAA.checkImages = function() {
-        initImageErrorHandling();
-    };
-
-    /**
-     * Force re-check of a specific image
-     * @param {HTMLImageElement} img - The image element to check
-     */
-    window.YAA.recheckImage = function(img) {
-        if (img && img.tagName === 'IMG') {
-            // Reset fallback state
-            img.setAttribute('data-fallback-attempted', 'false');
-            
-            if (img.complete && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
-                attemptImageFallback(img);
-            }
-        }
-    };
-
-    /**
-     * Manually trigger thumbnail fallback for an image
-     * @param {HTMLImageElement} img - The image element
-     * @returns {boolean} True if thumbnail was attempted
-     */
-    window.YAA.tryThumbnail = function(img) {
-        if (!img || img.tagName !== 'IMG') {
-            return false;
-        }
-        
-        var thumbnailUrl = img.getAttribute('data-thumbnail');
-        if (thumbnailUrl && thumbnailUrl !== '') {
-            img.setAttribute('data-fallback-attempted', 'false');
-            attemptImageFallback(img);
-            return true;
-        }
-        
-        return false;
-    };
-
-    /**
-     * Manually trigger proxy fallback for an image
-     * @param {HTMLImageElement} img - The image element
-     * @returns {boolean} True if proxy was attempted
-     */
-    window.YAA.tryProxy = function(img) {
-        if (!img || img.tagName !== 'IMG') {
-            return false;
-        }
-        
-        if (!isProxyEnabled()) {
-            if (window.console) {
-                console.warn('YAA: Image proxy is not enabled');
-            }
-            return false;
-        }
-        
-        var originalSrc = img.getAttribute('data-original-src') || img.src;
-        var proxyUrl = getProxyUrl(originalSrc);
-        
-        if (proxyUrl) {
-            img.setAttribute('data-fallback-attempted', 'proxy');
-            img.src = proxyUrl;
-            return true;
-        }
-        
-        return false;
-    };
-
-    /**
-     * NEU: Manually trigger shop logo fallback for an image
-     * @param {HTMLImageElement} img - The image element
-     * @returns {boolean} True if shop logo was attempted
-     */
-    window.YAA.tryShopLogo = function(img) {
-        if (!img || img.tagName !== 'IMG') {
-            return false;
-        }
-        
-        var shopLogoUrl = img.getAttribute('data-shop-logo');
-        
-        if (shopLogoUrl && shopLogoUrl !== '') {
-            img.setAttribute('data-fallback-attempted', 'shop-logo');
-            img.classList.add('yaa-shop-logo-fallback');
-            img.src = shopLogoUrl;
-            return true;
-        }
-        
-        if (window.console) {
-            console.warn('YAA: No shop logo available for this image');
-        }
-        return false;
-    };
-
-    /**
-     * Generate proxy URL for external use
-     * @param {string} imageUrl - Original image URL
-     * @returns {string|null} Proxy URL or null
-     */
-    window.YAA.getProxyUrl = function(imageUrl) {
-        return getProxyUrl(imageUrl);
-    };
-
-    /**
-     * Check if proxy is enabled
-     * @returns {boolean}
-     */
-    window.YAA.isProxyEnabled = function() {
-        return isProxyEnabled();
-    };
-
-    /**
-     * Get product data from a grid item
-     * @param {HTMLElement} item - The .yaa-item element
-     * @returns {Object|null} Product data object
-     */
-    window.YAA.getProductData = function(item) {
-        if (!item || !item.classList.contains('yaa-item')) {
-            return null;
-        }
-
-        var titleElement = item.querySelector('.yaa-title a');
-        var priceElement = item.querySelector('.yaa-price');
-        var merchantElement = item.querySelector('.yaa-merchant');
-        var imageElement = item.querySelector('.yaa-image-wrapper img');
-        var wrapper = item.querySelector('.yaa-image-wrapper');
-
-        return {
-            title: titleElement ? titleElement.textContent.trim() : '',
-            url: titleElement ? titleElement.href : '',
-            price: priceElement ? priceElement.textContent.trim() : '',
-            merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
-            image: imageElement ? imageElement.src : '',
-            originalImage: imageElement ? imageElement.getAttribute('data-original-src') : '',
-            thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
-            shopLogo: imageElement ? imageElement.getAttribute('data-shop-logo') : '', // NEU
-            proxyUrl: imageElement ? getProxyUrl(imageElement.getAttribute('data-original-src') || imageElement.src) : '',
-            isAmazon: item.classList.contains('yaa-amazon'),
-            isCustom: item.classList.contains('yaa-custom'),
-            isYadore: item.classList.contains('yaa-yadore'),
-            isPrime: item.querySelector('.yaa-prime-badge') !== null,
-            hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
-            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false,
-            isShowingShopLogo: imageElement ? imageElement.classList.contains('yaa-shop-logo-fallback') : false, // NEU
-            fallbackAttempted: imageElement ? imageElement.getAttribute('data-fallback-attempted') : null
-        };
-    };
-
-    /**
-     * Get all products in a container
-     * @param {string|HTMLElement} container - Container selector or element
-     * @returns {Array} Array of product data objects
-     */
-    window.YAA.getAllProducts = function(container) {
-        var containerEl = container;
-        
-        if (typeof container === 'string') {
-            containerEl = document.querySelector(container);
-        }
-        
-        if (!containerEl) {
-            containerEl = document;
-        }
-        
-        var items = containerEl.querySelectorAll('.yaa-item');
-        var products = [];
-        
-        items.forEach(function(item) {
-            var data = window.YAA.getProductData(item);
-            if (data) {
-                products.push(data);
-            }
-        });
-        
-        return products;
-    };
-
-    /**
-     * Get count of broken images
-     * @returns {number}
-     */
-    window.YAA.getBrokenImageCount = function() {
-        return document.querySelectorAll('.yaa-image-wrapper.yaa-image-error').length;
-    };
-
-    /**
-     * Get count of images currently loading thumbnails
-     * @returns {number}
-     */
-    window.YAA.getLoadingThumbnailCount = function() {
-        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="thumbnail"]').length;
-    };
-
-    /**
-     * Get count of images currently using proxy
-     * @returns {number}
-     */
-    window.YAA.getProxyImageCount = function() {
-        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length;
-    };
-
-    /**
-     * NEU: Get count of images showing shop logo
-     * @returns {number}
-     */
-    window.YAA.getShopLogoCount = function() {
-        return document.querySelectorAll('.yaa-image-wrapper img.yaa-shop-logo-fallback').length;
-    };
-
-    /**
-     * Get detailed image status for debugging
-     * @returns {Object}
-     */
-    window.YAA.getImageStats = function() {
-        var images = document.querySelectorAll('.yaa-image-wrapper img');
-        var loaded = 0;
-        var broken = 0;
-        var loadingThumbnail = 0;
-        var loadingProxy = 0;
-        var showingShopLogo = 0; // NEU
-        var hasThumbnail = 0;
-        var hasProxy = 0;
-        var hasShopLogo = 0; // NEU
-        
-        images.forEach(function(img) {
-            if (img.classList.contains('yaa-img-loaded')) {
-                loaded++;
-            }
-            
-            if (img.classList.contains('yaa-shop-logo-fallback')) {
-                showingShopLogo++;
-            }
-            
-            var fallbackState = img.getAttribute('data-fallback-attempted');
-            if (fallbackState === 'complete') {
-                broken++;
-            } else if (fallbackState === 'thumbnail') {
-                loadingThumbnail++;
-            } else if (fallbackState === 'proxy') {
-                loadingProxy++;
-            }
-            
-            if (img.getAttribute('data-thumbnail')) {
-                hasThumbnail++;
-            }
-            
-            if (img.getAttribute('data-shop-logo')) {
-                hasShopLogo++;
-            }
-            
-            var originalSrc = img.getAttribute('data-original-src') || img.src;
-            if (getProxyUrl(originalSrc)) {
-                hasProxy++;
-            }
-        });
-        
-        return {
-            total: images.length,
-            loaded: loaded,
-            broken: broken,
-            loadingThumbnail: loadingThumbnail,
-            loadingProxy: loadingProxy,
-            showingShopLogo: showingShopLogo, // NEU
-            withThumbnailFallback: hasThumbnail,
-            withProxyAvailable: hasProxy,
-            withShopLogoAvailable: hasShopLogo, // NEU
-            proxyEnabled: isProxyEnabled()
-        };
-    };
-
-})();
- 
+(function(){'use strict';document.addEventListener('DOMContentLoaded',function(){initReadMoreButtons();initLazyLoadImages();initAccessibilityEnhancements();initImageErrorHandling()});function initReadMoreButtons(){var buttons=document.querySelectorAll('.yaa-read-more');buttons.forEach(function(button){button.addEventListener('click',handleReadMoreClick);button.addEventListener('keydown',handleReadMoreKeydown)})}
+function handleReadMoreClick(event){event.preventDefault();var button=event.currentTarget;var targetId=button.getAttribute('data-target');var description=document.getElementById('desc-'+targetId);if(!description){return}
+toggleDescription(description,button)}
+function handleReadMoreKeydown(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();handleReadMoreClick(event)}}
+function toggleDescription(description,button){var isExpanded=description.classList.contains('expanded');var expandText=button.getAttribute('data-expand-text')||'mehr lesen';var collapseText=button.getAttribute('data-collapse-text')||'weniger';if(isExpanded){description.classList.remove('expanded');button.classList.remove('expanded');button.textContent=expandText;button.setAttribute('aria-expanded','false')}else{description.classList.add('expanded');button.classList.add('expanded');button.textContent=collapseText;button.setAttribute('aria-expanded','true')}}
+function initLazyLoadImages(){if('loading' in HTMLImageElement.prototype){return}
+var images=document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');if(images.length===0){return}
+if('IntersectionObserver' in window){var imageObserver=new IntersectionObserver(function(entries,observer){entries.forEach(function(entry){if(entry.isIntersecting){var image=entry.target;if(image.dataset.src){image.src=image.dataset.src;image.removeAttribute('data-src')}
+observer.unobserve(image)}})},{rootMargin:'50px 0px',threshold:0.01});images.forEach(function(image){imageObserver.observe(image)})}}
+function initImageErrorHandling(){var images=document.querySelectorAll('.yaa-image-wrapper img');images.forEach(function(img){if(!img.hasAttribute('data-fallback-attempted')){img.setAttribute('data-fallback-attempted','false')}
+var currentSrc=img.getAttribute('src')||'';var proxySrc=img.getAttribute('data-proxy-src')||'';var originalSrc=img.getAttribute('data-original-src')||'';if(currentSrc===''||currentSrc===window.location.href){if(proxySrc!==''){if(window.console){console.log('YAA: Empty src detected, using proxy:',proxySrc)}
+img.setAttribute('data-fallback-attempted','proxy');img.src=proxySrc;return}else if(originalSrc!==''){if(window.console){console.log('YAA: Empty src detected, using original:',originalSrc)}
+img.setAttribute('data-fallback-attempted','original');img.src=originalSrc;return}}
+if(img.complete){if(img.naturalWidth===0||img.naturalHeight===0){attemptImageFallback(img)}else{img.classList.add('yaa-img-loaded')}}
+img.addEventListener('load',function(){img.classList.add('yaa-img-loaded');img.classList.remove('yaa-img-loading')});img.addEventListener('error',function(){attemptImageFallback(img)})})}
+function attemptImageFallback(img){var wrapper=img.closest('.yaa-image-wrapper');if(!wrapper){return}
+if(!img.hasAttribute('referrerpolicy')){img.setAttribute('referrerpolicy','no-referrer')}
+var fallbackAttempted=img.getAttribute('data-fallback-attempted');var thumbnailUrl=img.getAttribute('data-thumbnail');var originalSrc=img.getAttribute('data-original-src')||img.src;var shopLogoUrl=img.getAttribute('data-shop-logo');if(!img.hasAttribute('data-original-src')){img.setAttribute('data-original-src',img.src)}
+if(fallbackAttempted==='false'&&thumbnailUrl&&thumbnailUrl!==''&&thumbnailUrl!==originalSrc){if(window.console){console.log('YAA: Original image failed, trying thumbnail:',thumbnailUrl)}
+img.setAttribute('data-fallback-attempted','thumbnail');img.classList.add('yaa-img-loading');img.src=thumbnailUrl;return}
+if(fallbackAttempted==='thumbnail'||(fallbackAttempted==='false'&&!thumbnailUrl)){if(isProxyEnabled()){var proxyUrl=img.getAttribute('data-proxy-src')||getProxyUrl(originalSrc);if(proxyUrl&&proxyUrl!==''){if(window.console){console.log('YAA: Trying server-side proxy for:',originalSrc)}
+img.setAttribute('data-fallback-attempted','proxy');img.classList.add('yaa-img-loading');img.src=proxyUrl;return}}
+img.setAttribute('data-fallback-attempted','proxy-skipped')}
+if(fallbackAttempted==='proxy'||fallbackAttempted==='proxy-skipped'||(fallbackAttempted==='false'&&!thumbnailUrl&&!isProxyEnabled())){if(shopLogoUrl&&shopLogoUrl!==''){if(window.console){console.log('YAA: Trying shop logo as fallback:',shopLogoUrl)}
+img.setAttribute('data-fallback-attempted','shop-logo');img.classList.add('yaa-img-loading');img.classList.add('yaa-shop-logo-fallback');img.src=shopLogoUrl;return}}
+if(fallbackAttempted==='false'||fallbackAttempted==='thumbnail'||fallbackAttempted==='proxy'||fallbackAttempted==='proxy-skipped'||fallbackAttempted==='shop-logo'){if(window.console){var reason='Unknown';if(fallbackAttempted==='shop-logo'){reason='Shop logo also failed'}else if(fallbackAttempted==='proxy'){reason='Proxy failed, no shop logo available'}else if(fallbackAttempted==='thumbnail'){reason='Thumbnail failed, no proxy/shop logo available'}else{reason='No fallbacks available'}
+console.warn('YAA: '+reason+', showing placeholder for:',originalSrc)}
+img.setAttribute('data-fallback-attempted','complete');showCSSPlaceholder(img,wrapper)}}
+function isProxyEnabled(){if(typeof window.yaaProxy!=='undefined'&&window.yaaProxy.enabled){return!0}
+return!1}
+function getProxyUrl(originalUrl){if(!originalUrl||originalUrl===''){return null}
+if(originalUrl.indexOf(window.location.origin)===0){return null}
+if(originalUrl.indexOf('data:')===0){return null}
+if(originalUrl.indexOf('action=yaa_proxy_image')!==-1){return null}
+if(typeof window.yaaProxy!=='undefined'&&window.yaaProxy.endpoint){var params=new URLSearchParams();params.append('action',window.yaaProxy.action||'yaa_proxy_image');params.append('url',originalUrl);return window.yaaProxy.endpoint+'?'+params.toString()}
+return null}
+function showCSSPlaceholder(img,wrapper){if(wrapper.classList.contains('yaa-image-error')){return}
+wrapper.classList.add('yaa-image-error');img.style.display='none';img.style.visibility='hidden';img.classList.remove('yaa-img-loading');img.classList.remove('yaa-shop-logo-fallback');if(wrapper.querySelector('.yaa-placeholder')){return}
+var placeholder=document.createElement('div');placeholder.className='yaa-placeholder';placeholder.setAttribute('aria-hidden','true');placeholder.setAttribute('role','img');placeholder.setAttribute('aria-label','Bild nicht verfügbar');var item=wrapper.closest('.yaa-item');if(item){if(item.classList.contains('yaa-amazon')){placeholder.classList.add('yaa-placeholder-amazon')}else if(item.classList.contains('yaa-custom')){placeholder.classList.add('yaa-placeholder-custom')}else if(item.classList.contains('yaa-yadore')){placeholder.classList.add('yaa-placeholder-yadore')}}
+var link=wrapper.querySelector('a');if(link){link.appendChild(placeholder)}else{wrapper.appendChild(placeholder)}}
+function handleBrokenImage(img){attemptImageFallback(img)}
+function initAccessibilityEnhancements(){var buttons=document.querySelectorAll('.yaa-read-more');buttons.forEach(function(button){if(!button.hasAttribute('aria-expanded')){button.setAttribute('aria-expanded','false')}
+if(!button.hasAttribute('role')){button.setAttribute('role','button')}
+if(!button.hasAttribute('tabindex')){button.setAttribute('tabindex','0')}});var productLinks=document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');productLinks.forEach(function(link){if(link.hasAttribute('target')&&link.getAttribute('target')==='_blank'){if(!link.querySelector('.screen-reader-text')){var srText=document.createElement('span');srText.className='screen-reader-text';srText.textContent=' (öffnet in neuem Tab)';srText.style.cssText='position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';link.appendChild(srText)}}})}
+window.YAA=window.YAA||{};window.YAA.toggleDescription=function(id){var description=document.getElementById('desc-'+id);var button=description?description.parentElement.querySelector('.yaa-read-more'):null;if(description&&button){toggleDescription(description,button)}};window.YAA.refresh=function(){initReadMoreButtons();initLazyLoadImages();initAccessibilityEnhancements();initImageErrorHandling()};window.YAA.checkImages=function(){initImageErrorHandling()};window.YAA.recheckImage=function(img){if(img&&img.tagName==='IMG'){img.setAttribute('data-fallback-attempted','false');if(img.complete&&(img.naturalWidth===0||img.naturalHeight===0)){attemptImageFallback(img)}}};window.YAA.tryThumbnail=function(img){if(!img||img.tagName!=='IMG'){return!1}
+var thumbnailUrl=img.getAttribute('data-thumbnail');if(thumbnailUrl&&thumbnailUrl!==''){img.setAttribute('data-fallback-attempted','false');attemptImageFallback(img);return!0}
+return!1};window.YAA.tryProxy=function(img){if(!img||img.tagName!=='IMG'){return!1}
+if(!isProxyEnabled()){if(window.console){console.warn('YAA: Image proxy is not enabled')}
+return!1}
+var originalSrc=img.getAttribute('data-original-src')||img.src;var proxyUrl=getProxyUrl(originalSrc);if(proxyUrl){img.setAttribute('data-fallback-attempted','proxy');img.src=proxyUrl;return!0}
+return!1};window.YAA.tryShopLogo=function(img){if(!img||img.tagName!=='IMG'){return!1}
+var shopLogoUrl=img.getAttribute('data-shop-logo');if(shopLogoUrl&&shopLogoUrl!==''){img.setAttribute('data-fallback-attempted','shop-logo');img.classList.add('yaa-shop-logo-fallback');img.src=shopLogoUrl;return!0}
+if(window.console){console.warn('YAA: No shop logo available for this image')}
+return!1};window.YAA.getProxyUrl=function(imageUrl){return getProxyUrl(imageUrl)};window.YAA.isProxyEnabled=function(){return isProxyEnabled()};window.YAA.getProductData=function(item){if(!item||!item.classList.contains('yaa-item')){return null}
+var titleElement=item.querySelector('.yaa-title a');var priceElement=item.querySelector('.yaa-price');var merchantElement=item.querySelector('.yaa-merchant');var imageElement=item.querySelector('.yaa-image-wrapper img');var wrapper=item.querySelector('.yaa-image-wrapper');return{title:titleElement?titleElement.textContent.trim():'',url:titleElement?titleElement.href:'',price:priceElement?priceElement.textContent.trim():'',merchant:merchantElement?merchantElement.textContent.replace('via ','').trim():'',image:imageElement?imageElement.src:'',originalImage:imageElement?imageElement.getAttribute('data-original-src'):'',thumbnail:imageElement?imageElement.getAttribute('data-thumbnail'):'',shopLogo:imageElement?imageElement.getAttribute('data-shop-logo'):'',proxyUrl:imageElement?getProxyUrl(imageElement.getAttribute('data-original-src')||imageElement.src):'',isAmazon:item.classList.contains('yaa-amazon'),isCustom:item.classList.contains('yaa-custom'),isYadore:item.classList.contains('yaa-yadore'),isPrime:item.querySelector('.yaa-prime-badge')!==null,hasImageError:wrapper?wrapper.classList.contains('yaa-image-error'):!1,imageLoaded:imageElement?imageElement.classList.contains('yaa-img-loaded'):!1,isShowingShopLogo:imageElement?imageElement.classList.contains('yaa-shop-logo-fallback'):!1,fallbackAttempted:imageElement?imageElement.getAttribute('data-fallback-attempted'):null}};window.YAA.getAllProducts=function(container){var containerEl=container;if(typeof container==='string'){containerEl=document.querySelector(container)}
+if(!containerEl){containerEl=document}
+var items=containerEl.querySelectorAll('.yaa-item');var products=[];items.forEach(function(item){var data=window.YAA.getProductData(item);if(data){products.push(data)}});return products};window.YAA.getBrokenImageCount=function(){return document.querySelectorAll('.yaa-image-wrapper.yaa-image-error').length};window.YAA.getLoadingThumbnailCount=function(){return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="thumbnail"]').length};window.YAA.getProxyImageCount=function(){return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length};window.YAA.getShopLogoCount=function(){return document.querySelectorAll('.yaa-image-wrapper img.yaa-shop-logo-fallback').length};window.YAA.getImageStats=function(){var images=document.querySelectorAll('.yaa-image-wrapper img');var loaded=0;var broken=0;var loadingThumbnail=0;var loadingProxy=0;var showingShopLogo=0;var hasThumbnail=0;var hasProxy=0;var hasShopLogo=0;images.forEach(function(img){if(img.classList.contains('yaa-img-loaded')){loaded++}
+if(img.classList.contains('yaa-shop-logo-fallback')){showingShopLogo++}
+var fallbackState=img.getAttribute('data-fallback-attempted');if(fallbackState==='complete'){broken++}else if(fallbackState==='thumbnail'){loadingThumbnail++}else if(fallbackState==='proxy'){loadingProxy++}
+if(img.getAttribute('data-thumbnail')){hasThumbnail++}
+if(img.getAttribute('data-shop-logo')){hasShopLogo++}
+var originalSrc=img.getAttribute('data-original-src')||img.src;if(getProxyUrl(originalSrc)){hasProxy++}});return{total:images.length,loaded:loaded,broken:broken,loadingThumbnail:loadingThumbnail,loadingProxy:loadingProxy,showingShopLogo:showingShopLogo,withThumbnailFallback:hasThumbnail,withProxyAvailable:hasProxy,withShopLogoAvailable:hasShopLogo,proxyEnabled:isProxyEnabled()}}})() 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\yaa-search.js 
  
 /**
@@ -2809,7 +555,9 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Mit Initial-Produkten und Reset-Funktion
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.0
+ * @since 1.6.2
+ * 
+ * FIX 1.6.2: Sortierungs-Fallback korrigiert (rel_desc statt cpc_desc)
  */
 
 (function($) {
@@ -2846,7 +594,8 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
                 newTab: this.$container.data('new-tab') === 1,
                 debounce: this.$container.data('debounce') || 500,
                 liveSearch: this.$container.data('live-search') === 1,
-                sort: this.$container.data('sort') || 'cpc_desc',
+                // FIX 1.6.2: Fallback korrigiert - konsistent mit PHP-Standard
+                sort: this.$container.data('sort') || 'rel_desc',
                 merchantFilter: this.$container.data('merchant-filter') || '',
                 showInitial: this.$container.data('show-initial') === 1,
                 showReset: this.$container.data('show-reset') === 1,
@@ -10030,13 +7779,12 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Mit Initial-Produkten vor der Suche
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.1
+ * @since 1.6.2
  * 
- * FIX 1.6.1:
- * - fetch_yadore_products korrigiert: market und precision Parameter hinzugefügt
- * - Cache-Bypass für Initial-Produkte optional
- * - Bessere Fehlerbehandlung bei API-Aufrufen
- * - Debug-Logging hinzugefügt
+ * FIX 1.6.2:
+ * - Sortierung aus Plugin-Einstellungen laden (search_default_sort)
+ * - Inkonsistenz zwischen PHP und JS-Fallback bereinigt
+ * - Standard-Sortierung konfigurierbar in Plugin-Einstellungen
  */
 
 declare(strict_types=1);
@@ -10090,17 +7838,17 @@ class YAA_Search_Shortcode {
         'show_price'        => true,
         'show_merchant'     => true,
         'new_tab'           => true,
-        'sort'              => 'rel_desc', // Geändert von cpc_desc zu rel_desc für stabilere Ergebnisse
+        'sort'              => '', // Leer = Plugin-Einstellung verwenden
         'merchant_filter'   => '',
         
-        // API-Optionen (NEU)
+        // API-Optionen
         'market'            => '', // Leer = Plugin-Standard verwenden
         'precision'         => '', // Leer = Plugin-Standard verwenden
         
         // UI-Optionen
         'show_reset'        => true,
         'hide_form'         => false,
-        'debug'             => false, // NEU: Debug-Modus
+        'debug'             => false,
     ];
 
     /**
@@ -10117,6 +7865,23 @@ class YAA_Search_Shortcode {
         add_action('wp_ajax_yadore_product_search', [$this, 'ajax_search']);
         add_action('wp_ajax_nopriv_yadore_product_search', [$this, 'ajax_search']);
         add_action('wp_enqueue_scripts', [$this, 'register_assets']);
+    }
+
+    /**
+     * Holt die Standard-Sortierung aus den Plugin-Einstellungen
+     * 
+     * @return string Sortierungs-Wert
+     */
+    private function get_default_sort(): string {
+        // Erst spezifische Search-Einstellung prüfen, dann Fallback auf allgemeine Yadore-Einstellung
+        $search_sort = yaa_get_option('search_default_sort', '');
+        
+        if ($search_sort !== '') {
+            return $search_sort;
+        }
+        
+        // Fallback auf allgemeine Yadore-Sortierung
+        return yaa_get_option('yadore_default_sort', 'rel_desc');
     }
 
     /**
@@ -10177,6 +7942,11 @@ class YAA_Search_Shortcode {
         $atts['max_results'] = max(1, (int) $atts['max_results']);
         $atts['columns'] = max(1, min(6, (int) $atts['columns']));
 
+        // FIX 1.6.2: Sortierung aus Einstellungen laden wenn nicht explizit gesetzt
+        if (empty($atts['sort'])) {
+            $atts['sort'] = $this->get_default_sort();
+        }
+
         // Assets nur einmal laden
         if (!self::$shortcode_rendered) {
             wp_enqueue_style('yadore-search');
@@ -10198,10 +7968,11 @@ class YAA_Search_Shortcode {
             // Debug-Ausgabe
             if ($atts['debug']) {
                 $debug_output = sprintf(
-                    '<!-- YAA Debug: initial_count=%d, products_loaded=%d, keywords=%s -->',
+                    '<!-- YAA Debug: initial_count=%d, products_loaded=%d, keywords=%s, sort=%s -->',
                     $atts['initial_count'],
                     count($initial_products),
-                    esc_html($atts['initial_keywords'] ?: $atts['initial_keyword'])
+                    esc_html($atts['initial_keywords'] ?: $atts['initial_keyword']),
+                    esc_html($atts['sort'])
                 );
             }
             
@@ -10323,10 +8094,11 @@ class YAA_Search_Shortcode {
         // Debug-Log
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log(sprintf(
-                'YAA Search: get_initial_products called - count=%d, source=%s, keywords=%s',
+                'YAA Search: get_initial_products called - count=%d, source=%s, keywords=%s, sort=%s',
                 $count,
                 $source,
-                implode(',', $keywords)
+                implode(',', $keywords),
+                $atts['sort'] ?? 'not set'
             ));
         }
 
@@ -10381,8 +8153,6 @@ class YAA_Search_Shortcode {
     /**
      * Produkte von Yadore API laden
      * 
-     * FIX 1.6.1: market und precision Parameter hinzugefügt
-     * 
      * @param array<string> $keywords Suchbegriffe
      * @param int $count Anzahl
      * @param array<string, mixed> $atts Shortcode-Attribute
@@ -10403,16 +8173,16 @@ class YAA_Search_Shortcode {
             return [];
         }
         
-        // FIX: Bei nur einem Keyword das volle Limit verwenden
         $per_keyword = $keyword_count === 1 ? $count : max(1, (int) ceil($count / $keyword_count));
 
         // Debug-Log
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log(sprintf(
-                'YAA Search: fetch_yadore_products - keywords=%d, count=%d, per_keyword=%d',
+                'YAA Search: fetch_yadore_products - keywords=%d, count=%d, per_keyword=%d, sort=%s',
                 $keyword_count,
                 $count,
-                $per_keyword
+                $per_keyword,
+                $atts['sort'] ?? 'not set'
             ));
         }
 
@@ -10421,12 +8191,11 @@ class YAA_Search_Shortcode {
                 break;
             }
 
-            // FIX 1.6.1: Vollständige API-Parameter übergeben
+            // API-Parameter mit Sortierung aus Einstellungen
             $api_params = [
                 'keyword'   => $keyword,
                 'limit'     => $per_keyword,
-                'sort'      => (string) ($atts['sort'] ?: 'rel_desc'),
-                // NEU: market und precision aus Shortcode oder Plugin-Standard
+                'sort'      => (string) ($atts['sort'] ?: $this->get_default_sort()),
                 'market'    => !empty($atts['market']) ? (string) $atts['market'] : yaa_get_option('yadore_market', 'de'),
                 'precision' => !empty($atts['precision']) ? (string) $atts['precision'] : yaa_get_option('yadore_precision', 'fuzzy'),
             ];
@@ -10442,9 +8211,10 @@ class YAA_Search_Shortcode {
             // Debug-Log
             if (defined('WP_DEBUG') && WP_DEBUG) {
                 error_log(sprintf(
-                    'YAA Search: API call for keyword "%s" with limit=%d',
+                    'YAA Search: API call for keyword "%s" with limit=%d, sort=%s',
                     $keyword,
-                    $api_params['limit']
+                    $api_params['limit'],
+                    $api_params['sort']
                 ));
             }
 
@@ -10458,7 +8228,6 @@ class YAA_Search_Shortcode {
             }
             
             if (!empty($results)) {
-                // Debug-Log
                 if (defined('WP_DEBUG') && WP_DEBUG) {
                     error_log(sprintf(
                         'YAA Search: API returned %d results for "%s"',
@@ -10742,11 +8511,16 @@ class YAA_Search_Shortcode {
         $query = isset($_POST['query']) ? sanitize_text_field(wp_unslash($_POST['query'])) : '';
         $network = isset($_POST['network']) ? sanitize_text_field(wp_unslash($_POST['network'])) : '';
         $max_results = isset($_POST['max_results']) ? (int) $_POST['max_results'] : 12;
-        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : 'rel_desc';
+        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : '';
         $merchant_filter = isset($_POST['merchant_filter']) ? sanitize_text_field(wp_unslash($_POST['merchant_filter'])) : '';
         $show_price = isset($_POST['show_price']) && $_POST['show_price'] === '1';
         $show_merchant = isset($_POST['show_merchant']) && $_POST['show_merchant'] === '1';
         $new_tab = isset($_POST['new_tab']) && $_POST['new_tab'] === '1';
+
+        // FIX 1.6.2: Sortierung aus Einstellungen laden wenn nicht übergeben
+        if (empty($sort)) {
+            $sort = $this->get_default_sort();
+        }
 
         if (empty($query) || strlen($query) < 2) {
             wp_send_json_error(['message' => __('Suchbegriff zu kurz.', 'yadore-amazon-api')], 400);
@@ -10764,10 +8538,10 @@ class YAA_Search_Shortcode {
 
         // Yadore API aufrufen
         $api_params = [
-            'keyword' => $query,
-            'limit'   => min($max_results, 50),
-            'sort'    => $sort,
-            'market'  => yaa_get_option('yadore_market', 'de'),
+            'keyword'   => $query,
+            'limit'     => min($max_results, 50),
+            'sort'      => $sort,
+            'market'    => yaa_get_option('yadore_market', 'de'),
             'precision' => yaa_get_option('yadore_precision', 'fuzzy'),
         ];
 
@@ -14491,7 +12265,11 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Admin Settings Page
  * PHP 8.3+ compatible
- * Version: 1.5.1
+ * Version: 1.6.2
+ * 
+ * CHANGELOG 1.6.2:
+ * - Neue Einstellung: search_default_sort (Standard-Sortierung für Search Shortcode)
+ * - Neue Einstellung: yadore_featured_keywords (Keywords für Initial-Produkte)
  */
 
 declare(strict_types=1);
@@ -14538,7 +12316,7 @@ final class YAA_Admin_Settings {
                 <?php settings_fields('yaa_settings'); ?>
                 
                 <div class="yaa-tabs">
-                    <div class="yaa-tab active" data-tab="yadore">📶 Yadore API</div>
+                    <div class="yaa-tab active" data-tab="yadore">📂 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
                     <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
                     <div class="yaa-tab" data-tab="cache">⚡ Cache &amp; Bilder</div>
@@ -14593,6 +12371,13 @@ final class YAA_Admin_Settings {
         $valid_sorts = ['rel_desc', 'price_asc', 'price_desc', 'cpc_desc', 'cpc_asc'];
         $sanitized['yadore_default_sort'] = in_array($input['yadore_default_sort'] ?? '', $valid_sorts, true) 
             ? $input['yadore_default_sort'] : 'rel_desc';
+        
+        // NEU 1.6.2: Search Shortcode Sortierung (kann leer sein = yadore_default_sort verwenden)
+        $sanitized['search_default_sort'] = in_array($input['search_default_sort'] ?? '', array_merge([''], $valid_sorts), true) 
+            ? ($input['search_default_sort'] ?? '') : '';
+        
+        // NEU 1.6.2: Featured Keywords für Initial-Produkte
+        $sanitized['yadore_featured_keywords'] = sanitize_text_field($input['yadore_featured_keywords'] ?? '');
         
         // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
@@ -14681,7 +12466,7 @@ final class YAA_Admin_Settings {
         $sort_options = $this->yadore_api->get_sort_options();
         ?>
         <div class="yaa-card">
-            <h2>📶 Yadore API Konfiguration</h2>
+            <h2>📂 Yadore API Konfiguration</h2>
             <p class="description">
                 Yadore bietet Zugang zu über 9.000 Shops und 250 Millionen Produkten. 
                 <a href="https://www.yadore.com/publisher" target="_blank" rel="noopener">Publisher-Account erstellen →</a>
@@ -14763,6 +12548,62 @@ final class YAA_Admin_Settings {
             </div>
         </div>
         
+        <!-- NEU 1.6.2: Search Shortcode Einstellungen -->
+        <div class="yaa-card">
+            <h2>🔎 Search Shortcode Einstellungen</h2>
+            <p class="description">
+                Spezifische Einstellungen für den <code>[yadore_search]</code> Shortcode mit interaktiver Live-Suche.
+            </p>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="search_default_sort">Standard-Sortierung für Search Shortcode</label>
+                    <select id="search_default_sort" name="yaa_settings[search_default_sort]">
+                        <option value="" <?php selected(($options['search_default_sort'] ?? ''), ''); ?>>
+                            — Yadore-Standard verwenden (<?php echo esc_html($options['yadore_default_sort'] ?? 'rel_desc'); ?>)
+                        </option>
+                        <?php foreach ($sort_options as $value => $label): ?>
+                            <option value="<?php echo esc_attr($value); ?>" 
+                                <?php selected(($options['search_default_sort'] ?? ''), $value); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="description">
+                        Standard-Sortierung für den <code>[yadore_search]</code> Shortcode. 
+                        Kann im Shortcode mit <code>sort="..."</code> überschrieben werden.
+                    </p>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="yadore_featured_keywords">Keywords für Initial-Produkte</label>
+                    <input type="text" id="yadore_featured_keywords" name="yaa_settings[yadore_featured_keywords]" 
+                           value="<?php echo esc_attr($options['yadore_featured_keywords'] ?? ''); ?>"
+                           placeholder="Bestseller, Angebote, Beliebt">
+                    <p class="description">
+                        Komma-separierte Keywords für Initial-Produkte, wenn <code>initial_keywords</code> im Shortcode nicht gesetzt ist.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="yaa-feature-box" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">📝 Shortcode-Beispiele</h4>
+                <div class="yaa-shortcode-box">[yadore_search]</div>
+                <p class="description">Einfache Live-Suche ohne Initial-Produkte.</p>
+                
+                <div class="yaa-shortcode-box">[yadore_search initial_keywords="Laptop,Smartphone" initial_count="6" sort="cpc_desc"]</div>
+                <p class="description">Mit Initial-Produkten und CPC-Sortierung für maximale Vergütung.</p>
+                
+                <div class="yaa-shortcode-box">[yadore_search show_initial="yes" initial_title="Unsere Empfehlungen" max_results="12"]</div>
+                <p class="description">Mit Custom-Titel und mehr Ergebnissen.</p>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                Vergütung pro Klick zuerst angezeigt – sowohl bei Initial-Produkten als auch bei Suchergebnissen!
+            </div>
+        </div>
+        
         <div class="yaa-card">
             <h2>📊 Sortierungs-Optionen</h2>
             <p class="description">Bestimme, in welcher Reihenfolge die Produkte angezeigt werden.</p>
@@ -14805,7 +12646,7 @@ final class YAA_Admin_Settings {
             </table>
             
             <div class="yaa-tip" style="margin-top: 15px;">
-                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                <strong>💰 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
                 Vergütung pro Klick zuerst angezeigt. So kannst du deinen Revenue maximieren!
             </div>
             
