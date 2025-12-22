@@ -9,19 +9,17 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  
 <?php
 /**
- * Plugin Name: Yadore-Amazon-API
- * Plugin URI: https://github.com/matthesv/yadore-amazon-api
- * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.4.1
- * Author: Matthes Vogel
- * Author URI: https://example.com
- * Text Domain: yadore-amazon-api
- * Domain Path: /languages
- * Requires at least: 6.0
- * Requires PHP: 8.1
- * License: GPL v2 or later
- * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
- * Primary Branch: main
+ * Yadore API Handler
+ * PHP 8.3+ compatible
+ * Version: 1.5.0
+ * 
+ * Features:
+ * - Offer API (/v2/offer)
+ * - Merchant API (/v2/merchant)
+ * - Deeplink Merchant API (/v2/deeplink/merchant) mit CPC-Daten
+ * - Merchant Filter (Whitelist/Blacklist)
+ * - NEU: Sortierung (Preis/CPC/Relevanz)
+ * - NEU: Thumbnail Fallback
  */
 
 declare(strict_types=1);
@@ -30,391 +28,922 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Plugin Constants
-define('YAA_VERSION', '1.4.1');
-define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
-define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
-define('YAA_PLUGIN_FILE', __FILE__);
-
-/**
- * Load plugin textdomain
- */
-function yaa_load_textdomain(): void {
-    load_plugin_textdomain('yadore-amazon-api', false, dirname(YAA_PLUGIN_BASENAME) . '/languages');
-}
-add_action('plugins_loaded', 'yaa_load_textdomain');
-
-/**
- * Get plugin option with default
- */
-function yaa_get_option(string $key, mixed $default = ''): mixed {
-    $options = get_option('yaa_settings', []);
-    return $options[$key] ?? $default;
-}
-
-/**
- * Get cache time settings
- */
-function yaa_get_cache_time(): int {
-    $hours = (int) yaa_get_option('cache_duration', 6);
-    return max(1, $hours) * 3600;
-}
-
-function yaa_get_fallback_time(): int {
-    $hours = (int) yaa_get_option('fallback_duration', 24);
-    return max(1, $hours) * 3600;
-}
-
-// =========================================
-// AUTOLOADER
-// =========================================
-
-// Autoloader zuerst laden (manuell, da er sich nicht selbst laden kann)
-require_once YAA_PLUGIN_PATH . 'includes/class-autoloader.php';
-
-// Autoloader registrieren
-YAA_Autoloader::register(YAA_PLUGIN_PATH);
-
-// Admin-Verzeichnis zum Autoloader hinzufügen
-YAA_Autoloader::add_directory('includes/admin');
-
-// =========================================
-// LEGACY REQUIRES (für Klassen die noch nicht migriert wurden)
-// Diese können nach und nach entfernt werden, sobald der Autoloader greift
-// =========================================
-
-// Core-Klassen die immer benötigt werden
-// Der Autoloader lädt diese automatisch, aber wir können sie auch explizit laden
-// für bessere Kontrolle über die Ladereihenfolge
-
-// Hinweis: Die folgenden require_once Statements sind optional
-// wenn der Autoloader korrekt funktioniert. Sie dienen als Fallback.
-
-/*
- * Liste der Kern-Klassen (werden durch Autoloader geladen):
- * - YAA_Cache_Handler
- * - YAA_Image_Handler
- * - YAA_Fuzzy_Matcher
- * - YAA_Yadore_API
- * - YAA_Amazon_PAAPI
- * - YAA_Custom_Products
- * - YAA_Shortcode_Renderer
- * - YAA_Merchant_Filter
- * - YAA_Admin (Koordinator)
- * - YAA_Admin_Settings
- * - YAA_Admin_Ajax
- * - YAA_Admin_Status
- * - YAA_Admin_Docs
- * - YAA_Admin_Merchants (NEU: Händlerübersicht mit CPC)
- */
-
-// =========================================
-// PLUGIN UPDATE CHECKER (GitHub)
-// =========================================
-if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php')) {
-    require_once YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php';
+final class YAA_Yadore_API {
     
-    $yaaUpdateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-        'https://github.com/matthesv/yadore-amazon-api/',
-        YAA_PLUGIN_FILE,
-        'yadore-amazon-api'
-    );
+    private const API_URL = 'https://api.yadore.com/v2/offer';
+    private const MERCHANT_API_URL = 'https://api.yadore.com/v2/merchant';
+    private const DEEPLINK_MERCHANT_API_URL = 'https://api.yadore.com/v2/deeplink/merchant';
     
-    $yaaUpdateChecker->setBranch('main');
+    private YAA_Cache_Handler $cache;
+    private string $api_key = '';
     
-    $github_token = defined('YAA_GITHUB_TOKEN') ? YAA_GITHUB_TOKEN : yaa_get_option('github_token', '');
-    if (!empty($github_token)) {
-        $yaaUpdateChecker->setAuthentication($github_token);
+    /**
+     * Verfügbare Märkte
+     * @var array<string, string>
+     */
+    private const MARKETS = [
+        'de' => 'Deutschland',
+        'at' => 'Österreich',
+        'ch' => 'Schweiz',
+        'fr' => 'Frankreich',
+        'it' => 'Italien',
+        'es' => 'Spanien',
+        'nl' => 'Niederlande',
+        'be' => 'Belgien',
+        'pl' => 'Polen',
+        'se' => 'Schweden',
+        'uk' => 'Großbritannien',
+        'us' => 'USA',
+        'br' => 'Brasilien',
+        'mx' => 'Mexiko',
+        'au' => 'Australien',
+    ];
+    
+    /**
+     * Verfügbare Sortieroptionen
+     * @var array<string, string>
+     */
+    public const SORT_OPTIONS = [
+        'rel_desc'   => 'Relevanz (Standard)',
+        'price_asc'  => 'Preis aufsteigend (günstigste zuerst)',
+        'price_desc' => 'Preis absteigend (teuerste zuerst)',
+        'cpc_desc'   => 'CPC absteigend (höchste Vergütung zuerst)',
+        'cpc_asc'    => 'CPC aufsteigend (niedrigste Vergütung zuerst)',
+    ];
+    
+    public function __construct(YAA_Cache_Handler $cache) {
+        $this->cache = $cache;
+        $this->load_api_key();
     }
-}
-
-/**
- * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.4.0 - Mit Autoloader Support
- */
-final class Yadore_Amazon_API_Plugin {
     
-    private static ?self $instance = null;
+    /**
+     * Load API key from config or options
+     */
+    private function load_api_key(): void {
+        $this->api_key = defined('YADORE_API_KEY') 
+            ? (string) YADORE_API_KEY 
+            : (string) yaa_get_option('yadore_api_key', '');
+    }
     
-    public readonly YAA_Cache_Handler $cache;
-    public readonly YAA_Yadore_API $yadore_api;
-    public readonly YAA_Amazon_PAAPI $amazon_api;
-    public readonly YAA_Custom_Products $custom_products;
-    public readonly YAA_Shortcode_Renderer $shortcode;
-    public readonly YAA_Admin $admin;
+    /**
+     * Reload API key (nach Einstellungsänderung)
+     */
+    public function reload_api_key(): void {
+        $this->load_api_key();
+    }
     
-    public static function get_instance(): self {
-        if (self::$instance === null) {
-            self::$instance = new self();
+    /**
+     * Check if API is configured
+     */
+    public function is_configured(): bool {
+        return $this->api_key !== '' && yaa_get_option('enable_yadore', 'yes') === 'yes';
+    }
+    
+    /**
+     * Get API key (für Merchant Filter)
+     */
+    public function get_api_key(): string {
+        return $this->api_key;
+    }
+    
+    /**
+     * Get available markets
+     * 
+     * @return array<string, string>
+     */
+    public function get_markets(): array {
+        return self::MARKETS;
+    }
+    
+    /**
+     * Get available sort options
+     * 
+     * @return array<string, string>
+     */
+    public function get_sort_options(): array {
+        return self::SORT_OPTIONS;
+    }
+    
+    /**
+     * Fetch products from Yadore API
+     * 
+     * @param array<string, mixed> $params
+     * @return array<int, array<string, mixed>>|\WP_Error
+     */
+    public function fetch(array $params): array|\WP_Error {
+        if (!$this->is_configured()) {
+            return new \WP_Error('not_configured', __('Yadore API nicht konfiguriert.', 'yadore-amazon-api'));
         }
-        return self::$instance;
-    }
-    
-    private function __construct() {
-        $this->init_components();
-        $this->register_hooks();
-    }
-    
-    private function init_components(): void {
-        // Core Components (werden durch Autoloader geladen)
-        $this->cache           = new YAA_Cache_Handler();
-        $this->yadore_api      = new YAA_Yadore_API($this->cache);
-        $this->amazon_api      = new YAA_Amazon_PAAPI($this->cache);
-        $this->custom_products = new YAA_Custom_Products();
-        $this->shortcode       = new YAA_Shortcode_Renderer(
-            $this->yadore_api, 
-            $this->amazon_api, 
-            $this->cache,
-            $this->custom_products
-        );
         
-        // Admin Component (koordiniert alle Admin-Submodule)
-        $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
-    }
-    
-    private function register_hooks(): void {
-        register_activation_hook(YAA_PLUGIN_FILE, [$this, 'activate']);
-        register_deactivation_hook(YAA_PLUGIN_FILE, [$this, 'deactivate']);
+        $keyword = trim($params['keyword'] ?? '');
+        $limit = (int) ($params['limit'] ?? 9);
+        $market = $params['market'] ?? yaa_get_option('yadore_market', 'de');
+        $precision = $params['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy');
+        $ean = $params['ean'] ?? '';
+        $merchant_id = $params['merchant_id'] ?? '';
         
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_assets']);
-        add_action('yaa_cache_refresh_event', [$this, 'preload_cache']);
-    }
-    
-    public function activate(): void {
-        // Default settings
-        $defaults = [
-            // Yadore Settings
-            'enable_yadore'          => 'yes',
-            'yadore_api_key'         => '',
-            'yadore_market'          => 'de',
-            'yadore_precision'       => 'fuzzy',
-            'yadore_default_limit'   => 9,
-            
-            // Amazon Settings
-            'enable_amazon'          => 'yes',
-            'amazon_access_key'      => '',
-            'amazon_secret_key'      => '',
-            'amazon_partner_tag'     => '',
-            'amazon_marketplace'     => 'de',
-            'amazon_default_category'=> 'All',
-            'amazon_language'        => '',
-            'amazon_image_size'      => 'Large',
-            
-            // Cache Settings
-            'cache_duration'         => 6,
-            'fallback_duration'      => 24,
-            'enable_redis'           => 'auto',
-            'redis_host'             => '127.0.0.1',
-            'redis_port'             => 6379,
-            'redis_password'         => '',
-            'redis_database'         => 0,
-            
-            // Local Image Storage
-            'enable_local_images'    => 'yes',
-            'image_filename_format'  => 'seo',
-            
-            // Fuzzy Search settings
-            'enable_fuzzy_search'    => 'yes',
-            'fuzzy_auto_mix'         => 'no',
-            'fuzzy_threshold'        => 30,
-            'fuzzy_weight_title'     => 0.40,
-            'fuzzy_weight_description' => 0.25,
-            'fuzzy_weight_category'  => 0.20,
-            'fuzzy_weight_merchant'  => 0.10,
-            'fuzzy_weight_keywords'  => 0.05,
-            
-            // Display Settings
-            'disable_default_css'    => 'no',
-            'grid_columns_desktop'   => 3,
-            'grid_columns_tablet'    => 2,
-            'grid_columns_mobile'    => 1,
-            'button_text_yadore'     => 'Zum Angebot',
-            'button_text_amazon'     => 'Bei Amazon kaufen',
-            'button_text_custom'     => 'Zum Angebot',
-            'show_prime_badge'       => 'yes',
-            'show_merchant'          => 'yes',
-            'show_description'       => 'yes',
-            'show_custom_badge'      => 'yes',
-            'custom_badge_text'      => 'Empfohlen',
-            'color_primary'          => '#ff00cc',
-            'color_secondary'        => '#00ffff',
-            'color_amazon'           => '#ff9900',
-            'color_custom'           => '#4CAF50',
-            
-            // Update Settings
-            'github_token'           => '',
+        // NEU: Sortierung - Standard aus Einstellungen oder Parameter
+        $sort = $params['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc');
+        
+        // Filter-Konfiguration aus Parametern extrahieren
+        $filter_config = [
+            'whitelist' => $params['merchant_whitelist'] ?? '',
+            'blacklist' => $params['merchant_blacklist'] ?? '',
         ];
         
-        $existing = get_option('yaa_settings', []);
-        $merged = array_merge($defaults, $existing);
-        update_option('yaa_settings', $merged);
+        // Prüfen ob CPC-Sortierung gewünscht ist (wird nach dem API-Abruf durchgeführt)
+        $sort_by_cpc = in_array($sort, ['cpc_desc', 'cpc_asc'], true);
+        $cpc_sort_direction = $sort === 'cpc_desc' ? 'desc' : 'asc';
         
-        // Admin-Verzeichnis erstellen
-        $admin_dir = YAA_PLUGIN_PATH . 'includes/admin';
-        if (!is_dir($admin_dir)) {
-            wp_mkdir_p($admin_dir);
+        // API-Sortierung (nur price/relevance wird von der API unterstützt)
+        $api_sort = $sort_by_cpc ? 'rel_desc' : $sort;
+        
+        // Build cache key (inkl. Filter und Sortierung)
+        $filter_hash = md5(serialize($filter_config));
+        $cache_key = 'yadore_' . md5($keyword . $ean . $market . $precision . $limit . $merchant_id . $filter_hash . $sort);
+        
+        // Check cache
+        $cached = $this->cache->get($cache_key);
+        if ($cached !== false && is_array($cached)) {
+            return $cached;
         }
         
-        // Schedule cron
-        if (!wp_next_scheduled('yaa_cache_refresh_event')) {
-            wp_schedule_event(time(), 'twicedaily', 'yaa_cache_refresh_event');
-        }
+        // Bei CPC-Sortierung mehr Ergebnisse laden für bessere Sortierung
+        $api_limit = $sort_by_cpc ? min(100, $limit + 50) : min(100, max(1, $limit + 20));
         
-        flush_rewrite_rules();
-    }
-    
-    public function deactivate(): void {
-        wp_clear_scheduled_hook('yaa_cache_refresh_event');
-        flush_rewrite_rules();
-    }
-    
-    public function enqueue_frontend_assets(): void {
-        global $post;
-        
-        if (!($post instanceof WP_Post)) {
-            return;
-        }
-        
-        $shortcodes = [
-            'yaa_products', 
-            'yadore_products', 
-            'amazon_products', 
-            'combined_products',
-            'custom_products',
-            'all_products',
-            'fuzzy_products',
+        // Build query params
+        $query_params = [
+            'market'    => $market,
+            'precision' => $precision,
+            'limit'     => $api_limit,
         ];
         
-        $has_shortcode = false;
+        if ($keyword !== '') {
+            $query_params['keyword'] = $keyword;
+        }
         
-        foreach ($shortcodes as $shortcode) {
-            if (has_shortcode($post->post_content, $shortcode)) {
-                $has_shortcode = true;
-                break;
+        if ($ean !== '') {
+            $query_params['ean'] = $ean;
+        }
+        
+        if ($merchant_id !== '') {
+            $query_params['merchantId'] = $merchant_id;
+        }
+        
+        // API-Sortierung hinzufügen (nur wenn nicht CPC-Sortierung)
+        if (!$sort_by_cpc && in_array($api_sort, ['rel_desc', 'price_asc', 'price_desc'], true)) {
+            $query_params['sort'] = $api_sort;
+        }
+        
+        // Make API request
+        $url = self::API_URL . '?' . http_build_query($query_params);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 15,
+            'headers' => [
+                'API-Key' => $this->api_key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if ($status_code !== 200) {
+            $error_message = $data['errors']['market'][0] 
+                ?? $data['errors']['keyword'][0] 
+                ?? 'HTTP Error ' . $status_code;
+            return new \WP_Error('api_error', $error_message);
+        }
+        
+        if (!is_array($data)) {
+            return new \WP_Error('invalid_response', __('Ungültige API-Antwort.', 'yadore-amazon-api'));
+        }
+        
+        // Normalize products (inkl. Thumbnail Fallback)
+        $products = $this->normalize_response($data);
+        
+        // Händlerfilter anwenden
+        $products = $this->apply_merchant_filter($products, $filter_config, $params);
+        
+        // NEU: CPC-Sortierung durchführen (wenn gewünscht)
+        if ($sort_by_cpc) {
+            $products = $this->sort_by_cpc($products, $cpc_sort_direction);
+        }
+        
+        // Auf gewünschtes Limit kürzen
+        $products = array_slice($products, 0, $limit);
+        
+        // Cache results
+        $this->cache->set($cache_key, $products, yaa_get_cache_time());
+        
+        // Track keyword
+        $this->track_keyword($keyword, $market, $limit);
+        
+        return $products;
+    }
+    
+    /**
+     * NEU: Sortiert Produkte nach CPC
+     * 
+     * @param array<int, array<string, mixed>> $products
+     * @param string $direction 'asc' oder 'desc'
+     * @return array<int, array<string, mixed>>
+     */
+    private function sort_by_cpc(array $products, string $direction = 'desc'): array {
+        usort($products, function($a, $b) use ($direction) {
+            $cpc_a = (float) ($a['estimated_cpc']['amount'] ?? 0);
+            $cpc_b = (float) ($b['estimated_cpc']['amount'] ?? 0);
+            
+            if ($direction === 'desc') {
+                return $cpc_b <=> $cpc_a; // Höchste zuerst
+            }
+            return $cpc_a <=> $cpc_b; // Niedrigste zuerst
+        });
+        
+        return $products;
+    }
+    
+    /**
+     * Wendet den Händlerfilter auf Produkte an
+     * 
+     * @param array<int, array<string, mixed>> $products
+     * @param array<string, mixed> $filter_config Shortcode-Filter
+     * @param array<string, mixed> $params Original-Parameter
+     * @return array<int, array<string, mixed>>
+     */
+    private function apply_merchant_filter(array $products, array $filter_config, array $params): array {
+        // Filter-Konfiguration erstellen (Shortcode hat Vorrang)
+        $shortcode_whitelist = $filter_config['whitelist'] ?? '';
+        $shortcode_blacklist = $filter_config['blacklist'] ?? '';
+        
+        // Wenn Shortcode-Parameter leer sind, globale Einstellungen laden
+        if ($shortcode_whitelist === '' && $shortcode_blacklist === '') {
+            $final_config = [
+                'whitelist' => YAA_Merchant_Filter::normalize_merchant_list(
+                    yaa_get_option('yadore_merchant_whitelist', '')
+                ),
+                'blacklist' => YAA_Merchant_Filter::normalize_merchant_list(
+                    yaa_get_option('yadore_merchant_blacklist', '')
+                ),
+            ];
+        } else {
+            // Shortcode-Parameter verwenden
+            $final_config = [
+                'whitelist' => YAA_Merchant_Filter::normalize_merchant_list($shortcode_whitelist),
+                'blacklist' => YAA_Merchant_Filter::normalize_merchant_list($shortcode_blacklist),
+            ];
+        }
+        
+        return YAA_Merchant_Filter::filter_products($products, $final_config);
+    }
+    
+    /**
+     * Holt die Händlerliste von der Offer-API (/v2/merchant)
+     * Diese Händler haben Produkt-Angebote
+     * 
+     * @param string $market Markt
+     * @param bool $force_refresh Cache ignorieren
+     * @return array{success: bool, merchants: array<int, array<string, mixed>>, error?: string, from_cache?: bool}
+     */
+    public function fetch_merchants(string $market = 'de', bool $force_refresh = false): array {
+        return YAA_Merchant_Filter::fetch_merchants($this->api_key, $market, $force_refresh);
+    }
+    
+    /**
+     * Holt Deeplink-Händler von der API (/v2/deeplink/merchant)
+     * Diese Händler haben CPC-Daten!
+     * 
+     * @param string $market Markt (z.B. 'de', 'at', 'ch')
+     * @param bool $smartlink_only Nur Smartlink-Händler zurückgeben
+     * @param bool $force_refresh Cache ignorieren
+     * @return array{success: bool, merchants: array<int, array<string, mixed>>, error?: string, total?: int, from_cache?: bool}
+     */
+    public function fetch_deeplink_merchants(
+        string $market = 'de', 
+        bool $smartlink_only = false,
+        bool $force_refresh = false
+    ): array {
+        if ($this->api_key === '') {
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api'),
+            ];
+        }
+        
+        // Cache-Key erstellen
+        $cache_key = 'yadore_deeplink_merchants_' . $market . ($smartlink_only ? '_smartlink' : '_all');
+        
+        // Cache prüfen
+        if (!$force_refresh) {
+            $cached = get_transient($cache_key);
+            if ($cached !== false && is_array($cached)) {
+                return [
+                    'success' => true,
+                    'merchants' => $cached,
+                    'total' => count($cached),
+                    'from_cache' => true,
+                ];
             }
         }
         
-        if ($has_shortcode) {
-            $this->load_assets();
-        }
-    }
-    
-    public function load_assets(): void {
-        $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
-
-        if (!$disable_css) {
-            wp_enqueue_style(
-                'yaa-frontend-grid',
-                YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
-                [],
-                YAA_VERSION
-            );
-            
-            $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
-            $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
-            $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
-            $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
-            $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
-            $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
-            $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
-            
-            $custom_css = "
-                .yaa-grid-container {
-                    --yaa-primary: {$primary};
-                    --yaa-secondary: {$secondary};
-                    --yaa-amazon: {$amazon};
-                    --yaa-custom: {$custom};
-                    --yaa-columns-desktop: {$columns_desktop};
-                    --yaa-columns-tablet: {$columns_tablet};
-                    --yaa-columns-mobile: {$columns_mobile};
-                }
-            ";
-            wp_add_inline_style('yaa-frontend-grid', $custom_css);
-        } else {
-            wp_register_style('yaa-minimal-functional', false);
-            wp_enqueue_style('yaa-minimal-functional');
-            
-            $minimal_css = "
-                .yaa-description {
-                    overflow: hidden;
-                    position: relative;
-                    max-height: 4.8em; 
-                    transition: max-height 0.4s ease-out;
-                }
-                .yaa-description.expanded {
-                    max-height: none !important;
-                    -webkit-line-clamp: unset !important;
-                    line-clamp: unset !important;
-                    display: block !important;
-                    overflow: visible !important;
-                }
-                .yaa-read-more { cursor: pointer; display: inline-block; }
-                .yaa-grid-container {
-                    display: grid;
-                    gap: 20px;
-                    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-                }
-            ";
-            wp_add_inline_style('yaa-minimal-functional', $minimal_css);
+        // Query-Parameter aufbauen
+        $query_params = ['market' => $market];
+        
+        if ($smartlink_only) {
+            $query_params['isSmartlink'] = '1';
         }
         
-        wp_enqueue_script(
-            'yaa-frontend-grid',
-            YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
-            [],
-            YAA_VERSION,
-            true
-        );
+        // API Request
+        $url = self::DEEPLINK_MERCHANT_API_URL . '?' . http_build_query($query_params);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 30,
+            'headers' => [
+                'API-Key' => $this->api_key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => $response->get_error_message(),
+            ];
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if ($status_code !== 200 || !is_array($data)) {
+            $error_message = 'HTTP Error ' . $status_code;
+            
+            if (is_array($data) && isset($data['errors'])) {
+                $first_error = reset($data['errors']);
+                if (is_array($first_error)) {
+                    $error_message = $first_error[0] ?? $error_message;
+                }
+            }
+            
+            return [
+                'success' => false,
+                'merchants' => [],
+                'error' => sprintf(__('API Fehler: %s', 'yadore-amazon-api'), $error_message),
+            ];
+        }
+        
+        // Händler extrahieren und normalisieren
+        $merchants = $data['merchants'] ?? [];
+        
+        // Händler mit CPC-Daten anreichern
+        $normalized_merchants = [];
+        
+        foreach ($merchants as $merchant) {
+            $normalized = [
+                'id'                    => $merchant['id'] ?? '',
+                'name'                  => $merchant['name'] ?? '',
+                'isSmartlink'           => (bool) ($merchant['isSmartlink'] ?? false),
+                'hasSmartlinkHomepage'  => (bool) ($merchant['hasSmartlinkHomepage'] ?? false),
+                'hasExternalHomepage'   => (bool) ($merchant['hasExternalHomepage'] ?? false),
+                'deeplinkCount'         => (int) ($merchant['deeplinkCount'] ?? 0),
+                'logo'                  => [
+                    'url'    => $merchant['logo']['url'] ?? '',
+                    'exists' => (bool) ($merchant['logo']['exists'] ?? false),
+                ],
+                'trafficTypes'          => $merchant['trafficTypes'] ?? [],
+                // CPC-Daten
+                'estimatedCpc'          => [
+                    'amount'   => $merchant['estimatedCpc']['amount'] ?? null,
+                    'currency' => $merchant['estimatedCpc']['currency'] ?? 'EUR',
+                ],
+            ];
+            
+            $normalized_merchants[] = $normalized;
+        }
+        
+        // Nach Name sortieren
+        usort($normalized_merchants, fn($a, $b) => strcasecmp($a['name'] ?? '', $b['name'] ?? ''));
+        
+        // Cache speichern (4 Stunden)
+        set_transient($cache_key, $normalized_merchants, 4 * HOUR_IN_SECONDS);
+        
+        // Auch in Option speichern für Offline-Nutzung in Admin
+        update_option('yaa_yadore_deeplink_merchants_' . $market, $normalized_merchants, false);
+        update_option('yaa_yadore_deeplink_merchants_updated_' . $market, time(), false);
+        
+        return [
+            'success' => true,
+            'merchants' => $normalized_merchants,
+            'total' => $data['total'] ?? count($normalized_merchants),
+            'from_cache' => false,
+        ];
     }
     
-    public function preload_cache(): void {
+    /**
+     * Holt gespeicherte Deeplink-Händler aus der Datenbank
+     * 
+     * @param string $market Markt
+     * @return array<int, array<string, mixed>>
+     */
+    public function get_stored_deeplink_merchants(string $market = 'de'): array {
+        $merchants = get_option('yaa_yadore_deeplink_merchants_' . $market, []);
+        return is_array($merchants) ? $merchants : [];
+    }
+    
+    /**
+     * Gibt das letzte Update-Datum der Deeplink-Händler zurück
+     * 
+     * @param string $market Markt
+     * @return int|null Unix Timestamp oder null
+     */
+    public function get_deeplink_merchants_last_update(string $market = 'de'): ?int {
+        $timestamp = get_option('yaa_yadore_deeplink_merchants_updated_' . $market, null);
+        return $timestamp !== null ? (int) $timestamp : null;
+    }
+    
+    /**
+     * Holt CPC für einen bestimmten Händler
+     * 
+     * @param string $merchant_id Händler-ID (64 Zeichen Hex)
+     * @param string $market Markt
+     * @return array{amount: float|null, currency: string}
+     */
+    public function get_merchant_cpc(string $merchant_id, string $market = 'de'): array {
+        $merchants = $this->get_stored_deeplink_merchants($market);
+        
+        foreach ($merchants as $merchant) {
+            if (($merchant['id'] ?? '') === $merchant_id) {
+                $amount = $merchant['estimatedCpc']['amount'] ?? null;
+                
+                return [
+                    'amount'   => $amount !== null ? (float) $amount : null,
+                    'currency' => $merchant['estimatedCpc']['currency'] ?? 'EUR',
+                ];
+            }
+        }
+        
+        return [
+            'amount'   => null,
+            'currency' => 'EUR',
+        ];
+    }
+    
+    /**
+     * Holt CPC für einen Händler nach Namen
+     * 
+     * @param string $merchant_name Händlername
+     * @param string $market Markt
+     * @return array{amount: float|null, currency: string, merchant_id: string|null}
+     */
+    public function get_merchant_cpc_by_name(string $merchant_name, string $market = 'de'): array {
+        $merchants = $this->get_stored_deeplink_merchants($market);
+        $merchant_name_lower = mb_strtolower($merchant_name, 'UTF-8');
+        
+        foreach ($merchants as $merchant) {
+            $name = mb_strtolower($merchant['name'] ?? '', 'UTF-8');
+            
+            // Exakter Match oder enthält
+            if ($name === $merchant_name_lower || str_contains($name, $merchant_name_lower)) {
+                $amount = $merchant['estimatedCpc']['amount'] ?? null;
+                
+                return [
+                    'amount'      => $amount !== null ? (float) $amount : null,
+                    'currency'    => $merchant['estimatedCpc']['currency'] ?? 'EUR',
+                    'merchant_id' => $merchant['id'] ?? null,
+                ];
+            }
+        }
+        
+        return [
+            'amount'      => null,
+            'currency'    => 'EUR',
+            'merchant_id' => null,
+        ];
+    }
+    
+    /**
+     * Holt alle Händler mit CPC sortiert nach CPC (absteigend)
+     * 
+     * @param string $market Markt
+     * @param int $limit Max. Anzahl (0 = alle)
+     * @return array<int, array{id: string, name: string, cpc_amount: float, cpc_currency: string, is_smartlink: bool}>
+     */
+    public function get_merchants_by_cpc(string $market = 'de', int $limit = 0): array {
+        $merchants = $this->get_stored_deeplink_merchants($market);
+        
+        // Nur Händler mit CPC
+        $with_cpc = array_filter($merchants, function($m) {
+            $amount = $m['estimatedCpc']['amount'] ?? null;
+            return $amount !== null && (float) $amount > 0;
+        });
+        
+        // Nach CPC sortieren (höchster zuerst)
+        usort($with_cpc, function($a, $b) {
+            $cpc_a = (float) ($a['estimatedCpc']['amount'] ?? 0);
+            $cpc_b = (float) ($b['estimatedCpc']['amount'] ?? 0);
+            return $cpc_b <=> $cpc_a;
+        });
+        
+        // Limit anwenden
+        if ($limit > 0) {
+            $with_cpc = array_slice($with_cpc, 0, $limit);
+        }
+        
+        // Vereinfachtes Format zurückgeben
+        $result = [];
+        foreach ($with_cpc as $merchant) {
+            $result[] = [
+                'id'           => $merchant['id'] ?? '',
+                'name'         => $merchant['name'] ?? '',
+                'cpc_amount'   => (float) ($merchant['estimatedCpc']['amount'] ?? 0),
+                'cpc_currency' => $merchant['estimatedCpc']['currency'] ?? 'EUR',
+                'is_smartlink' => (bool) ($merchant['isSmartlink'] ?? false),
+            ];
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Berechnet Statistiken über CPC-Daten
+     * 
+     * @param string $market Markt
+     * @return array{total: int, with_cpc: int, avg_cpc: float, min_cpc: float, max_cpc: float, currency: string}
+     */
+    public function get_cpc_statistics(string $market = 'de'): array {
+        $merchants = $this->get_stored_deeplink_merchants($market);
+        
+        $stats = [
+            'total'    => count($merchants),
+            'with_cpc' => 0,
+            'avg_cpc'  => 0.0,
+            'min_cpc'  => 0.0,
+            'max_cpc'  => 0.0,
+            'currency' => 'EUR',
+        ];
+        
+        $cpc_values = [];
+        
+        foreach ($merchants as $merchant) {
+            $amount = $merchant['estimatedCpc']['amount'] ?? null;
+            
+            if ($amount !== null && (float) $amount > 0) {
+                $cpc_values[] = (float) $amount;
+                $stats['currency'] = $merchant['estimatedCpc']['currency'] ?? 'EUR';
+            }
+        }
+        
+        if (!empty($cpc_values)) {
+            $stats['with_cpc'] = count($cpc_values);
+            $stats['avg_cpc'] = round(array_sum($cpc_values) / count($cpc_values), 4);
+            $stats['min_cpc'] = min($cpc_values);
+            $stats['max_cpc'] = max($cpc_values);
+        }
+        
+        return $stats;
+    }
+    
+    /**
+     * Kombiniert Offer-Händler und Deeplink-Händler
+     * Gibt eine einheitliche Liste mit allen verfügbaren Daten zurück
+     * 
+     * @param string $market Markt
+     * @return array<int, array<string, mixed>>
+     */
+    public function get_all_merchants_combined(string $market = 'de'): array {
+        // Offer-Händler laden
+        $offer_merchants = YAA_Merchant_Filter::get_stored_merchants($market);
+        
+        // Deeplink-Händler laden
+        $deeplink_merchants = $this->get_stored_deeplink_merchants($market);
+        
+        // Index für Deeplink-Händler erstellen (nach ID)
+        $deeplink_index = [];
+        foreach ($deeplink_merchants as $dm) {
+            $deeplink_index[$dm['id'] ?? ''] = $dm;
+        }
+        
+        // Kombinierte Liste erstellen
+        $combined = [];
+        $seen_ids = [];
+        
+        // Zuerst Offer-Händler verarbeiten
+        foreach ($offer_merchants as $om) {
+            $id = $om['id'] ?? '';
+            $seen_ids[$id] = true;
+            
+            $entry = [
+                'id'           => $id,
+                'name'         => $om['name'] ?? '',
+                'offer_count'  => (int) ($om['offerCount'] ?? 0),
+                'logo_url'     => $om['logo'] ?? '',
+                'has_logo'     => (bool) ($om['hasLogo'] ?? false),
+                'type'         => 'offer',
+                'is_deeplink'  => false,
+                'is_smartlink' => false,
+                'cpc_amount'   => null,
+                'cpc_currency' => 'EUR',
+            ];
+            
+            // Mit Deeplink-Daten anreichern falls vorhanden
+            if (isset($deeplink_index[$id])) {
+                $dm = $deeplink_index[$id];
+                $entry['is_deeplink'] = true;
+                $entry['is_smartlink'] = (bool) ($dm['isSmartlink'] ?? false);
+                $entry['deeplink_count'] = (int) ($dm['deeplinkCount'] ?? 0);
+                
+                $cpc = $dm['estimatedCpc']['amount'] ?? null;
+                if ($cpc !== null) {
+                    $entry['cpc_amount'] = (float) $cpc;
+                    $entry['cpc_currency'] = $dm['estimatedCpc']['currency'] ?? 'EUR';
+                }
+            }
+            
+            $combined[] = $entry;
+        }
+        
+        // Dann Deeplink-only Händler hinzufügen
+        foreach ($deeplink_merchants as $dm) {
+            $id = $dm['id'] ?? '';
+            
+            if (isset($seen_ids[$id])) {
+                continue; // Bereits verarbeitet
+            }
+            
+            $cpc = $dm['estimatedCpc']['amount'] ?? null;
+            
+            $combined[] = [
+                'id'             => $id,
+                'name'           => $dm['name'] ?? '',
+                'offer_count'    => 0,
+                'deeplink_count' => (int) ($dm['deeplinkCount'] ?? 0),
+                'logo_url'       => $dm['logo']['url'] ?? '',
+                'has_logo'       => (bool) ($dm['logo']['exists'] ?? false),
+                'type'           => 'deeplink',
+                'is_deeplink'    => true,
+                'is_smartlink'   => (bool) ($dm['isSmartlink'] ?? false),
+                'cpc_amount'     => $cpc !== null ? (float) $cpc : null,
+                'cpc_currency'   => $dm['estimatedCpc']['currency'] ?? 'EUR',
+            ];
+        }
+        
+        // Nach Name sortieren
+        usort($combined, fn($a, $b) => strcasecmp($a['name'] ?? '', $b['name'] ?? ''));
+        
+        return $combined;
+    }
+    
+    /**
+     * Normalize API response to standard format
+     * NEU: Thumbnail als Fallback für Image
+     * 
+     * @param array<string, mixed> $data
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_response(array $data): array {
+        $products = [];
+        $offers = $data['offers'] ?? [];
+        
+        foreach ($offers as $offer) {
+            // NEU: Bild-URL mit Thumbnail-Fallback
+            $image_url = $offer['image']['url'] ?? '';
+            $thumbnail_url = $offer['thumbnail']['url'] ?? '';
+            
+            // Fallback-Kette: image -> thumbnail -> leer
+            $final_image_url = $image_url;
+            if ($final_image_url === '' && $thumbnail_url !== '') {
+                $final_image_url = $thumbnail_url;
+            }
+            
+            $products[] = [
+                'id'          => $offer['id'] ?? uniqid('yadore_'),
+                'title'       => $offer['title'] ?? '',
+                'description' => $offer['description'] ?? '',
+                'url'         => $offer['clickUrl'] ?? '',
+                'image'       => [
+                    'url'           => $final_image_url,
+                    'original_url'  => $image_url,      // NEU: Original-Bild URL
+                    'thumbnail_url' => $thumbnail_url,  // NEU: Thumbnail URL
+                ],
+                'price'       => [
+                    'amount'   => $offer['price']['amount'] ?? '',
+                    'currency' => $offer['price']['currency'] ?? 'EUR',
+                    'display'  => '',
+                ],
+                'merchant'    => [
+                    'id'   => $offer['merchant']['id'] ?? '',
+                    'name' => $offer['merchant']['name'] ?? '',
+                    'logo' => $offer['merchant']['logo']['url'] ?? '',
+                ],
+                'source'       => 'yadore',
+                'availability' => $offer['availability'] ?? 'UNKNOWN',
+                'is_prime'     => false,
+                'ean'          => $offer['ean'] ?? '',
+                'brand'        => $offer['brand'] ?? '',
+                // CPC aus Offer (falls vorhanden)
+                'estimated_cpc' => [
+                    'amount'   => $offer['estimatedCpc']['amount'] ?? null,
+                    'currency' => $offer['estimatedCpc']['currency'] ?? 'EUR',
+                ],
+            ];
+        }
+        
+        return $products;
+    }
+    
+    /**
+     * Track keyword for cron preload
+     */
+    private function track_keyword(string $keyword, string $market, int $limit): void {
+        if ($keyword === '') {
+            return;
+        }
+        
         $cached_keywords = get_option('yaa_cached_keywords', []);
         
-        if (empty($cached_keywords)) {
-            return;
+        if (!is_array($cached_keywords)) {
+            $cached_keywords = [];
         }
         
+        $new_entry = [
+            'keyword' => $keyword,
+            'market'  => $market,
+            'limit'   => $limit,
+            'source'  => 'yadore',
+        ];
+        
+        // Check for duplicates
         foreach ($cached_keywords as $entry) {
-            $source = $entry['source'] ?? 'yadore';
-            
-            if ($source === 'amazon' && $this->amazon_api->is_configured()) {
-                $this->amazon_api->search_items(
-                    $entry['keyword'] ?? '',
-                    $entry['category'] ?? 'All',
-                    $entry['limit'] ?? 10
-                );
-            } elseif ($this->yadore_api->is_configured()) {
-                $this->yadore_api->fetch([
-                    'keyword' => $entry['keyword'] ?? '',
-                    'limit'   => $entry['limit'] ?? 9,
-                    'market'  => $entry['market'] ?? yaa_get_option('yadore_market', 'de'),
-                ]);
+            if (($entry['keyword'] ?? '') === $keyword 
+                && ($entry['source'] ?? '') === 'yadore'
+                && ($entry['market'] ?? 'de') === $market) {
+                return;
             }
+        }
+        
+        $cached_keywords[] = $new_entry;
+        $cached_keywords = array_slice($cached_keywords, -30);
+        update_option('yaa_cached_keywords', $cached_keywords);
+    }
+    
+    /**
+     * Test API connection
+     * 
+     * @return array{success: bool, message: string}
+     */
+    public function test_connection(?string $api_key = null): array {
+        $key = $api_key ?? $this->api_key;
+        
+        if ($key === '') {
+            return [
+                'success' => false,
+                'message' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api'),
+            ];
+        }
+        
+        $url = self::API_URL . '?' . http_build_query([
+            'market'  => 'de',
+            'keyword' => 'test',
+            'limit'   => 1,
+        ]);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 10,
+            'headers' => [
+                'API-Key' => $key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'message' => $response->get_error_message(),
+            ];
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        
+        if ($status_code === 200) {
+            return [
+                'success' => true,
+                'message' => __('Verbindung erfolgreich!', 'yadore-amazon-api'),
+            ];
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        $error = $data['errors']['market'][0] ?? 'HTTP Error ' . $status_code;
+        
+        return [
+            'success' => false,
+            'message' => $error,
+        ];
+    }
+    
+    /**
+     * Test Deeplink API connection
+     * 
+     * @return array{success: bool, message: string, merchant_count?: int}
+     */
+    public function test_deeplink_connection(?string $api_key = null): array {
+        $key = $api_key ?? $this->api_key;
+        
+        if ($key === '') {
+            return [
+                'success' => false,
+                'message' => __('Kein API-Key konfiguriert.', 'yadore-amazon-api'),
+            ];
+        }
+        
+        $url = self::DEEPLINK_MERCHANT_API_URL . '?' . http_build_query([
+            'market' => 'de',
+        ]);
+        
+        $response = wp_remote_get($url, [
+            'timeout' => 15,
+            'headers' => [
+                'API-Key' => $key,
+                'Accept'  => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'message' => $response->get_error_message(),
+            ];
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if ($status_code === 200 && is_array($data)) {
+            $total = $data['total'] ?? count($data['merchants'] ?? []);
             
-            sleep(1);
+            return [
+                'success' => true,
+                'message' => sprintf(
+                    __('Deeplink API erfolgreich! %d Händler gefunden.', 'yadore-amazon-api'),
+                    $total
+                ),
+                'merchant_count' => $total,
+            ];
+        }
+        
+        $error = 'HTTP Error ' . $status_code;
+        if (is_array($data) && isset($data['errors'])) {
+            $first_error = reset($data['errors']);
+            if (is_array($first_error)) {
+                $error = $first_error[0] ?? $error;
+            }
+        }
+        
+        return [
+            'success' => false,
+            'message' => $error,
+        ];
+    }
+    
+    /**
+     * Löscht alle Merchant-Caches
+     * 
+     * @param string|null $market Spezifischer Markt oder null für alle
+     */
+    public function clear_merchant_cache(?string $market = null): void {
+        if ($market !== null) {
+            // Spezifischen Markt löschen
+            delete_transient('yadore_merchants_list_' . $market);
+            delete_transient('yadore_deeplink_merchants_' . $market . '_all');
+            delete_transient('yadore_deeplink_merchants_' . $market . '_smartlink');
+        } else {
+            // Alle Märkte löschen
+            global $wpdb;
+            
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yadore_merchants_list_%'"
+            );
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yadore_deeplink_merchants_%'"
+            );
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yadore_merchants_list_%'"
+            );
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yadore_deeplink_merchants_%'"
+            );
         }
     }
 }
-
-/**
- * Initialize Plugin
- */
-function yaa_init(): Yadore_Amazon_API_Plugin {
-    return Yadore_Amazon_API_Plugin::get_instance();
-}
-add_action('plugins_loaded', 'yaa_init', 10);
-
-/**
- * Plugin action links
- */
-function yaa_plugin_action_links(array $links): array {
-    $settings_link = '<a href="' . admin_url('admin.php?page=yaa-settings') . '">' . 
-                     __('Einstellungen', 'yadore-amazon-api') . '</a>';
-    array_unshift($links, $settings_link);
-    return $links;
-}
-add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_links');
  
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\frontend-grid.css 
  
@@ -7366,7 +7895,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Shortcode Renderer - Vollständige Version mit allen Features
  * PHP 8.3+ compatible
- * Version: 1.3.0
+ * Version: 1.5.0
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
@@ -7377,6 +7906,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * - Merchant Filter (Whitelist/Blacklist) für Yadore
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
+ * - NEU: Sortierung nach Preis/CPC
  */
 
 declare(strict_types=1);
@@ -7512,7 +8042,7 @@ final class YAA_Shortcode_Renderer {
     }
     
     /**
-     * Render Yadore products - Mit Merchant Filter
+     * Render Yadore products - Mit Merchant Filter und Sortierung
      */
     public function render_yadore(array|string $atts = []): string {
         $atts = shortcode_atts([
@@ -7521,6 +8051,7 @@ final class YAA_Shortcode_Renderer {
             'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'columns'            => '',
             'class'              => '',
             'local_images'       => '',
@@ -7565,6 +8096,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $total_limit,
                 'market'             => (string) $atts['market'],
                 'precision'          => (string) $atts['precision'],
+                'sort'               => (string) $atts['sort'], // NEU
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -7739,6 +8271,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'shuffle'            => 'yes',
             'columns'            => '',
             'class'              => '',
@@ -7795,7 +8328,7 @@ final class YAA_Shortcode_Renderer {
                 $yadore_items = $this->fetch_multi_keywords_with_filter(
                     $keywords, 
                     $yadore_limit, 
-                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
                     $merchant_whitelist,
                     $merchant_blacklist
                 );
@@ -7804,6 +8337,7 @@ final class YAA_Shortcode_Renderer {
                     'keyword'            => $keyword,
                     'limit'              => $yadore_limit,
                     'market'             => (string) $atts['market'],
+                    'sort'               => (string) $atts['sort'], // NEU
                     'merchant_whitelist' => $merchant_whitelist,
                     'merchant_blacklist' => $merchant_blacklist,
                 ]);
@@ -7857,6 +8391,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
             'priority'           => 'custom,yadore,amazon',
             'shuffle'            => 'no',
             'columns'            => '',
@@ -7917,7 +8452,7 @@ final class YAA_Shortcode_Renderer {
                             $items = $this->fetch_multi_keywords_with_filter(
                                 $keywords, 
                                 $remaining, 
-                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy')],
+                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
                                 $merchant_whitelist,
                                 $merchant_blacklist
                             );
@@ -7926,6 +8461,7 @@ final class YAA_Shortcode_Renderer {
                                 'keyword'            => $keyword,
                                 'limit'              => $remaining,
                                 'market'             => (string) $atts['market'],
+                                'sort'               => (string) $atts['sort'], // NEU
                                 'merchant_whitelist' => $merchant_whitelist,
                                 'merchant_blacklist' => $merchant_blacklist,
                             ]);
@@ -8116,6 +8652,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $limit_for_this,
                 'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
                 'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')), // NEU
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -10842,7 +11379,15 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Admin Settings Page
  * Rendert alle Einstellungs-Tabs und verarbeitet Sanitization
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.5.0
+ * 
+ * Features:
+ * - Yadore API Konfiguration inkl. Merchant Filter
+ * - Amazon PA-API 5.0 Konfiguration
+ * - Eigene Produkte mit Fuzzy-Suche
+ * - Cache & Bilder (Redis, lokale Speicherung)
+ * - Darstellungs-Optionen
+ * - NEU: Sortierungs-Einstellungen (Preis/CPC)
  */
 
 declare(strict_types=1);
@@ -10952,6 +11497,11 @@ final class YAA_Admin_Settings {
             ? $input['yadore_precision'] : 'fuzzy';
         $sanitized['yadore_default_limit'] = max(1, min(50, (int) ($input['yadore_default_limit'] ?? 9)));
         
+        // NEU: Sortierung
+        $valid_sorts = ['rel_desc', 'price_asc', 'price_desc', 'cpc_desc', 'cpc_asc'];
+        $sanitized['yadore_default_sort'] = in_array($input['yadore_default_sort'] ?? '', $valid_sorts, true) 
+            ? $input['yadore_default_sort'] : 'rel_desc';
+        
         // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
         $sanitized['yadore_merchant_blacklist'] = $this->sanitize_merchant_list($input['yadore_merchant_blacklist'] ?? '');
@@ -11031,7 +11581,7 @@ final class YAA_Admin_Settings {
     }
     
     /**
-     * Render Yadore settings - MIT Merchant Filter
+     * Render Yadore settings - MIT Merchant Filter und Sortierung
      *
      * @param array<string, mixed> $options
      * @param array<string, string> $markets
@@ -11043,6 +11593,9 @@ final class YAA_Admin_Settings {
         
         $whitelist = $options['yadore_merchant_whitelist'] ?? '';
         $blacklist = $options['yadore_merchant_blacklist'] ?? '';
+        
+        // Sortieroptionen von der API holen
+        $sort_options = $this->yadore_api->get_sort_options();
         ?>
         <div class="yaa-card">
             <h2>📦 Yadore API Konfiguration</h2>
@@ -11104,6 +11657,22 @@ final class YAA_Admin_Settings {
                            value="<?php echo esc_attr($options['yadore_default_limit'] ?? '9'); ?>"
                            min="1" max="50">
                 </div>
+                
+                <!-- NEU: Sortierung -->
+                <div class="yaa-form-row">
+                    <label for="yadore_default_sort">Standard-Sortierung</label>
+                    <select id="yadore_default_sort" name="yaa_settings[yadore_default_sort]">
+                        <?php foreach ($sort_options as $value => $label): ?>
+                            <option value="<?php echo esc_attr($value); ?>" 
+                                <?php selected(($options['yadore_default_sort'] ?? 'rel_desc'), $value); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="description">
+                        Kann im Shortcode mit <code>sort="price_asc"</code> überschrieben werden.
+                    </p>
+                </div>
             </div>
             
             <div class="yaa-form-row">
@@ -11111,6 +11680,65 @@ final class YAA_Admin_Settings {
                     🔍 Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <!-- NEU: Sortierungs-Info -->
+        <div class="yaa-card">
+            <h2>📊 Sortierungs-Optionen</h2>
+            <p class="description">
+                Bestimme, in welcher Reihenfolge die Produkte angezeigt werden.
+            </p>
+            
+            <table class="widefat striped" style="margin-top: 15px;">
+                <thead>
+                    <tr>
+                        <th>Wert</th>
+                        <th>Beschreibung</th>
+                        <th>Shortcode-Beispiel</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>rel_desc</code></td>
+                        <td>Nach Relevanz (Standard der Yadore API)</td>
+                        <td><code>[yadore_products keyword="Laptop" sort="rel_desc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>price_asc</code></td>
+                        <td>Günstigste Produkte zuerst 💰</td>
+                        <td><code>[yadore_products keyword="Smartphone" sort="price_asc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>price_desc</code></td>
+                        <td>Teuerste Produkte zuerst</td>
+                        <td><code>[yadore_products keyword="Monitor" sort="price_desc"]</code></td>
+                    </tr>
+                    <tr style="background: #e8f5e9;">
+                        <td><code>cpc_desc</code></td>
+                        <td><strong>Höchste Vergütung zuerst</strong> 💵</td>
+                        <td><code>[yadore_products keyword="Kopfhörer" sort="cpc_desc"]</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>cpc_asc</code></td>
+                        <td>Niedrigste Vergütung zuerst</td>
+                        <td><code>[yadore_products keyword="Tablet" sort="cpc_asc"]</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                Vergütung pro Klick zuerst angezeigt. So kannst du deinen Revenue maximieren!
+            </div>
+            
+            <div class="yaa-feature-box info" style="margin-top: 15px;">
+                <h4 style="margin-top: 0;">⚠️ Hinweis zur CPC-Sortierung</h4>
+                <p>
+                    Die CPC-Sortierung erfolgt <strong>nach dem API-Abruf</strong> im Plugin, da die Yadore API
+                    nur Preis- und Relevanz-Sortierung nativ unterstützt. Bei CPC-Sortierung werden automatisch
+                    mehr Produkte geladen, um nach der Sortierung genügend Ergebnisse zu haben.
+                </p>
             </div>
         </div>
         
@@ -11149,7 +11777,8 @@ final class YAA_Admin_Settings {
                         ✅ Whitelist (nur diese Händler anzeigen)
                     </label>
                     <?php if (!empty($merchants)): ?>
-                        <select name="yaa_settings_whitelist_select[]" multiple class="yaa-merchant-select">
+                        <select name="yaa_settings_whitelist_select[]" multiple class="yaa-merchant-select" 
+                                data-target="yadore_merchant_whitelist" style="height: 150px; width: 100%;">
                             <?php 
                             $whitelist_array = array_map('trim', explode(',', $whitelist));
                             foreach ($merchants as $merchant): 
@@ -11179,7 +11808,8 @@ final class YAA_Admin_Settings {
                         ❌ Blacklist (diese Händler ausschließen)
                     </label>
                     <?php if (!empty($merchants)): ?>
-                        <select name="yaa_settings_blacklist_select[]" multiple class="yaa-merchant-select">
+                        <select name="yaa_settings_blacklist_select[]" multiple class="yaa-merchant-select"
+                                data-target="yadore_merchant_blacklist" style="height: 150px; width: 100%;">
                             <?php 
                             $blacklist_array = array_map('trim', explode(',', $blacklist));
                             foreach ($merchants as $merchant): 
@@ -11225,6 +11855,7 @@ final class YAA_Admin_Settings {
                 Du kannst mehrere Keywords in einem Shortcode verwenden. Das Limit wird automatisch aufgeteilt.
             </p>
             <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet,Laptop" limit="9"]</div>
+            <div class="yaa-shortcode-box">[yadore_products keywords="Smartphone,Tablet" limit="6" sort="cpc_desc"]</div>
             <div class="yaa-tip">
                 <strong>Tipp:</strong> Bei 3 Keywords und limit="9" werden je 3 Produkte pro Keyword geladen.
             </div>
@@ -11408,157 +12039,126 @@ final class YAA_Admin_Settings {
             <div class="yaa-grid" style="margin: 20px 0;">
                 <div class="yaa-stat-box" style="background: #f0f6fc;">
                     <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $published_count; ?></div>
-                    <div class="yaa-stat-label">Veröffentlichte Produkte</div>
+                    <div class="yaa-stat-label">Produkte</div>
                 </div>
-                <div class="yaa-stat-box" style="background: #fef8ee;">
-                    <div class="yaa-stat-number" style="color: #996800;"><?php echo (int) $category_count; ?></div>
+                <div class="yaa-stat-box" style="background: #f0f9ff;">
+                    <div class="yaa-stat-number" style="color: #00a0d2;"><?php echo (int) $category_count; ?></div>
                     <div class="yaa-stat-label">Kategorien</div>
-                </div>
-                <div class="yaa-stat-box">
-                    <a href="<?php echo admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" 
-                       class="button button-primary button-hero" style="margin-top: 10px;">
-                        ➕ Neues Produkt
-                    </a>
                 </div>
             </div>
             
             <p>
-                <a href="<?php echo admin_url('edit.php?post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button">
-                    📋 Alle Produkte verwalten
+                <a href="<?php echo esc_url(admin_url('edit.php?post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button button-primary">
+                    📦 Produkte verwalten
                 </a>
-                <a href="<?php echo admin_url('edit-tags.php?taxonomy=' . YAA_Custom_Products::get_taxonomy() . '&post_type=' . YAA_Custom_Products::get_post_type()); ?>" class="button" style="margin-left: 10px;">
-                    🏷️ Kategorien verwalten
+                <a href="<?php echo esc_url(admin_url('post-new.php?post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button">
+                    ➕ Neues Produkt
+                </a>
+                <a href="<?php echo esc_url(admin_url('edit-tags.php?taxonomy=' . YAA_Custom_Products::get_taxonomy() . '&post_type=' . YAA_Custom_Products::get_post_type())); ?>" class="button">
+                    🏷️ Kategorien
                 </a>
             </p>
         </div>
         
         <div class="yaa-card">
-            <h2>🔍 Fuzzy-Suche Einstellungen</h2>
+            <h2>🔍 Fuzzy-Suche für eigene Produkte</h2>
             <p class="description">
-                Die Fuzzy-Suche findet eigene Produkte basierend auf ähnlichen Keywords, Titeln und Kategorien.
+                Die Fuzzy-Suche findet ähnliche Produkte auch bei Tippfehlern oder unvollständigen Suchbegriffen.
             </p>
             
             <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[enable_fuzzy_search]" value="yes" 
                         <?php checked(($options['enable_fuzzy_search'] ?? 'yes'), 'yes'); ?>>
-                    <strong>Fuzzy-Suche aktivieren</strong>
+                    Fuzzy-Suche aktivieren
                 </label>
-                <p class="description">
-                    Ermöglicht die Nutzung des <code>[fuzzy_products]</code> Shortcodes und der
-                    <code>keyword=""</code> Suche bei eigenen Produkten.
-                </p>
             </div>
             
             <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[fuzzy_auto_mix]" value="yes" 
                         <?php checked(($options['fuzzy_auto_mix'] ?? 'no'), 'yes'); ?>>
-                    <strong>Automatisch eigene Produkte einmischen</strong>
+                    Automatisch eigene Produkte in Yadore/Amazon-Ergebnisse einmischen
                 </label>
                 <p class="description">
-                    Mischt automatisch passende eigene Produkte in Yadore/Amazon Suchergebnisse ein.
-                    Kann auch per Shortcode mit <code>mix_custom="yes"</code> aktiviert werden.
+                    Wenn aktiviert, werden passende eigene Produkte automatisch bei allen Suchanfragen hinzugefügt.
                 </p>
             </div>
             
             <div class="yaa-form-row">
-                <label for="fuzzy_threshold">Mindest-Übereinstimmung (%)</label>
-                <input type="number" id="fuzzy_threshold" name="yaa_settings[fuzzy_threshold]" 
+                <label for="fuzzy_threshold">Mindest-Score für Treffer (%)</label>
+                <input type="range" id="fuzzy_threshold" name="yaa_settings[fuzzy_threshold]" 
                        value="<?php echo esc_attr($options['fuzzy_threshold'] ?? '30'); ?>"
-                       min="0" max="100" step="5" style="max-width: 100px;">
+                       min="0" max="100" step="5"
+                       oninput="document.getElementById('fuzzy_threshold_value').textContent = this.value + '%'">
+                <span id="fuzzy_threshold_value" style="margin-left: 10px; font-weight: bold;">
+                    <?php echo esc_html($options['fuzzy_threshold'] ?? '30'); ?>%
+                </span>
                 <p class="description">
-                    Produkte mit niedrigerem Score werden nicht angezeigt. Empfohlen: 25-40%
+                    Produkte mit einem Score unter diesem Wert werden nicht angezeigt. Niedriger = mehr Ergebnisse, höher = relevantere Treffer.
                 </p>
             </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>⚖️ Gewichtung der Suchfelder</h2>
+            <p class="description">
+                Bestimme, wie stark jedes Feld in die Berechnung des Scores einfließt. Die Summe sollte 1.0 ergeben.
+            </p>
             
-            <h4>Gewichtungen</h4>
-            <p class="description" style="margin-bottom: 15px;">Die Summe sollte ~1.0 (100%) ergeben.</p>
-            
-            <div class="yaa-grid-4">
+            <div class="yaa-grid">
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_title">Titel</label>
                     <input type="number" id="fuzzy_weight_title" name="yaa_settings[fuzzy_weight_title]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_title'] ?? '0.40'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_description">Beschreibung</label>
                     <input type="number" id="fuzzy_weight_description" name="yaa_settings[fuzzy_weight_description]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_description'] ?? '0.25'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_category">Kategorie</label>
                     <input type="number" id="fuzzy_weight_category" name="yaa_settings[fuzzy_weight_category]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_category'] ?? '0.20'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
-                
+                <div class="yaa-form-row">
+                    <label for="fuzzy_weight_merchant">Händler</label>
+                    <input type="number" id="fuzzy_weight_merchant" name="yaa_settings[fuzzy_weight_merchant]" 
+                           value="<?php echo esc_attr($options['fuzzy_weight_merchant'] ?? '0.10'); ?>"
+                           min="0" max="1" step="0.05">
+                </div>
                 <div class="yaa-form-row">
                     <label for="fuzzy_weight_keywords">Keywords</label>
                     <input type="number" id="fuzzy_weight_keywords" name="yaa_settings[fuzzy_weight_keywords]" 
                            value="<?php echo esc_attr($options['fuzzy_weight_keywords'] ?? '0.05'); ?>"
-                           min="0" max="1" step="0.05" style="max-width: 80px;">
+                           min="0" max="1" step="0.05">
                 </div>
             </div>
         </div>
         
         <div class="yaa-card">
-            <h2>📝 Shortcodes für eigene Produkte</h2>
+            <h2>📝 Shortcode-Beispiele</h2>
             
-            <h4>Nach IDs anzeigen:</h4>
+            <h4>Eigene Produkte anzeigen:</h4>
+            <div class="yaa-shortcode-box">[custom_products limit="6"]</div>
             <div class="yaa-shortcode-box">[custom_products ids="123,456,789"]</div>
-            
-            <h4>Nach Kategorie anzeigen:</h4>
-            <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="6"]</div>
+            <div class="yaa-shortcode-box">[custom_products category="elektronik" limit="4"]</div>
             
             <h4>Fuzzy-Suche:</h4>
-            <div class="yaa-shortcode-box">[fuzzy_products keyword="Kopfhörer" limit="6"]</div>
-            <div class="yaa-shortcode-box">[custom_products keyword="Smartphone" fuzzy="yes"]</div>
+            <div class="yaa-shortcode-box">[fuzzy_products keyword="Smartphone" limit="5"]</div>
+            <div class="yaa-shortcode-box">[custom_products keyword="Laptop" fuzzy="yes"]</div>
             
-            <h4>Yadore/Amazon mit eigenen Produkten mischen:</h4>
-            <div class="yaa-shortcode-box">[yadore_products keyword="Tablet" mix_custom="yes" custom_limit="2"]</div>
-            <div class="yaa-shortcode-box">[amazon_products keyword="Monitor" mix_custom="yes" custom_position="alternate"]</div>
+            <h4>Eigene Produkte einmischen:</h4>
+            <div class="yaa-shortcode-box">[yadore_products keyword="Kopfhörer" mix_custom="yes" custom_limit="2"]</div>
+            <div class="yaa-shortcode-box">[amazon_products keyword="Tablet" mix_custom="yes" custom_position="alternate"]</div>
             
-            <div class="yaa-tip">
-                <strong>Tipp:</strong> Füge bei eigenen Produkten zusätzliche "Fuzzy-Keywords" hinzu, 
-                um die Trefferquote zu verbessern. Diese findest du im Produkt-Bearbeitungsformular.
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>🎨 Darstellung eigener Produkte</h2>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_custom_badge]" value="yes" 
-                        <?php checked(($options['show_custom_badge'] ?? 'yes'), 'yes'); ?>>
-                    Badge bei eigenen Produkten anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="custom_badge_text">Badge-Text</label>
-                <input type="text" id="custom_badge_text" name="yaa_settings[custom_badge_text]" 
-                       value="<?php echo esc_attr($options['custom_badge_text'] ?? 'Empfohlen'); ?>"
-                       placeholder="Empfohlen">
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="button_text_custom">Button-Text</label>
-                <input type="text" id="button_text_custom" name="yaa_settings[button_text_custom]" 
-                       value="<?php echo esc_attr($options['button_text_custom'] ?? 'Zum Angebot'); ?>">
-            </div>
-            
-            <div class="yaa-form-row">
-                <label for="color_custom">Farbe für eigene Produkte</label>
-                <input type="text" id="color_custom" name="yaa_settings[color_custom]" 
-                       value="<?php echo esc_attr($options['color_custom'] ?? '#4CAF50'); ?>"
-                       class="yaa-color-picker">
-            </div>
+            <p class="description" style="margin-top: 15px;">
+                <strong>custom_position</strong> Optionen: <code>start</code>, <code>end</code>, <code>shuffle</code>, <code>alternate</code>
+            </p>
         </div>
         <?php
     }
@@ -11570,176 +12170,87 @@ final class YAA_Admin_Settings {
      * @param array<string, mixed> $cache_status
      */
     private function render_cache_settings(array $options, array $cache_status): void {
-        $image_stats = $this->get_local_image_stats();
-        $can_resize = class_exists('YAA_Image_Handler') && YAA_Image_Handler::can_resize_images();
-        $image_library = class_exists('YAA_Image_Handler') ? YAA_Image_Handler::get_image_library() : 'Unknown';
         ?>
         <div class="yaa-card">
             <h2>⚡ Cache-Einstellungen</h2>
             
-            <div class="yaa-grid">
-                <div>
-                    <div class="yaa-form-row">
-                        <label for="cache_duration">Cache-Dauer (Stunden)</label>
-                        <input type="number" id="cache_duration" name="yaa_settings[cache_duration]" 
-                               value="<?php echo esc_attr($options['cache_duration'] ?? '6'); ?>"
-                               min="1" max="168">
-                        <p class="description">Wie lange API-Daten im Cache bleiben (1-168 Stunden).</p>
-                    </div>
-                    
-                    <div class="yaa-form-row">
-                        <label for="fallback_duration">Fallback-Dauer (Stunden)</label>
-                        <input type="number" id="fallback_duration" name="yaa_settings[fallback_duration]" 
-                               value="<?php echo esc_attr($options['fallback_duration'] ?? '24'); ?>"
-                               min="1" max="720">
-                        <p class="description">Backup-Cache bei API-Fehlern (1-720 Stunden).</p>
-                    </div>
-                </div>
-                
-                <div>
-                    <h4 style="margin-top: 0;">📊 Aktueller Status</h4>
-                    <table class="widefat" style="margin-top: 10px;">
-                        <tr>
-                            <td><strong>Backend:</strong></td>
-                            <td>
-                                <span class="yaa-status-badge <?php echo $cache_status['redis_available'] ? 'yaa-status-success' : 'yaa-status-warning'; ?>">
-                                    <?php echo esc_html($cache_status['cache_backend']); ?>
-                                </span>
-                            </td>
-                        </tr>
-                        <?php if (!empty($cache_status['redis_info'])): ?>
-                        <tr>
-                            <td><strong>Redis Version:</strong></td>
-                            <td><?php echo esc_html($cache_status['redis_info']['version']); ?></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Speicher:</strong></td>
-                            <td><?php echo esc_html($cache_status['redis_info']['used_memory']); ?></td>
-                        </tr>
-                        <?php endif; ?>
-                    </table>
-                </div>
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>🖼️ Lokale Bilderspeicherung</h2>
-            <p class="description">
-                Produktbilder können lokal gespeichert werden, um die Ladezeit zu verbessern und externe Anfragen zu reduzieren.
-            </p>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[enable_local_images]" value="yes" 
-                        <?php checked(($options['enable_local_images'] ?? 'yes'), 'yes'); ?>>
-                    <strong>Produktbilder lokal speichern</strong>
-                </label>
-                <p class="description">
-                    Lädt Produktbilder von Amazon/Yadore herunter und speichert sie unter 
-                    <code>/wp-content/uploads/yadore-amazon-api/</code>.
-                </p>
-            </div>
-            
-            <!-- Bildgrößen-Einstellung -->
-            <div class="yaa-feature-box info" style="margin-top: 20px;">
-                <h4 style="margin-top: 0;">🖼️ Bevorzugte Bildgröße</h4>
-                <p class="description" style="margin-bottom: 15px;">
-                    Diese Einstellung gilt für <strong>alle Quellen</strong> (Amazon, Yadore, eigene Produkte).
-                </p>
-                
-                <div class="yaa-form-row">
-                    <label for="preferred_image_size">Bildgröße auswählen</label>
-                    <select id="preferred_image_size" name="yaa_settings[preferred_image_size]">
-                        <option value="Large" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Large'); ?>>
-                            🖼️ Large (max. 500px) – Beste Qualität
-                        </option>
-                        <option value="Medium" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Medium'); ?>>
-                            🖼️ Medium (max. 160px) – Mittelgroß
-                        </option>
-                        <option value="Small" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Small'); ?>>
-                            🖼️ Small (max. 75px) – Thumbnail
-                        </option>
-                    </select>
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label>
-                        <input type="checkbox" name="yaa_settings[image_resize_enabled]" value="yes" 
-                            <?php checked(($options['image_resize_enabled'] ?? 'yes'), 'yes'); ?>
-                            <?php echo !$can_resize ? 'disabled' : ''; ?>>
-                        <strong>Bilder beim Speichern skalieren</strong>
-                    </label>
-                    <p class="description">
-                        Skaliert heruntergeladene Bilder auf die gewählte Maximalgröße.
-                    </p>
-                    <?php if (!$can_resize): ?>
-                        <p class="description" style="color: #dc3232;">
-                            ⚠️ Bildverarbeitung nicht verfügbar. Installieren Sie GD oder Imagick.
-                        </p>
-                    <?php else: ?>
-                        <p class="description">
-                            ✅ Bildverarbeitung: <strong><?php echo esc_html($image_library); ?></strong>
-                        </p>
+            <div class="yaa-cache-status">
+                <h4>Status</h4>
+                <table class="widefat striped">
+                    <tr>
+                        <td width="200"><strong>Cache-Typ:</strong></td>
+                        <td>
+                            <?php 
+                            $type = $cache_status['type'] ?? 'transient';
+                            echo $type === 'redis' ? '🚀 Redis' : '💾 WordPress Transients';
+                            ?>
+                        </td>
+                    </tr>
+                    <?php if ($type === 'redis'): ?>
+                    <tr>
+                        <td><strong>Redis-Status:</strong></td>
+                        <td>
+                            <?php if ($cache_status['connected'] ?? false): ?>
+                                ✅ Verbunden
+                            <?php else: ?>
+                                ❌ Nicht verbunden
+                            <?php endif; ?>
+                        </td>
+                    </tr>
                     <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- SEO-Dateinamen -->
-            <div class="yaa-form-row" style="margin-top: 20px; padding: 15px; background: #f0f6fc; border-radius: 4px;">
-                <label for="image_filename_format"><strong>📝 Dateiname-Format</strong></label>
-                <select id="image_filename_format" name="yaa_settings[image_filename_format]" style="margin-top: 8px;">
-                    <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
-                        🔍 SEO-optimiert (Produktname + Timestamp)
-                    </option>
-                    <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
-                        🔢 Technisch (Produkt-ID)
-                    </option>
-                </select>
-                <p class="description" style="margin-top: 8px;">
-                    <strong>SEO-optimiert:</strong> Die ersten 30 Zeichen des Produktnamens + Timestamp.
-                </p>
-                <div class="yaa-seo-example">
-                    <strong>Beispiel SEO:</strong> samsung-galaxy-s24-ultra-smart_1734686220.jpg<br>
-                    <strong>Beispiel ID:</strong> amazon_B0CXYZ12345.jpg
-                </div>
+                    <tr>
+                        <td><strong>Einträge:</strong></td>
+                        <td><?php echo number_format((int) ($cache_status['entries'] ?? 0), 0, ',', '.'); ?></td>
+                    </tr>
+                </table>
             </div>
             
             <div class="yaa-grid" style="margin-top: 20px;">
-                <div class="yaa-stat-box" style="background: #f0f6fc;">
-                    <div class="yaa-stat-number" style="color: #0073aa;"><?php echo (int) $image_stats['count']; ?></div>
-                    <div class="yaa-stat-label">Gespeicherte Bilder</div>
+                <div class="yaa-form-row">
+                    <label for="cache_duration">Cache-Dauer (Stunden)</label>
+                    <input type="number" id="cache_duration" name="yaa_settings[cache_duration]" 
+                           value="<?php echo esc_attr($options['cache_duration'] ?? '6'); ?>"
+                           min="1" max="168">
+                    <p class="description">Wie lange API-Ergebnisse gecacht werden.</p>
                 </div>
-                <div class="yaa-stat-box" style="background: #fef8ee;">
-                    <div class="yaa-stat-number" style="color: #996800;"><?php echo esc_html($image_stats['size']); ?></div>
-                    <div class="yaa-stat-label">Speicherverbrauch</div>
+                
+                <div class="yaa-form-row">
+                    <label for="fallback_duration">Fallback-Dauer (Stunden)</label>
+                    <input type="number" id="fallback_duration" name="yaa_settings[fallback_duration]" 
+                           value="<?php echo esc_attr($options['fallback_duration'] ?? '24'); ?>"
+                           min="1" max="720">
+                    <p class="description">Wie lange alte Daten bei API-Fehlern verwendet werden.</p>
                 </div>
-                <div class="yaa-stat-box">
-                    <a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=yaa_clear_images'), 'yaa_clear_images_nonce')); ?>" 
-                       class="button" 
-                       onclick="return confirm('Alle lokal gespeicherten Bilder löschen?');">
-                        🗑️ Bilder löschen
-                    </a>
-                </div>
+            </div>
+            
+            <div class="yaa-form-row" style="margin-top: 20px;">
+                <button type="button" class="button button-secondary" id="yaa-clear-cache">
+                    🗑️ Cache leeren
+                </button>
+                <button type="button" class="button" id="yaa-preload-cache" style="margin-left: 10px;">
+                    ⏳ Cache vorwärmen
+                </button>
+                <span id="yaa-cache-status" style="margin-left: 10px;"></span>
             </div>
         </div>
         
         <div class="yaa-card">
             <h2>🔴 Redis-Konfiguration</h2>
             <p class="description">
-                Redis bietet schnelleres Caching als WordPress-Transients.
+                Redis bietet schnelleres Caching als WordPress Transients. Optional.
             </p>
             
             <div class="yaa-form-row">
                 <label for="enable_redis">Redis verwenden</label>
                 <select id="enable_redis" name="yaa_settings[enable_redis]">
                     <option value="auto" <?php selected(($options['enable_redis'] ?? 'auto'), 'auto'); ?>>
-                        🔄 Automatisch erkennen
+                        Automatisch (wenn verfügbar)
                     </option>
                     <option value="yes" <?php selected(($options['enable_redis'] ?? 'auto'), 'yes'); ?>>
-                        ✅ Ja, Redis verwenden
+                        Immer verwenden
                     </option>
                     <option value="no" <?php selected(($options['enable_redis'] ?? 'auto'), 'no'); ?>>
-                        ❌ Nein, nur Transients
+                        Deaktiviert
                     </option>
                 </select>
             </div>
@@ -11759,9 +12270,10 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="redis_password">Passwort (optional)</label>
+                    <label for="redis_password">Passwort</label>
                     <input type="password" id="redis_password" name="yaa_settings[redis_password]" 
-                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>">
+                           value="<?php echo esc_attr($options['redis_password'] ?? ''); ?>"
+                           placeholder="Optional">
                 </div>
                 
                 <div class="yaa-form-row">
@@ -11772,11 +12284,100 @@ final class YAA_Admin_Settings {
                 </div>
             </div>
             
-            <div class="yaa-form-row">
+            <div class="yaa-form-row" style="margin-top: 15px;">
                 <button type="button" class="button yaa-test-btn" data-action="yaa_test_redis">
                     🔍 Redis-Verbindung testen
                 </button>
                 <div class="yaa-test-result"></div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🖼️ Lokale Bilderspeicherung</h2>
+            <p class="description">
+                Speichere Produktbilder lokal für schnellere Ladezeiten und mehr Kontrolle.
+            </p>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[enable_local_images]" value="yes" 
+                        <?php checked(($options['enable_local_images'] ?? 'yes'), 'yes'); ?>>
+                    Bilder lokal speichern
+                </label>
+                <p class="description">
+                    Bilder werden in <code>/wp-content/uploads/yaa-products/</code> gespeichert.
+                </p>
+            </div>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="preferred_image_size">Bevorzugte Bildgröße</label>
+                    <select id="preferred_image_size" name="yaa_settings[preferred_image_size]">
+                        <option value="Large" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Large'); ?>>
+                            Large (max. verfügbar)
+                        </option>
+                        <option value="Medium" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Medium'); ?>>
+                            Medium
+                        </option>
+                        <option value="Small" <?php selected(($options['preferred_image_size'] ?? 'Large'), 'Small'); ?>>
+                            Small (schneller)
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="image_filename_format">Dateiname-Format</label>
+                    <select id="image_filename_format" name="yaa_settings[image_filename_format]">
+                        <option value="seo" <?php selected(($options['image_filename_format'] ?? 'seo'), 'seo'); ?>>
+                            SEO-freundlich (produktname-source.jpg)
+                        </option>
+                        <option value="id" <?php selected(($options['image_filename_format'] ?? 'seo'), 'id'); ?>>
+                            ID-basiert (asin/ean_hash.jpg)
+                        </option>
+                    </select>
+                    <p class="description">
+                        SEO-freundliche Dateinamen können das Ranking in der Bildersuche verbessern.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="yaa-form-row">
+                <label>
+                    <input type="checkbox" name="yaa_settings[image_resize_enabled]" value="yes" 
+                        <?php checked(($options['image_resize_enabled'] ?? 'no'), 'yes'); ?>>
+                    Bilder auf max. 800px verkleinern (spart Speicherplatz)
+                </label>
+            </div>
+            
+            <?php
+            $upload_dir = wp_upload_dir();
+            $yaa_dir = $upload_dir['basedir'] . '/yaa-products';
+            $image_count = 0;
+            $total_size = 0;
+            
+            if (is_dir($yaa_dir)) {
+                $files = glob($yaa_dir . '/*/*.{jpg,jpeg,png,gif,webp}', GLOB_BRACE);
+                if ($files) {
+                    $image_count = count($files);
+                    foreach ($files as $file) {
+                        $total_size += filesize($file);
+                    }
+                }
+            }
+            ?>
+            
+            <div class="yaa-feature-box info" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">📊 Lokale Bilder-Statistik</h4>
+                <p>
+                    <strong><?php echo number_format($image_count, 0, ',', '.'); ?></strong> Bilder gespeichert<br>
+                    <strong><?php echo size_format($total_size); ?></strong> Speicherverbrauch
+                </p>
+                <p>
+                    <button type="button" class="button button-secondary" id="yaa-cleanup-images">
+                        🧹 Ungenutzte Bilder löschen
+                    </button>
+                    <span id="yaa-image-cleanup-status" style="margin-left: 10px;"></span>
+                </p>
             </div>
         </div>
         <?php
@@ -11790,27 +12391,23 @@ final class YAA_Admin_Settings {
     private function render_display_settings(array $options): void {
         ?>
         <div class="yaa-card">
-            <h2>🎨 Styling Optionen</h2>
+            <h2>🎨 Darstellungs-Optionen</h2>
             
-            <div class="yaa-form-row" style="background: #fff0f0; padding: 15px; border-left: 4px solid #ff4444;">
+            <div class="yaa-form-row">
                 <label>
                     <input type="checkbox" name="yaa_settings[disable_default_css]" value="yes" 
                         <?php checked(($options['disable_default_css'] ?? 'no'), 'yes'); ?>>
-                    <strong>Standard-CSS komplett deaktivieren</strong>
+                    Standard-CSS deaktivieren (eigenes Styling verwenden)
                 </label>
-                <p class="description">
-                    Aktivieren Sie diese Option, wenn Sie das Grid-Layout <strong>vollständig über Ihr Theme oder Custom CSS</strong> steuern möchten.
-                </p>
             </div>
         </div>
-
+        
         <div class="yaa-card">
-            <h2>📐 Grid-Layout</h2>
-            <p class="description">Diese Einstellungen werden nur angewendet, wenn das Standard-CSS aktiv ist.</p>
+            <h2>📐 Grid-Spalten</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
-                    <label for="grid_columns_desktop">Spalten Desktop (>1024px)</label>
+                    <label for="grid_columns_desktop">Desktop (≥1024px)</label>
                     <select id="grid_columns_desktop" name="yaa_settings[grid_columns_desktop]">
                         <?php for ($i = 1; $i <= 6; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_desktop'] ?? 3), $i); ?>>
@@ -11821,7 +12418,7 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="grid_columns_tablet">Spalten Tablet (601-1024px)</label>
+                    <label for="grid_columns_tablet">Tablet (768-1023px)</label>
                     <select id="grid_columns_tablet" name="yaa_settings[grid_columns_tablet]">
                         <?php for ($i = 1; $i <= 4; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_tablet'] ?? 2), $i); ?>>
@@ -11832,7 +12429,7 @@ final class YAA_Admin_Settings {
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="grid_columns_mobile">Spalten Mobile (≤600px)</label>
+                    <label for="grid_columns_mobile">Mobile (<768px)</label>
                     <select id="grid_columns_mobile" name="yaa_settings[grid_columns_mobile]">
                         <?php for ($i = 1; $i <= 2; $i++): ?>
                             <option value="<?php echo $i; ?>" <?php selected(($options['grid_columns_mobile'] ?? 1), $i); ?>>
@@ -11845,112 +12442,129 @@ final class YAA_Admin_Settings {
         </div>
         
         <div class="yaa-card">
-            <h2>🎨 Farben</h2>
+            <h2>🔘 Button-Texte</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
-                    <label for="color_primary">Primärfarbe (Yadore)</label>
-                    <input type="text" id="color_primary" name="yaa_settings[color_primary]" 
-                           value="<?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>"
-                           class="yaa-color-picker">
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label for="color_secondary">Sekundärfarbe</label>
-                    <input type="text" id="color_secondary" name="yaa_settings[color_secondary]" 
-                           value="<?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>"
-                           class="yaa-color-picker">
-                </div>
-                
-                <div class="yaa-form-row">
-                    <label for="color_amazon">Amazon-Farbe</label>
-                    <input type="text" id="color_amazon" name="yaa_settings[color_amazon]" 
-                           value="<?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>"
-                           class="yaa-color-picker">
-                </div>
-            </div>
-        </div>
-        
-        <div class="yaa-card">
-            <h2>⚙️ Anzeige-Optionen</h2>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_prime_badge]" value="yes" 
-                        <?php checked(($options['show_prime_badge'] ?? 'yes'), 'yes'); ?>>
-                    Prime-Badge bei Amazon-Produkten anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_merchant]" value="yes" 
-                        <?php checked(($options['show_merchant'] ?? 'yes'), 'yes'); ?>>
-                    Händler-Namen anzeigen
-                </label>
-            </div>
-            
-            <div class="yaa-form-row">
-                <label>
-                    <input type="checkbox" name="yaa_settings[show_description]" value="yes" 
-                        <?php checked(($options['show_description'] ?? 'yes'), 'yes'); ?>>
-                    Produktbeschreibung anzeigen
-                </label>
-            </div>
-            
-            <hr style="margin: 20px 0;">
-            
-            <h3>Button-Texte</h3>
-            <div class="yaa-grid">
-                <div class="yaa-form-row">
-                    <label for="button_text_yadore">Button-Text (Yadore)</label>
+                    <label for="button_text_yadore">Yadore-Produkte</label>
                     <input type="text" id="button_text_yadore" name="yaa_settings[button_text_yadore]" 
                            value="<?php echo esc_attr($options['button_text_yadore'] ?? 'Zum Angebot'); ?>">
                 </div>
                 
                 <div class="yaa-form-row">
-                    <label for="button_text_amazon">Button-Text (Amazon)</label>
+                    <label for="button_text_amazon">Amazon-Produkte</label>
                     <input type="text" id="button_text_amazon" name="yaa_settings[button_text_amazon]" 
                            value="<?php echo esc_attr($options['button_text_amazon'] ?? 'Bei Amazon kaufen'); ?>">
                 </div>
+                
+                <div class="yaa-form-row">
+                    <label for="button_text_custom">Eigene Produkte</label>
+                    <input type="text" id="button_text_custom" name="yaa_settings[button_text_custom]" 
+                           value="<?php echo esc_attr($options['button_text_custom'] ?? 'Zum Angebot'); ?>">
+                </div>
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>👁️ Anzeige-Optionen</h2>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_prime_badge]" value="yes" 
+                            <?php checked(($options['show_prime_badge'] ?? 'yes'), 'yes'); ?>>
+                        Prime-Badge anzeigen (Amazon)
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_merchant]" value="yes" 
+                            <?php checked(($options['show_merchant'] ?? 'yes'), 'yes'); ?>>
+                        Händlername anzeigen
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_description]" value="yes" 
+                            <?php checked(($options['show_description'] ?? 'yes'), 'yes'); ?>>
+                        Beschreibung anzeigen
+                    </label>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label>
+                        <input type="checkbox" name="yaa_settings[show_custom_badge]" value="yes" 
+                            <?php checked(($options['show_custom_badge'] ?? 'yes'), 'yes'); ?>>
+                        Badge für eigene Produkte anzeigen
+                    </label>
+                </div>
+            </div>
+            
+            <div class="yaa-form-row" style="margin-top: 15px;">
+                <label for="custom_badge_text">Badge-Text für eigene Produkte</label>
+                <input type="text" id="custom_badge_text" name="yaa_settings[custom_badge_text]" 
+                       value="<?php echo esc_attr($options['custom_badge_text'] ?? 'Empfohlen'); ?>"
+                       style="width: 200px;">
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🎨 Farben</h2>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="color_primary">Primärfarbe (Yadore)</label>
+                    <input type="color" id="color_primary" name="yaa_settings[color_primary]" 
+                           value="<?php echo esc_attr($options['color_primary'] ?? '#ff00cc'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_secondary">Sekundärfarbe</label>
+                    <input type="color" id="color_secondary" name="yaa_settings[color_secondary]" 
+                           value="<?php echo esc_attr($options['color_secondary'] ?? '#00ffff'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_amazon">Amazon-Farbe</label>
+                    <input type="color" id="color_amazon" name="yaa_settings[color_amazon]" 
+                           value="<?php echo esc_attr($options['color_amazon'] ?? '#ff9900'); ?>">
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="color_custom">Eigene Produkte</label>
+                    <input type="color" id="color_custom" name="yaa_settings[color_custom]" 
+                           value="<?php echo esc_attr($options['color_custom'] ?? '#4CAF50'); ?>">
+                </div>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>Hinweis:</strong> Farben werden als CSS Custom Properties (<code>--yaa-color-*</code>) ausgegeben 
+                und können auch im Theme überschrieben werden.
+            </div>
+        </div>
+        
+        <div class="yaa-card">
+            <h2>🔄 Plugin-Updates (GitHub)</h2>
+            <p class="description">
+                Das Plugin kann automatisch Updates von GitHub beziehen. Dafür ist ein Personal Access Token mit 
+                <code>repo</code>-Berechtigung erforderlich (für private Repositories).
+            </p>
+            
+            <div class="yaa-form-row">
+                <label for="github_token">GitHub Personal Access Token</label>
+                <input type="password" id="github_token" name="yaa_settings[github_token]" 
+                       value="<?php echo esc_attr($options['github_token'] ?? ''); ?>"
+                       placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+                <p class="description">
+                    <a href="https://github.com/settings/tokens/new?scopes=repo&description=YAA%20Plugin%20Updates" target="_blank" rel="noopener">
+                        Token erstellen →
+                    </a>
+                </p>
             </div>
         </div>
         <?php
-    }
-    
-    /**
-     * Get local image statistics
-     * 
-     * @return array{count: int, size: string}
-     */
-    private function get_local_image_stats(): array {
-        $upload_dir = wp_upload_dir();
-        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
-        
-        $count = 0;
-        $total_size = 0;
-        
-        if (is_dir($image_dir)) {
-            $files = glob($image_dir . '/*');
-            if ($files !== false) {
-                $count = count($files);
-                foreach ($files as $file) {
-                    if (is_file($file)) {
-                        $total_size += filesize($file);
-                    }
-                }
-            }
-        }
-        
-        if ($total_size < 1024) {
-            $size = $total_size . ' B';
-        } elseif ($total_size < 1024 * 1024) {
-            $size = round($total_size / 1024, 1) . ' KB';
-        } else {
-            $size = round($total_size / (1024 * 1024), 2) . ' MB';
-        }
-        
-        return ['count' => $count, 'size' => $size];
     }
 }
  

@@ -2,13 +2,15 @@
 /**
  * Yadore API Handler
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.5.0
  * 
  * Features:
  * - Offer API (/v2/offer)
  * - Merchant API (/v2/merchant)
- * - NEU: Deeplink Merchant API (/v2/deeplink/merchant) mit CPC-Daten
+ * - Deeplink Merchant API (/v2/deeplink/merchant) mit CPC-Daten
  * - Merchant Filter (Whitelist/Blacklist)
+ * - NEU: Sortierung (Preis/CPC/Relevanz)
+ * - NEU: Thumbnail Fallback
  */
 
 declare(strict_types=1);
@@ -46,6 +48,18 @@ final class YAA_Yadore_API {
         'br' => 'Brasilien',
         'mx' => 'Mexiko',
         'au' => 'Australien',
+    ];
+    
+    /**
+     * Verfügbare Sortieroptionen
+     * @var array<string, string>
+     */
+    public const SORT_OPTIONS = [
+        'rel_desc'   => 'Relevanz (Standard)',
+        'price_asc'  => 'Preis aufsteigend (günstigste zuerst)',
+        'price_desc' => 'Preis absteigend (teuerste zuerst)',
+        'cpc_desc'   => 'CPC absteigend (höchste Vergütung zuerst)',
+        'cpc_asc'    => 'CPC aufsteigend (niedrigste Vergütung zuerst)',
     ];
     
     public function __construct(YAA_Cache_Handler $cache) {
@@ -93,6 +107,15 @@ final class YAA_Yadore_API {
     }
     
     /**
+     * Get available sort options
+     * 
+     * @return array<string, string>
+     */
+    public function get_sort_options(): array {
+        return self::SORT_OPTIONS;
+    }
+    
+    /**
      * Fetch products from Yadore API
      * 
      * @param array<string, mixed> $params
@@ -110,15 +133,25 @@ final class YAA_Yadore_API {
         $ean = $params['ean'] ?? '';
         $merchant_id = $params['merchant_id'] ?? '';
         
+        // NEU: Sortierung - Standard aus Einstellungen oder Parameter
+        $sort = $params['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc');
+        
         // Filter-Konfiguration aus Parametern extrahieren
         $filter_config = [
             'whitelist' => $params['merchant_whitelist'] ?? '',
             'blacklist' => $params['merchant_blacklist'] ?? '',
         ];
         
-        // Build cache key (inkl. Filter)
+        // Prüfen ob CPC-Sortierung gewünscht ist (wird nach dem API-Abruf durchgeführt)
+        $sort_by_cpc = in_array($sort, ['cpc_desc', 'cpc_asc'], true);
+        $cpc_sort_direction = $sort === 'cpc_desc' ? 'desc' : 'asc';
+        
+        // API-Sortierung (nur price/relevance wird von der API unterstützt)
+        $api_sort = $sort_by_cpc ? 'rel_desc' : $sort;
+        
+        // Build cache key (inkl. Filter und Sortierung)
         $filter_hash = md5(serialize($filter_config));
-        $cache_key = 'yadore_' . md5($keyword . $ean . $market . $precision . $limit . $merchant_id . $filter_hash);
+        $cache_key = 'yadore_' . md5($keyword . $ean . $market . $precision . $limit . $merchant_id . $filter_hash . $sort);
         
         // Check cache
         $cached = $this->cache->get($cache_key);
@@ -126,11 +159,14 @@ final class YAA_Yadore_API {
             return $cached;
         }
         
+        // Bei CPC-Sortierung mehr Ergebnisse laden für bessere Sortierung
+        $api_limit = $sort_by_cpc ? min(100, $limit + 50) : min(100, max(1, $limit + 20));
+        
         // Build query params
         $query_params = [
             'market'    => $market,
             'precision' => $precision,
-            'limit'     => min(100, max(1, $limit + 20)), // Extra laden für Filter
+            'limit'     => $api_limit,
         ];
         
         if ($keyword !== '') {
@@ -143,6 +179,11 @@ final class YAA_Yadore_API {
         
         if ($merchant_id !== '') {
             $query_params['merchantId'] = $merchant_id;
+        }
+        
+        // API-Sortierung hinzufügen (nur wenn nicht CPC-Sortierung)
+        if (!$sort_by_cpc && in_array($api_sort, ['rel_desc', 'price_asc', 'price_desc'], true)) {
+            $query_params['sort'] = $api_sort;
         }
         
         // Make API request
@@ -175,11 +216,16 @@ final class YAA_Yadore_API {
             return new \WP_Error('invalid_response', __('Ungültige API-Antwort.', 'yadore-amazon-api'));
         }
         
-        // Normalize products
+        // Normalize products (inkl. Thumbnail Fallback)
         $products = $this->normalize_response($data);
         
         // Händlerfilter anwenden
         $products = $this->apply_merchant_filter($products, $filter_config, $params);
+        
+        // NEU: CPC-Sortierung durchführen (wenn gewünscht)
+        if ($sort_by_cpc) {
+            $products = $this->sort_by_cpc($products, $cpc_sort_direction);
+        }
         
         // Auf gewünschtes Limit kürzen
         $products = array_slice($products, 0, $limit);
@@ -189,6 +235,27 @@ final class YAA_Yadore_API {
         
         // Track keyword
         $this->track_keyword($keyword, $market, $limit);
+        
+        return $products;
+    }
+    
+    /**
+     * NEU: Sortiert Produkte nach CPC
+     * 
+     * @param array<int, array<string, mixed>> $products
+     * @param string $direction 'asc' oder 'desc'
+     * @return array<int, array<string, mixed>>
+     */
+    private function sort_by_cpc(array $products, string $direction = 'desc'): array {
+        usort($products, function($a, $b) use ($direction) {
+            $cpc_a = (float) ($a['estimated_cpc']['amount'] ?? 0);
+            $cpc_b = (float) ($b['estimated_cpc']['amount'] ?? 0);
+            
+            if ($direction === 'desc') {
+                return $cpc_b <=> $cpc_a; // Höchste zuerst
+            }
+            return $cpc_a <=> $cpc_b; // Niedrigste zuerst
+        });
         
         return $products;
     }
@@ -627,6 +694,7 @@ final class YAA_Yadore_API {
     
     /**
      * Normalize API response to standard format
+     * NEU: Thumbnail als Fallback für Image
      * 
      * @param array<string, mixed> $data
      * @return array<int, array<string, mixed>>
@@ -636,13 +704,25 @@ final class YAA_Yadore_API {
         $offers = $data['offers'] ?? [];
         
         foreach ($offers as $offer) {
+            // NEU: Bild-URL mit Thumbnail-Fallback
+            $image_url = $offer['image']['url'] ?? '';
+            $thumbnail_url = $offer['thumbnail']['url'] ?? '';
+            
+            // Fallback-Kette: image -> thumbnail -> leer
+            $final_image_url = $image_url;
+            if ($final_image_url === '' && $thumbnail_url !== '') {
+                $final_image_url = $thumbnail_url;
+            }
+            
             $products[] = [
                 'id'          => $offer['id'] ?? uniqid('yadore_'),
                 'title'       => $offer['title'] ?? '',
                 'description' => $offer['description'] ?? '',
                 'url'         => $offer['clickUrl'] ?? '',
                 'image'       => [
-                    'url' => $offer['image']['url'] ?? '',
+                    'url'           => $final_image_url,
+                    'original_url'  => $image_url,      // NEU: Original-Bild URL
+                    'thumbnail_url' => $thumbnail_url,  // NEU: Thumbnail URL
                 ],
                 'price'       => [
                     'amount'   => $offer['price']['amount'] ?? '',
