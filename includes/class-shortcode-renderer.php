@@ -965,26 +965,37 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                    <div class="yaa-image-wrapper">
-                        <?php if ($image_url !== ''): ?>
-                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                                <img src="<?php echo esc_url($image_url); ?>" 
-                                     alt="<?php echo esc_attr($title); ?>" 
-                                     loading="lazy"
-                                     decoding="async"
-                                     referrerpolicy="no-referrer"
-                                     data-fallback-attempted="false"
-                                     <?php if ($processed_thumbnail_url !== ''): ?>
-                                     data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
-                                     <?php endif; ?>
-                                     data-source="<?php echo esc_attr($source); ?>">
-                            </a>
-                        <?php else: ?>
-                            <div class="yaa-no-image">
-                                <span>📦</span>
+                    // Im render_grid() - ersetze den Image-Block:
+
+                <div class="yaa-image-wrapper">
+                    <?php if ($image_url !== '' && $image_url !== null): ?>
+                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                            <img src="<?php echo esc_url($image_url); ?>" 
+                                alt="<?php echo esc_attr($title); ?>" 
+                                loading="lazy"
+                                decoding="async"
+                                referrerpolicy="no-referrer"
+                                data-fallback-attempted="false"
+                                <?php if ($processed_thumbnail_url !== ''): ?>
+                                data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                <?php endif; ?>
+                                <?php if ($raw_image_url !== ''): ?>
+                                data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                <?php endif; ?>
+                                data-source="<?php echo esc_attr($source); ?>">
+                        </a>
+                    <?php else: ?>
+                        <!-- Kein Bild verfügbar - Placeholder anzeigen -->
+                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                            <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
+                                aria-hidden="true" 
+                                role="img" 
+                                aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
                             </div>
-                        <?php endif; ?>
-                    </div>
+                        </a>
+                    <?php endif; ?>
+                </div>
+
 
                     <div class="yaa-content">
                         <h3 class="yaa-title">
