@@ -140,37 +140,65 @@
      * 3. Server-seitiger Proxy (yaaProxy.endpoint) → Error
      * 4. CSS Placeholder
      */
-    function initImageErrorHandling() {
-        const images = document.querySelectorAll('.yaa-image-wrapper img');
+    /**
+ * Initialize image error handling for 404/broken images
+ */
+function initImageErrorHandling() {
+    var images = document.querySelectorAll('.yaa-image-wrapper img');
+    
+    images.forEach(function(img) {
+        // Mark image as not yet processed for fallback
+        if (!img.hasAttribute('data-fallback-attempted')) {
+            img.setAttribute('data-fallback-attempted', 'false');
+        }
         
-        images.forEach(function(img) {
-            // Mark image as not yet processed for fallback
-            if (!img.hasAttribute('data-fallback-attempted')) {
-                img.setAttribute('data-fallback-attempted', 'false');
-            }
-            
-            // Handle images that are already broken (cached or immediate 404)
-            if (img.complete) {
-                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                    attemptImageFallback(img);
-                } else {
-                    // Image loaded successfully
-                    img.classList.add('yaa-img-loaded');
+        // NEU: Prüfe auf leeres src mit vorhandener Alternative
+        var currentSrc = img.getAttribute('src') || '';
+        var proxySrc = img.getAttribute('data-proxy-src') || '';
+        var originalSrc = img.getAttribute('data-original-src') || '';
+        
+        // Wenn src leer ist aber Alternativen existieren, sofort laden
+        if (currentSrc === '' || currentSrc === window.location.href) {
+            if (proxySrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Empty src detected, using proxy:', proxySrc);
                 }
+                img.setAttribute('data-fallback-attempted', 'proxy');
+                img.src = proxySrc;
+                return;
+            } else if (originalSrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Empty src detected, using original:', originalSrc);
+                }
+                img.setAttribute('data-fallback-attempted', 'original');
+                img.src = originalSrc;
+                return;
             }
-            
-            // Handle future load events
-            img.addEventListener('load', function() {
-                img.classList.add('yaa-img-loaded');
-                img.classList.remove('yaa-img-loading');
-            });
-            
-            // Handle future errors (async loading)
-            img.addEventListener('error', function() {
+        }
+        
+        // Handle images that are already broken (cached or immediate 404)
+        if (img.complete) {
+            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
                 attemptImageFallback(img);
-            });
+            } else {
+                // Image loaded successfully
+                img.classList.add('yaa-img-loaded');
+            }
+        }
+        
+        // Handle future load events
+        img.addEventListener('load', function() {
+            img.classList.add('yaa-img-loaded');
+            img.classList.remove('yaa-img-loading');
         });
-    }
+        
+        // Handle future errors (async loading)
+        img.addEventListener('error', function() {
+            attemptImageFallback(img);
+        });
+    });
+}
+
 
     /**
      * NEU: Attempt image fallback chain

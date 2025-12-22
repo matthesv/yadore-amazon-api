@@ -965,10 +965,35 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                    <div class="yaa-image-wrapper">
-                    <?php if ($image_url !== '' && $image_url !== null): ?>
+                <div class="yaa-image-wrapper">
+                    <?php 
+                    // Proxy-URL generieren falls Proxy aktiviert
+                    $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
+                    $proxy_url = '';
+                    
+                    if ($proxy_enabled && $raw_image_url !== '') {
+                        $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
+                            'action' => 'yaa_proxy_image',
+                            'url'    => $raw_image_url,
+                        ]);
+                    }
+                    
+                    // Finale Bild-URL bestimmen:
+                    // 1. Lokales/verarbeitetes Bild wenn verfügbar
+                    // 2. Proxy-URL als Fallback
+                    // 3. Original-URL als letzter Fallback
+                    $final_src = $image_url;
+                    
+                    // Fix: esc_url() filtert data: URLs - also prüfen ob leer
+                    if ($final_src === '' || str_starts_with($final_src, 'data:')) {
+                        // Proxy als primäre Quelle verwenden
+                        $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
+                    }
+                    ?>
+                    
+                    <?php if ($final_src !== ''): ?>
                         <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                            <img src="<?php echo esc_url($image_url); ?>" 
+                            <img src="<?php echo esc_url($final_src); ?>" 
                                 alt="<?php echo esc_attr($title); ?>" 
                                 loading="lazy"
                                 decoding="async"
@@ -977,13 +1002,16 @@ final class YAA_Shortcode_Renderer {
                                 <?php if ($processed_thumbnail_url !== ''): ?>
                                 data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
                                 <?php endif; ?>
-                                <?php if ($raw_image_url !== ''): ?>
+                                <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
                                 data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                <?php endif; ?>
+                                <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
+                                data-proxy-src="<?php echo esc_url($proxy_url); ?>"
                                 <?php endif; ?>
                                 data-source="<?php echo esc_attr($source); ?>">
                         </a>
                     <?php else: ?>
-                        <!-- Kein Bild verfügbar - Placeholder anzeigen -->
+                        <!-- Kein Bild verfügbar -->
                         <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
                             <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
                                 aria-hidden="true" 
@@ -993,6 +1021,7 @@ final class YAA_Shortcode_Renderer {
                         </a>
                     <?php endif; ?>
                 </div>
+
 
 
                     <div class="yaa-content">
