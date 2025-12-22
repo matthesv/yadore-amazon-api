@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.6.2
+ * Version: 1.6.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -13,11 +13,6 @@
  * License: GPL v2 or later
  * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
- * 
- * CHANGELOG 1.6.1:
- * - Search Shortcode Komponente hinzugefügt
- * - Shortcode 'yadore_search' zu Asset-Loading hinzugefügt
- * - Dependency Injection für Search Shortcode korrigiert
  */
 
 declare(strict_types=1);
@@ -27,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.6.2');
+define('YAA_VERSION', '1.6.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -196,6 +191,8 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_precision'       => 'fuzzy',
             'yadore_default_limit'   => 9,
             'yadore_default_sort'    => 'rel_desc',
+            'search_default_sort'    => '', // Leer = yadore_default_sort verwenden
+            'yadore_featured_keywords' => '',
             
             // Amazon Settings
             'enable_amazon'          => 'yes',

@@ -3,7 +3,9 @@
  * Mit Initial-Produkten und Reset-Funktion
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.0
+ * @since 1.6.2
+ * 
+ * FIX 1.6.2: Sortierungs-Fallback korrigiert (rel_desc statt cpc_desc)
  */
 
 (function($) {
@@ -40,7 +42,8 @@
                 newTab: this.$container.data('new-tab') === 1,
                 debounce: this.$container.data('debounce') || 500,
                 liveSearch: this.$container.data('live-search') === 1,
-                sort: this.$container.data('sort') || 'cpc_desc',
+                // FIX 1.6.2: Fallback korrigiert - konsistent mit PHP-Standard
+                sort: this.$container.data('sort') || 'rel_desc',
                 merchantFilter: this.$container.data('merchant-filter') || '',
                 showInitial: this.$container.data('show-initial') === 1,
                 showReset: this.$container.data('show-reset') === 1,

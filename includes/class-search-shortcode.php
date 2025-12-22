@@ -4,13 +4,12 @@
  * Mit Initial-Produkten vor der Suche
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.1
+ * @since 1.6.2
  * 
- * FIX 1.6.1:
- * - fetch_yadore_products korrigiert: market und precision Parameter hinzugefügt
- * - Cache-Bypass für Initial-Produkte optional
- * - Bessere Fehlerbehandlung bei API-Aufrufen
- * - Debug-Logging hinzugefügt
+ * FIX 1.6.2:
+ * - Sortierung aus Plugin-Einstellungen laden (search_default_sort)
+ * - Inkonsistenz zwischen PHP und JS-Fallback bereinigt
+ * - Standard-Sortierung konfigurierbar in Plugin-Einstellungen
  */
 
 declare(strict_types=1);
@@ -64,17 +63,17 @@ class YAA_Search_Shortcode {
         'show_price'        => true,
         'show_merchant'     => true,
         'new_tab'           => true,
-        'sort'              => 'rel_desc', // Geändert von cpc_desc zu rel_desc für stabilere Ergebnisse
+        'sort'              => '', // Leer = Plugin-Einstellung verwenden
         'merchant_filter'   => '',
         
-        // API-Optionen (NEU)
+        // API-Optionen
         'market'            => '', // Leer = Plugin-Standard verwenden
         'precision'         => '', // Leer = Plugin-Standard verwenden
         
         // UI-Optionen
         'show_reset'        => true,
         'hide_form'         => false,
-        'debug'             => false, // NEU: Debug-Modus
+        'debug'             => false,
     ];
 
     /**
@@ -91,6 +90,23 @@ class YAA_Search_Shortcode {
         add_action('wp_ajax_yadore_product_search', [$this, 'ajax_search']);
         add_action('wp_ajax_nopriv_yadore_product_search', [$this, 'ajax_search']);
         add_action('wp_enqueue_scripts', [$this, 'register_assets']);
+    }
+
+    /**
+     * Holt die Standard-Sortierung aus den Plugin-Einstellungen
+     * 
+     * @return string Sortierungs-Wert
+     */
+    private function get_default_sort(): string {
+        // Erst spezifische Search-Einstellung prüfen, dann Fallback auf allgemeine Yadore-Einstellung
+        $search_sort = yaa_get_option('search_default_sort', '');
+        
+        if ($search_sort !== '') {
+            return $search_sort;
+        }
+        
+        // Fallback auf allgemeine Yadore-Sortierung
+        return yaa_get_option('yadore_default_sort', 'rel_desc');
     }
 
     /**
@@ -151,6 +167,11 @@ class YAA_Search_Shortcode {
         $atts['max_results'] = max(1, (int) $atts['max_results']);
         $atts['columns'] = max(1, min(6, (int) $atts['columns']));
 
+        // FIX 1.6.2: Sortierung aus Einstellungen laden wenn nicht explizit gesetzt
+        if (empty($atts['sort'])) {
+            $atts['sort'] = $this->get_default_sort();
+        }
+
         // Assets nur einmal laden
         if (!self::$shortcode_rendered) {
             wp_enqueue_style('yadore-search');
@@ -172,10 +193,11 @@ class YAA_Search_Shortcode {
             // Debug-Ausgabe
             if ($atts['debug']) {
                 $debug_output = sprintf(
-                    '<!-- YAA Debug: initial_count=%d, products_loaded=%d, keywords=%s -->',
+                    '<!-- YAA Debug: initial_count=%d, products_loaded=%d, keywords=%s, sort=%s -->',
                     $atts['initial_count'],
                     count($initial_products),
-                    esc_html($atts['initial_keywords'] ?: $atts['initial_keyword'])
+                    esc_html($atts['initial_keywords'] ?: $atts['initial_keyword']),
+                    esc_html($atts['sort'])
                 );
             }
             
@@ -297,10 +319,11 @@ class YAA_Search_Shortcode {
         // Debug-Log
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log(sprintf(
-                'YAA Search: get_initial_products called - count=%d, source=%s, keywords=%s',
+                'YAA Search: get_initial_products called - count=%d, source=%s, keywords=%s, sort=%s',
                 $count,
                 $source,
-                implode(',', $keywords)
+                implode(',', $keywords),
+                $atts['sort'] ?? 'not set'
             ));
         }
 
@@ -355,8 +378,6 @@ class YAA_Search_Shortcode {
     /**
      * Produkte von Yadore API laden
      * 
-     * FIX 1.6.1: market und precision Parameter hinzugefügt
-     * 
      * @param array<string> $keywords Suchbegriffe
      * @param int $count Anzahl
      * @param array<string, mixed> $atts Shortcode-Attribute
@@ -377,16 +398,16 @@ class YAA_Search_Shortcode {
             return [];
         }
         
-        // FIX: Bei nur einem Keyword das volle Limit verwenden
         $per_keyword = $keyword_count === 1 ? $count : max(1, (int) ceil($count / $keyword_count));
 
         // Debug-Log
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log(sprintf(
-                'YAA Search: fetch_yadore_products - keywords=%d, count=%d, per_keyword=%d',
+                'YAA Search: fetch_yadore_products - keywords=%d, count=%d, per_keyword=%d, sort=%s',
                 $keyword_count,
                 $count,
-                $per_keyword
+                $per_keyword,
+                $atts['sort'] ?? 'not set'
             ));
         }
 
@@ -395,12 +416,11 @@ class YAA_Search_Shortcode {
                 break;
             }
 
-            // FIX 1.6.1: Vollständige API-Parameter übergeben
+            // API-Parameter mit Sortierung aus Einstellungen
             $api_params = [
                 'keyword'   => $keyword,
                 'limit'     => $per_keyword,
-                'sort'      => (string) ($atts['sort'] ?: 'rel_desc'),
-                // NEU: market und precision aus Shortcode oder Plugin-Standard
+                'sort'      => (string) ($atts['sort'] ?: $this->get_default_sort()),
                 'market'    => !empty($atts['market']) ? (string) $atts['market'] : yaa_get_option('yadore_market', 'de'),
                 'precision' => !empty($atts['precision']) ? (string) $atts['precision'] : yaa_get_option('yadore_precision', 'fuzzy'),
             ];
@@ -416,9 +436,10 @@ class YAA_Search_Shortcode {
             // Debug-Log
             if (defined('WP_DEBUG') && WP_DEBUG) {
                 error_log(sprintf(
-                    'YAA Search: API call for keyword "%s" with limit=%d',
+                    'YAA Search: API call for keyword "%s" with limit=%d, sort=%s',
                     $keyword,
-                    $api_params['limit']
+                    $api_params['limit'],
+                    $api_params['sort']
                 ));
             }
 
@@ -432,7 +453,6 @@ class YAA_Search_Shortcode {
             }
             
             if (!empty($results)) {
-                // Debug-Log
                 if (defined('WP_DEBUG') && WP_DEBUG) {
                     error_log(sprintf(
                         'YAA Search: API returned %d results for "%s"',
@@ -716,11 +736,16 @@ class YAA_Search_Shortcode {
         $query = isset($_POST['query']) ? sanitize_text_field(wp_unslash($_POST['query'])) : '';
         $network = isset($_POST['network']) ? sanitize_text_field(wp_unslash($_POST['network'])) : '';
         $max_results = isset($_POST['max_results']) ? (int) $_POST['max_results'] : 12;
-        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : 'rel_desc';
+        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : '';
         $merchant_filter = isset($_POST['merchant_filter']) ? sanitize_text_field(wp_unslash($_POST['merchant_filter'])) : '';
         $show_price = isset($_POST['show_price']) && $_POST['show_price'] === '1';
         $show_merchant = isset($_POST['show_merchant']) && $_POST['show_merchant'] === '1';
         $new_tab = isset($_POST['new_tab']) && $_POST['new_tab'] === '1';
+
+        // FIX 1.6.2: Sortierung aus Einstellungen laden wenn nicht übergeben
+        if (empty($sort)) {
+            $sort = $this->get_default_sort();
+        }
 
         if (empty($query) || strlen($query) < 2) {
             wp_send_json_error(['message' => __('Suchbegriff zu kurz.', 'yadore-amazon-api')], 400);
@@ -738,10 +763,10 @@ class YAA_Search_Shortcode {
 
         // Yadore API aufrufen
         $api_params = [
-            'keyword' => $query,
-            'limit'   => min($max_results, 50),
-            'sort'    => $sort,
-            'market'  => yaa_get_option('yadore_market', 'de'),
+            'keyword'   => $query,
+            'limit'     => min($max_results, 50),
+            'sort'      => $sort,
+            'market'    => yaa_get_option('yadore_market', 'de'),
             'precision' => yaa_get_option('yadore_precision', 'fuzzy'),
         ];
 

@@ -2,7 +2,11 @@
 /**
  * Admin Settings Page
  * PHP 8.3+ compatible
- * Version: 1.5.1
+ * Version: 1.6.2
+ * 
+ * CHANGELOG 1.6.2:
+ * - Neue Einstellung: search_default_sort (Standard-Sortierung für Search Shortcode)
+ * - Neue Einstellung: yadore_featured_keywords (Keywords für Initial-Produkte)
  */
 
 declare(strict_types=1);
@@ -49,7 +53,7 @@ final class YAA_Admin_Settings {
                 <?php settings_fields('yaa_settings'); ?>
                 
                 <div class="yaa-tabs">
-                    <div class="yaa-tab active" data-tab="yadore">📶 Yadore API</div>
+                    <div class="yaa-tab active" data-tab="yadore">📂 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
                     <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
                     <div class="yaa-tab" data-tab="cache">⚡ Cache &amp; Bilder</div>
@@ -104,6 +108,13 @@ final class YAA_Admin_Settings {
         $valid_sorts = ['rel_desc', 'price_asc', 'price_desc', 'cpc_desc', 'cpc_asc'];
         $sanitized['yadore_default_sort'] = in_array($input['yadore_default_sort'] ?? '', $valid_sorts, true) 
             ? $input['yadore_default_sort'] : 'rel_desc';
+        
+        // NEU 1.6.2: Search Shortcode Sortierung (kann leer sein = yadore_default_sort verwenden)
+        $sanitized['search_default_sort'] = in_array($input['search_default_sort'] ?? '', array_merge([''], $valid_sorts), true) 
+            ? ($input['search_default_sort'] ?? '') : '';
+        
+        // NEU 1.6.2: Featured Keywords für Initial-Produkte
+        $sanitized['yadore_featured_keywords'] = sanitize_text_field($input['yadore_featured_keywords'] ?? '');
         
         // Merchant Filter
         $sanitized['yadore_merchant_whitelist'] = $this->sanitize_merchant_list($input['yadore_merchant_whitelist'] ?? '');
@@ -192,7 +203,7 @@ final class YAA_Admin_Settings {
         $sort_options = $this->yadore_api->get_sort_options();
         ?>
         <div class="yaa-card">
-            <h2>📶 Yadore API Konfiguration</h2>
+            <h2>📂 Yadore API Konfiguration</h2>
             <p class="description">
                 Yadore bietet Zugang zu über 9.000 Shops und 250 Millionen Produkten. 
                 <a href="https://www.yadore.com/publisher" target="_blank" rel="noopener">Publisher-Account erstellen →</a>
@@ -274,6 +285,62 @@ final class YAA_Admin_Settings {
             </div>
         </div>
         
+        <!-- NEU 1.6.2: Search Shortcode Einstellungen -->
+        <div class="yaa-card">
+            <h2>🔎 Search Shortcode Einstellungen</h2>
+            <p class="description">
+                Spezifische Einstellungen für den <code>[yadore_search]</code> Shortcode mit interaktiver Live-Suche.
+            </p>
+            
+            <div class="yaa-grid">
+                <div class="yaa-form-row">
+                    <label for="search_default_sort">Standard-Sortierung für Search Shortcode</label>
+                    <select id="search_default_sort" name="yaa_settings[search_default_sort]">
+                        <option value="" <?php selected(($options['search_default_sort'] ?? ''), ''); ?>>
+                            — Yadore-Standard verwenden (<?php echo esc_html($options['yadore_default_sort'] ?? 'rel_desc'); ?>)
+                        </option>
+                        <?php foreach ($sort_options as $value => $label): ?>
+                            <option value="<?php echo esc_attr($value); ?>" 
+                                <?php selected(($options['search_default_sort'] ?? ''), $value); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <p class="description">
+                        Standard-Sortierung für den <code>[yadore_search]</code> Shortcode. 
+                        Kann im Shortcode mit <code>sort="..."</code> überschrieben werden.
+                    </p>
+                </div>
+                
+                <div class="yaa-form-row">
+                    <label for="yadore_featured_keywords">Keywords für Initial-Produkte</label>
+                    <input type="text" id="yadore_featured_keywords" name="yaa_settings[yadore_featured_keywords]" 
+                           value="<?php echo esc_attr($options['yadore_featured_keywords'] ?? ''); ?>"
+                           placeholder="Bestseller, Angebote, Beliebt">
+                    <p class="description">
+                        Komma-separierte Keywords für Initial-Produkte, wenn <code>initial_keywords</code> im Shortcode nicht gesetzt ist.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="yaa-feature-box" style="margin-top: 20px;">
+                <h4 style="margin-top: 0;">📝 Shortcode-Beispiele</h4>
+                <div class="yaa-shortcode-box">[yadore_search]</div>
+                <p class="description">Einfache Live-Suche ohne Initial-Produkte.</p>
+                
+                <div class="yaa-shortcode-box">[yadore_search initial_keywords="Laptop,Smartphone" initial_count="6" sort="cpc_desc"]</div>
+                <p class="description">Mit Initial-Produkten und CPC-Sortierung für maximale Vergütung.</p>
+                
+                <div class="yaa-shortcode-box">[yadore_search show_initial="yes" initial_title="Unsere Empfehlungen" max_results="12"]</div>
+                <p class="description">Mit Custom-Titel und mehr Ergebnissen.</p>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 15px;">
+                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                Vergütung pro Klick zuerst angezeigt – sowohl bei Initial-Produkten als auch bei Suchergebnissen!
+            </div>
+        </div>
+        
         <div class="yaa-card">
             <h2>📊 Sortierungs-Optionen</h2>
             <p class="description">Bestimme, in welcher Reihenfolge die Produkte angezeigt werden.</p>
@@ -316,7 +383,7 @@ final class YAA_Admin_Settings {
             </table>
             
             <div class="yaa-tip" style="margin-top: 15px;">
-                <strong>💡 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
+                <strong>💰 Tipp:</strong> Mit <code>sort="cpc_desc"</code> werden Produkte mit der höchsten 
                 Vergütung pro Klick zuerst angezeigt. So kannst du deinen Revenue maximieren!
             </div>
             
