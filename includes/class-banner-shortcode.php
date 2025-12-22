@@ -355,7 +355,7 @@ class YAA_Banner_Shortcode {
             <?php endif; ?>
         </div>
         <?php
-        return ob_get_clean();
+        return ob_get_clean() ?: '';
     }
 
     /**

@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.6.4
+ * Version: 1.7.1
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.6.4');
+define('YAA_VERSION', '1.7.1');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -128,7 +128,8 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Admin $admin;
     public readonly YAA_Image_Proxy $image_proxy;
     public readonly YAA_Search_Shortcode $search_shortcode;
-    
+    public readonly YAA_Banner_Shortcode $banner_shortcode; 
+
     /**
      * Get singleton instance
      */
@@ -172,6 +173,13 @@ final class Yadore_Amazon_API_Plugin {
             $this->amazon_api
         );
         
+        // Banner Shortcode Component (NEU)
+        $this->banner_shortcode = new YAA_Banner_Shortcode(
+            $this->yadore_api,
+            $this->amazon_api,
+            $this->custom_products
+        );
+
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
@@ -322,6 +330,7 @@ final class Yadore_Amazon_API_Plugin {
             'all_products',
             'fuzzy_products',
             'yadore_search', // NEU: Search Shortcode hinzugefügt
+            'yaa_banner',  // ← NEU
         ];
         
         $has_shortcode = false;
@@ -481,6 +490,413 @@ add_filter('plugin_action_links_' . YAA_PLUGIN_BASENAME, 'yaa_plugin_action_link
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\frontend-grid.css 
  
 .yaa-grid-container{--yaa-primary:#ff00cc;--yaa-secondary:#00ffff;--yaa-amazon:#ff9900;--yaa-custom:#4CAF50;--yaa-dark-bg:#0a0a0a;--yaa-glass-bg:rgba(255, 255, 255, 0.05);--yaa-glass-border:rgba(255, 255, 255, 0.1);--yaa-text-main:#ffffff;--yaa-text-muted:#aaaaaa;--yaa-columns-desktop:3;--yaa-columns-tablet:2;--yaa-columns-mobile:1}.yaa-grid-container{display:grid;grid-template-columns:repeat(var(--yaa-columns-desktop),1fr);gap:25px;padding:10px 0;font-family:'Montserrat',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}.yaa-item{background:var(--yaa-glass-bg);border:1px solid var(--yaa-glass-border);border-bottom:2px solid var(--yaa-primary);border-radius:12px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);overflow:hidden;display:flex;flex-direction:column;transition:all 0.4s cubic-bezier(.25,.8,.25,1);position:relative}.yaa-item:nth-child(even){border-bottom-color:var(--yaa-secondary)}.yaa-item.yaa-amazon{border-bottom-color:var(--yaa-amazon)}.yaa-item.yaa-custom{border-bottom-color:var(--yaa-custom)}.yaa-item:hover{transform:translateY(-8px);border-color:rgb(255 255 255 / .3);box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-primary),transparent 80%)}.yaa-item:nth-child(even):hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-secondary),transparent 80%)}.yaa-item.yaa-amazon:hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-amazon),transparent 80%)}.yaa-item.yaa-custom:hover{box-shadow:0 15px 40px rgb(0 0 0 / .4),0 0 30px color-mix(in srgb,var(--yaa-custom),transparent 80%)}.yaa-prime-badge{position:absolute;top:12px;left:12px;background:var(--yaa-amazon);color:#000;font-size:.65rem;font-weight:700;padding:4px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;z-index:10;box-shadow:0 2px 8px rgb(255 153 0 / .4)}.yaa-custom-badge{position:absolute;top:12px;left:12px;background:var(--yaa-custom);color:#fff;font-size:.65rem;font-weight:700;padding:4px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;z-index:10;box-shadow:0 2px 8px rgb(76 175 80 / .4)}.yaa-item.yaa-custom .yaa-prime-badge{top:12px;left:auto;right:12px}.yaa-image-wrapper{position:relative;width:100%;padding-top:100%;background:linear-gradient(180deg,rgb(10 10 10 / .3) 0%,rgb(10 10 10 / .6) 100%);overflow:hidden}.yaa-image-wrapper a{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-decoration:none}.yaa-image-wrapper img{width:85%;height:85%;object-fit:contain;transition:all 0.5s cubic-bezier(.25,.8,.25,1);filter:brightness(.95) saturate(.95) drop-shadow(0 4px 20px rgb(0 0 0 / .5))}.yaa-image-wrapper img.yaa-img-loaded{opacity:1}.yaa-image-wrapper img.yaa-img-loading{opacity:.7;filter:blur(2px)}.yaa-item:hover .yaa-image-wrapper img{transform:scale(1.08);filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(255 0 204 / .3))}.yaa-item.yaa-amazon:hover .yaa-image-wrapper img{filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(255 153 0 / .3))}.yaa-item.yaa-custom:hover .yaa-image-wrapper img{filter:brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgb(76 175 80 / .3))}.yaa-no-image{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,rgb(255 255 255 / .05) 0%,rgb(255 255 255 / .02) 100%)}.yaa-no-image span{font-size:4rem;opacity:.3}.yaa-image-wrapper.yaa-image-error{background:linear-gradient(135deg,rgb(25 25 30 / .9) 0%,rgb(15 15 20 / .95) 100%)}.yaa-placeholder{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(145deg,rgb(30 30 35 / .95) 0%,rgb(20 20 25 / .98) 50%,rgb(25 25 30 / .95) 100%);border-radius:inherit;overflow:hidden}.yaa-placeholder::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100px;height:100px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23666'/%3E%3Cstop offset='100%25' style='stop-color:%23444'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='15' y='20' width='70' height='50' rx='8' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Ccircle cx='32' cy='38' r='8' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3Cpath d='M18 58 L35 42 L50 52 L68 32 L82 48 L82 62 L18 62 Z' fill='%23333' fill-opacity='0.6'/%3E%3Cpath d='M50 72 L50 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M42 82 L58 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center;background-size:contain;opacity:.4;transition:all 0.4s ease}.yaa-placeholder::after{content:"Bild nicht verfügbar";position:absolute;bottom:25%;left:50%;transform:translateX(-50%);font-size:.65rem;color:rgb(255 255 255 / .35);text-transform:uppercase;letter-spacing:2px;white-space:nowrap;font-weight:500;background:linear-gradient(90deg,rgb(255 255 255 / .2) 0%,rgb(255 255 255 / .4) 50%,rgb(255 255 255 / .2) 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:#fff0;background-clip:text;animation:yaa-placeholder-shimmer 3s ease-in-out infinite}@keyframes yaa-placeholder-shimmer{0%{background-position:200% center}100%{background-position:-200% center}}.yaa-placeholder .yaa-placeholder-corner{position:absolute;width:20px;height:20px;border-color:rgb(255 255 255 / .1);border-style:solid;border-width:0}.yaa-item:hover .yaa-placeholder::before{opacity:.55;transform:translate(-50%,-50%) scale(1.05)}.yaa-item:hover .yaa-placeholder::after{color:rgb(255 255 255 / .5)}.yaa-placeholder-amazon{background:linear-gradient(145deg,rgb(40 30 20 / .95) 0%,rgb(25 20 15 / .98) 50%,rgb(35 25 18 / .95) 100%);border-bottom:2px solid rgb(255 153 0 / .3)}.yaa-placeholder-amazon::before{filter:sepia(50%) saturate(200%) hue-rotate(350deg) brightness(1.1)}.yaa-placeholder-amazon::after{background:linear-gradient(90deg,rgb(255 153 0 / .3) 0%,rgb(255 180 50 / .5) 50%,rgb(255 153 0 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-placeholder-custom{background:linear-gradient(145deg,rgb(20 35 25 / .95) 0%,rgb(15 25 18 / .98) 50%,rgb(18 30 22 / .95) 100%);border-bottom:2px solid rgb(76 175 80 / .3)}.yaa-placeholder-custom::before{filter:sepia(50%) saturate(200%) hue-rotate(80deg) brightness(1.1)}.yaa-placeholder-custom::after{background:linear-gradient(90deg,rgb(76 175 80 / .3) 0%,rgb(129 199 132 / .5) 50%,rgb(76 175 80 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-placeholder-yadore{background:linear-gradient(145deg,rgb(30 20 35 / .95) 0%,rgb(20 15 25 / .98) 50%,rgb(25 18 30 / .95) 100%);border-bottom:2px solid rgb(255 0 204 / .3)}.yaa-placeholder-yadore::before{filter:sepia(50%) saturate(250%) hue-rotate(280deg) brightness(1.1)}.yaa-placeholder-yadore::after{background:linear-gradient(90deg,rgb(255 0 204 / .3) 0%,rgb(0 255 255 / .5) 50%,rgb(255 0 204 / .3) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-content{padding:20px;display:flex;flex-direction:column;flex-grow:1;border-top:1px solid var(--yaa-glass-border)}.yaa-title{font-family:'Montserrat',sans-serif;font-size:1.05rem;font-weight:700;line-height:1.4;margin:0 0 12px 0;color:var(--yaa-text-main);text-transform:uppercase;letter-spacing:.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;min-height:2.8em}.yaa-title a{color:var(--yaa-text-main);text-decoration:none;transition:all 0.3s ease}.yaa-title a:hover{color:var(--yaa-secondary);text-shadow:0 0 15px rgb(0 255 255 / .5)}.yaa-item.yaa-amazon .yaa-title a:hover{color:var(--yaa-amazon);text-shadow:0 0 15px rgb(255 153 0 / .5)}.yaa-item.yaa-custom .yaa-title a:hover{color:var(--yaa-custom);text-shadow:0 0 15px rgb(76 175 80 / .5)}.yaa-description-wrapper{position:relative;margin-bottom:15px}.yaa-description{font-size:.85rem;line-height:1.6;color:var(--yaa-text-muted);max-height:4.8em;overflow:hidden;transition:max-height 0.4s ease-out;position:relative}.yaa-description::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2.4em;background:linear-gradient(to bottom,transparent 0%,rgb(10 10 10 / .9) 100%);pointer-events:none;transition:opacity 0.3s ease}.yaa-description.expanded{max-height:500px}.yaa-description.expanded::after{opacity:0}.yaa-read-more{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700;color:var(--yaa-primary);cursor:pointer;margin-top:8px;padding:5px 0;border:none;background:none;text-transform:uppercase;letter-spacing:1px;transition:all 0.3s ease}.yaa-read-more:hover{color:var(--yaa-secondary);text-shadow:0 0 10px rgb(0 255 255 / .5)}.yaa-read-more::after{content:"▼";font-size:.6rem;transition:transform 0.3s ease}.yaa-read-more.expanded::after{transform:rotate(180deg)}.yaa-item.yaa-amazon .yaa-read-more{color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-read-more{color:var(--yaa-custom)}.yaa-no-description{font-size:.8rem;color:rgb(255 255 255 / .3);font-style:italic;margin-bottom:15px}.yaa-meta{margin:0 0 15px 0}.yaa-price{display:block;font-family:'Montserrat',sans-serif;font-size:1.6rem;font-weight:900;background:linear-gradient(135deg,var(--yaa-primary) 0%,#ff66dd 50%,var(--yaa-secondary) 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:#fff0;background-clip:text;animation:yaa-price-glow 3s ease-in-out infinite;margin-bottom:5px}.yaa-item.yaa-amazon .yaa-price{background:linear-gradient(135deg,var(--yaa-amazon) 0%,#ffb84d 50%,var(--yaa-amazon) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}.yaa-item.yaa-custom .yaa-price{background:linear-gradient(135deg,var(--yaa-custom) 0%,#81C784 50%,var(--yaa-custom) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}@keyframes yaa-price-glow{0%,100%{background-position:0% center}50%{background-position:100% center}}.yaa-merchant{font-size:.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--yaa-text-muted);font-weight:600}.yaa-merchant::before{content:"via ";color:var(--yaa-secondary)}.yaa-item.yaa-amazon .yaa-merchant::before{color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-merchant::before{color:var(--yaa-custom)}.yaa-button-wrapper{margin-top:auto}.yaa-button{display:block;width:100%;text-align:center;background-color:#fff0;border:2px solid var(--yaa-primary);color:var(--yaa-primary);padding:14px 20px;border-radius:50px;font-family:'Montserrat',sans-serif;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;text-decoration:none;cursor:pointer;transition:all 0.4s cubic-bezier(.25,.8,.25,1);box-sizing:border-box}.yaa-button:hover{background-color:var(--yaa-primary);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-primary),transparent 30%);transform:translateY(-2px);text-decoration:none}.yaa-item:nth-child(even) .yaa-button{border-color:var(--yaa-secondary);color:var(--yaa-secondary)}.yaa-item:nth-child(even) .yaa-button:hover{background-color:var(--yaa-secondary);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-secondary),transparent 30%)}.yaa-item.yaa-amazon .yaa-button{border-color:var(--yaa-amazon);color:var(--yaa-amazon)}.yaa-item.yaa-amazon .yaa-button:hover{background-color:var(--yaa-amazon);color:#000;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-amazon),transparent 30%)}.yaa-item.yaa-custom .yaa-button{border-color:var(--yaa-custom);color:var(--yaa-custom)}.yaa-item.yaa-custom .yaa-button:hover{background-color:var(--yaa-custom);color:#fff;box-shadow:0 0 30px color-mix(in srgb,var(--yaa-custom),transparent 30%)}.yaa-message{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;background:var(--yaa-glass-bg);border:1px solid var(--yaa-glass-border);border-radius:12px;text-align:center;color:var(--yaa-text-muted)}.yaa-message .yaa-icon{font-size:3rem;margin-bottom:15px;opacity:.6}.yaa-message p{margin:0;font-size:1rem;line-height:1.5}.yaa-error{border-color:rgb(220 53 69 / .3);background:rgb(220 53 69 / .1)}.yaa-error .yaa-icon{color:#dc3545}.yaa-empty{border-color:rgb(255 193 7 / .3);background:rgb(255 193 7 / .1)}.yaa-empty .yaa-icon{color:#ffc107}.yaa-loading{display:flex;align-items:center;justify-content:center;padding:60px 20px}.yaa-spinner{width:50px;height:50px;border:3px solid var(--yaa-glass-border);border-top-color:var(--yaa-primary);border-radius:50%;animation:yaa-spin 1s linear infinite}@keyframes yaa-spin{to{transform:rotate(360deg)}}.yaa-button:focus,.yaa-read-more:focus,.yaa-title a:focus{outline:2px solid var(--yaa-primary);outline-offset:2px}.yaa-item.yaa-amazon .yaa-button:focus,.yaa-item.yaa-amazon .yaa-title a:focus{outline-color:var(--yaa-amazon)}.yaa-item.yaa-custom .yaa-button:focus,.yaa-item.yaa-custom .yaa-title a:focus{outline-color:var(--yaa-custom)}.screen-reader-text{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media (max-width:1023px){.yaa-grid-container{grid-template-columns:repeat(var(--yaa-columns-tablet),1fr);gap:20px}.yaa-title{font-size:.95rem}.yaa-price{font-size:1.4rem}.yaa-button{padding:12px 16px;font-size:.75rem}}@media (max-width:767px){.yaa-grid-container{grid-template-columns:repeat(var(--yaa-columns-mobile),1fr);gap:15px}.yaa-item:hover{transform:translateY(-4px)}.yaa-content{padding:15px}.yaa-title{font-size:.9rem;min-height:auto;-webkit-line-clamp:3}.yaa-price{font-size:1.3rem}.yaa-description{font-size:.8rem}.yaa-button{padding:12px 15px;font-size:.7rem;letter-spacing:1px}.yaa-prime-badge,.yaa-custom-badge{font-size:.6rem;padding:3px 8px}.yaa-placeholder::before{width:70px;height:70px}.yaa-placeholder::after{font-size:.55rem;letter-spacing:1.5px}}@media (max-width:479px){.yaa-grid-container{gap:12px}.yaa-content{padding:12px}.yaa-title{font-size:.85rem;margin-bottom:8px}.yaa-price{font-size:1.2rem}.yaa-merchant{font-size:.7rem}.yaa-button{padding:10px 12px;font-size:.65rem}.yaa-placeholder::before{width:60px;height:60px}.yaa-placeholder::after{font-size:.5rem;bottom:20%}}@media print{.yaa-grid-container{display:block}.yaa-item{page-break-inside:avoid;margin-bottom:20px;border:1px solid #ccc;box-shadow:none;backdrop-filter:none}.yaa-item:hover{transform:none;box-shadow:none}.yaa-button{background:#000!important;color:#fff!important;border:none}.yaa-price{color:#000!important;-webkit-text-fill-color:#000!important}.yaa-placeholder{background:#f5f5f5!important}.yaa-placeholder::after{color:#666!important;-webkit-text-fill-color:#666!important}}@media (prefers-color-scheme:light){.yaa-grid-container.yaa-light-mode{--yaa-glass-bg:rgba(0, 0, 0, 0.03);--yaa-glass-border:rgba(0, 0, 0, 0.1);--yaa-text-main:#1a1a1a;--yaa-text-muted:#666666}.yaa-grid-container.yaa-light-mode .yaa-item{background:#fff;box-shadow:0 2px 8px rgb(0 0 0 / .1)}.yaa-grid-container.yaa-light-mode .yaa-description::after{background:linear-gradient(to bottom,transparent 0%,rgb(255 255 255 / .9) 100%)}}.yaa-grid-container.yaa-theme-light{--yaa-glass-bg:rgba(0, 0, 0, 0.03);--yaa-glass-border:rgba(0, 0, 0, 0.1);--yaa-text-main:#1a1a1a;--yaa-text-muted:#666666}.yaa-grid-container.yaa-theme-light .yaa-item{background:#fff;box-shadow:0 2px 8px rgb(0 0 0 / .1)}.yaa-grid-container.yaa-theme-light .yaa-description::after{background:linear-gradient(to bottom,transparent 0%,rgb(255 255 255 / .9) 100%)}.yaa-grid-container.yaa-theme-light .yaa-placeholder{background:linear-gradient(145deg,rgb(245 245 248 / .98) 0%,rgb(235 235 240 / .98) 50%,rgb(240 240 245 / .98) 100%)}.yaa-grid-container.yaa-theme-light .yaa-placeholder::before{opacity:.3}.yaa-grid-container.yaa-theme-light .yaa-placeholder::after{background:linear-gradient(90deg,rgb(100 100 100 / .4) 0%,rgb(50 50 50 / .6) 50%,rgb(100 100 100 / .4) 100%);background-size:200% auto;-webkit-background-clip:text;background-clip:text}@media (prefers-reduced-motion:reduce){.yaa-item,.yaa-button,.yaa-image-wrapper img,.yaa-description,.yaa-read-more::after,.yaa-placeholder::before{transition:none}.yaa-item:hover{transform:none}.yaa-item:hover .yaa-image-wrapper img{transform:none}.yaa-price{animation:none}.yaa-placeholder::after{animation:none}.yaa-spinner{animation:none;border-top-color:var(--yaa-primary);border-right-color:var(--yaa-primary)}}.yaa-image-wrapper img.yaa-shop-logo-fallback{width:60%!important;height:60%!important;object-fit:contain!important;opacity:.9;filter:brightness(1) saturate(1) drop-shadow(0 2px 10px rgb(0 0 0 / .3));transition:all 0.3s ease}.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback{opacity:1;transform:scale(1.05);filter:brightness(1.05) saturate(1.1) drop-shadow(0 4px 15px rgb(0 0 0 / .4))}.yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(40 40 45 / .95) 0%,rgb(30 30 35 / .98) 50%,rgb(35 35 40 / .95) 100%)}.yaa-item.yaa-yadore .yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(35 25 40 / .95) 0%,rgb(25 18 30 / .98) 50%,rgb(30 22 35 / .95) 100%)}@supports not (selector(:has(*))){.yaa-image-wrapper img.yaa-shop-logo-fallback{background:linear-gradient(145deg,rgb(40 40 45 / .95) 0%,rgb(30 30 35 / .98) 100%);padding:20%;box-sizing:border-box}}.yaa-grid-container.yaa-theme-light .yaa-image-wrapper:has(img.yaa-shop-logo-fallback){background:linear-gradient(145deg,rgb(250 250 252 / .98) 0%,rgb(240 240 245 / .98) 50%,rgb(245 245 248 / .98) 100%)}.yaa-grid-container.yaa-theme-light .yaa-image-wrapper img.yaa-shop-logo-fallback{filter:brightness(1) saturate(1) drop-shadow(0 2px 8px rgb(0 0 0 / .15))}@media (max-width:767px){.yaa-image-wrapper img.yaa-shop-logo-fallback{width:50%!important;height:50%!important}}@media (max-width:479px){.yaa-image-wrapper img.yaa-shop-logo-fallback{width:45%!important;height:45%!important}}@media (prefers-reduced-motion:reduce){.yaa-image-wrapper img.yaa-shop-logo-fallback{transition:none}.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback{transform:none}} 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\yaa-banner.css 
+ 
+/**
+ * YAA Banner Shortcode Styles
+ * 
+ * Responsive Affiliate-Banner
+ * @since 1.7.0
+ */
+
+/* ========================================
+   Container & Wrapper
+   ======================================== */
+
+.yaa-banner-container {
+    --yaa-banner-bg: var(--yaa-card-bg, #1a1a2e);
+    --yaa-banner-text: var(--yaa-text-color, #e4e4e7);
+    --yaa-banner-text-muted: var(--yaa-text-muted, #a1a1aa);
+    --yaa-banner-accent: var(--yaa-accent-color, #6366f1);
+    --yaa-banner-border: var(--yaa-border-color, #27273a);
+    --yaa-banner-radius: 8px;
+    --yaa-banner-gap: 12px;
+    
+    position: relative;
+    width: 100%;
+    margin: 1rem 0;
+}
+
+.yaa-banner-scroll-wrapper {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    scroll-behavior: smooth;
+}
+
+.yaa-banner-scroll-wrapper::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+.yaa-banner-track {
+    display: flex;
+    gap: var(--yaa-banner-gap);
+    padding: 4px;
+}
+
+/* ========================================
+   Banner Item (Horizontal & Compact)
+   ======================================== */
+
+.yaa-banner-item {
+    flex: 0 0 auto;
+    background: var(--yaa-banner-bg);
+    border: 1px solid var(--yaa-banner-border);
+    border-radius: var(--yaa-banner-radius);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.yaa-banner-item:hover {
+    border-color: var(--yaa-banner-accent);
+    transform: translateY(-2px);
+}
+
+.yaa-banner-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    text-decoration: none;
+    color: var(--yaa-banner-text);
+    height: 100%;
+}
+
+/* ========================================
+   Horizontal Style
+   ======================================== */
+
+.yaa-banner-horizontal .yaa-banner-item {
+    min-width: 280px;
+    max-width: 320px;
+    height: 90px;
+}
+
+.yaa-banner-horizontal .yaa-banner-image {
+    flex-shrink: 0;
+    width: 60px;
+    height: 60px;
+    overflow: hidden;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.yaa-banner-horizontal .yaa-banner-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.yaa-banner-horizontal .yaa-banner-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.yaa-banner-horizontal .yaa-banner-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.yaa-banner-horizontal .yaa-banner-price {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--yaa-banner-accent);
+}
+
+.yaa-banner-horizontal .yaa-banner-cta {
+    font-size: 0.75rem;
+    color: var(--yaa-banner-text-muted);
+    transition: color 0.2s ease;
+}
+
+.yaa-banner-item:hover .yaa-banner-cta {
+    color: var(--yaa-banner-accent);
+}
+
+/* ========================================
+   Compact Style
+   ======================================== */
+
+.yaa-banner-compact .yaa-banner-item {
+    min-width: 180px;
+    max-width: 220px;
+    height: 70px;
+}
+
+.yaa-banner-compact .yaa-banner-image {
+    flex-shrink: 0;
+    width: 50px;
+    height: 50px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.yaa-banner-compact .yaa-banner-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.yaa-banner-compact .yaa-banner-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.yaa-banner-compact .yaa-banner-title {
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.yaa-banner-compact .yaa-banner-price {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--yaa-banner-accent);
+}
+
+/* ========================================
+   Minimal Style (Text-Links)
+   ======================================== */
+
+.yaa-banner-minimal .yaa-banner-track {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.yaa-banner-minimal-item {
+    display: inline;
+}
+
+.yaa-banner-minimal-link {
+    color: var(--yaa-banner-text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    border-bottom: 1px dashed var(--yaa-banner-border);
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.yaa-banner-minimal-link:hover {
+    color: var(--yaa-banner-accent);
+    border-color: var(--yaa-banner-accent);
+}
+
+.yaa-banner-minimal-price {
+    color: var(--yaa-banner-text-muted);
+    font-size: 0.85rem;
+    margin-left: 4px;
+}
+
+/* ========================================
+   Aspect Ratios
+   ======================================== */
+
+.yaa-banner-aspect-1-1 .yaa-banner-image {
+    aspect-ratio: 1 / 1;
+}
+
+.yaa-banner-aspect-16-9 .yaa-banner-image {
+    aspect-ratio: 16 / 9;
+}
+
+.yaa-banner-aspect-4-3 .yaa-banner-image {
+    aspect-ratio: 4 / 3;
+}
+
+/* Adjust widths for non-square aspects */
+.yaa-banner-horizontal .yaa-banner-aspect-16-9 .yaa-banner-image,
+.yaa-banner-horizontal .yaa-banner-aspect-4-3 .yaa-banner-image {
+    width: 90px;
+}
+
+.yaa-banner-compact .yaa-banner-aspect-16-9 .yaa-banner-image,
+.yaa-banner-compact .yaa-banner-aspect-4-3 .yaa-banner-image {
+    width: 70px;
+}
+
+/* ========================================
+   Source Badges (dezent)
+   ======================================== */
+
+.yaa-banner-item.yaa-yadore {
+    border-left: 2px solid #10b981;
+}
+
+.yaa-banner-item.yaa-amazon {
+    border-left: 2px solid #f59e0b;
+}
+
+.yaa-banner-item.yaa-custom {
+    border-left: 2px solid #8b5cf6;
+}
+
+/* ========================================
+   Scroll Indicators: Fade Out
+   ======================================== */
+
+.yaa-banner-fade {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.yaa-banner-fade-left {
+    left: 0;
+    background: linear-gradient(to right, var(--yaa-banner-bg), transparent);
+}
+
+.yaa-banner-fade-right {
+    right: 0;
+    background: linear-gradient(to left, var(--yaa-banner-bg), transparent);
+}
+
+/* Show fades when scrollable */
+.yaa-banner-container.has-scroll-left .yaa-banner-fade-left,
+.yaa-banner-container.has-scroll-right .yaa-banner-fade-right {
+    opacity: 1;
+}
+
+/* ========================================
+   Scroll Indicators: Arrows
+   ======================================== */
+
+.yaa-banner-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: var(--yaa-banner-bg);
+    border: 1px solid var(--yaa-banner-border);
+    color: var(--yaa-banner-text);
+    cursor: pointer;
+    z-index: 3;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, background 0.2s ease, visibility 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.yaa-banner-arrow svg {
+    width: 18px;
+    height: 18px;
+}
+
+.yaa-banner-arrow-left {
+    left: 8px;
+}
+
+.yaa-banner-arrow-right {
+    right: 8px;
+}
+
+.yaa-banner-arrow:hover {
+    background: var(--yaa-banner-accent);
+    border-color: var(--yaa-banner-accent);
+}
+
+/* Show arrows when scrollable */
+.yaa-banner-container.has-scroll-left .yaa-banner-arrow-left,
+.yaa-banner-container.has-scroll-right .yaa-banner-arrow-right {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* ========================================
+   Error Message
+   ======================================== */
+
+.yaa-banner-error {
+    padding: 12px 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--yaa-banner-radius);
+    color: #fca5a5;
+    font-size: 0.875rem;
+}
+
+/* ========================================
+   Responsive Breakpoints
+   ======================================== */
+
+@media (max-width: 768px) {
+    .yaa-banner-horizontal .yaa-banner-item {
+        min-width: 240px;
+        max-width: 280px;
+    }
+
+    .yaa-banner-compact .yaa-banner-item {
+        min-width: 160px;
+        max-width: 200px;
+    }
+
+    .yaa-banner-arrow {
+        width: 28px;
+        height: 28px;
+    }
+
+    .yaa-banner-arrow svg {
+        width: 14px;
+        height: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .yaa-banner-horizontal .yaa-banner-item {
+        min-width: 220px;
+        max-width: 260px;
+        height: 80px;
+    }
+
+    .yaa-banner-horizontal .yaa-banner-image {
+        width: 50px;
+        height: 50px;
+    }
+
+    .yaa-banner-horizontal .yaa-banner-title {
+        font-size: 0.8rem;
+    }
+
+    .yaa-banner-horizontal .yaa-banner-cta {
+        display: none;
+    }
+
+    .yaa-banner-fade {
+        width: 30px;
+    }
+}
+
+/* ========================================
+   Print Styles
+   ======================================== */
+
+@media print {
+    .yaa-banner-container {
+        display: none;
+    }
+}
+ 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\yaa-search.css 
  
 .yadore-search-container{--yadore-primary:#2563eb;--yadore-primary-hover:#1d4ed8;--yadore-text:#1f2937;--yadore-text-muted:#6b7280;--yadore-border:#e5e7eb;--yadore-bg:#ffffff;--yadore-bg-hover:#f9fafb;--yadore-radius:8px;--yadore-shadow:0 1px 3px rgba(0,0,0,0.1);--yadore-shadow-lg:0 4px 6px -1px rgba(0,0,0,0.1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:100%;margin:0 auto}.yadore-search-form{margin-bottom:1.5rem}.yadore-search-input-wrapper{display:flex;gap:.5rem;max-width:600px}.yadore-search-input{flex:1;padding:.875rem 1rem;font-size:1rem;border:2px solid var(--yadore-border);border-radius:var(--yadore-radius);background:var(--yadore-bg);color:var(--yadore-text);transition:border-color 0.2s,box-shadow 0.2s}.yadore-search-input:focus{outline:none;border-color:var(--yadore-primary);box-shadow:0 0 0 3px rgb(37 99 235 / .1)}.yadore-search-input::placeholder{color:var(--yadore-text-muted)}.yadore-search-button{display:inline-flex;align-items:center;justify-content:center;padding:.875rem 1.5rem;font-size:1rem;font-weight:600;color:#fff;background:var(--yadore-primary);border:none;border-radius:var(--yadore-radius);cursor:pointer;transition:background-color 0.2s,transform 0.1s;min-width:120px}.yadore-search-button:hover:not(:disabled){background:var(--yadore-primary-hover)}.yadore-search-button:active:not(:disabled){transform:scale(.98)}.yadore-search-button:disabled{opacity:.7;cursor:not-allowed}.yadore-search-spinner{display:inline-flex}.yadore-spinner-icon{width:20px;height:20px}.yadore-search-status{padding:1rem;margin-bottom:1rem;border-radius:var(--yadore-radius);text-align:center}.yadore-status-loading{background:#eff6ff;color:#1e40af}.yadore-status-error{background:#fef2f2;color:#991b1b}.yadore-status-empty{background:#fefce8;color:#854d0e}.yadore-status-info{background:#f3f4f6;color:var(--yadore-text-muted)}.yadore-initial-products{margin-bottom:2rem}.yadore-initial-header{margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--yadore-border)}.yadore-initial-title{margin:0;font-size:1.25rem;font-weight:600;color:var(--yadore-text)}.yadore-search-results-header{display:flex;flex-wrap:wrap;align-items:center;gap:1rem;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--yadore-border)}.yadore-search-results-info{display:flex;gap:.5rem;font-size:.9rem;color:var(--yadore-text-muted)}.yadore-search-results-count{font-weight:600;color:var(--yadore-text)}.yadore-reset-button{padding:.5rem 1rem;font-size:.85rem;font-weight:500;color:var(--yadore-primary);background:#fff0;border:1px solid var(--yadore-primary);border-radius:var(--yadore-radius);cursor:pointer;transition:all 0.2s}.yadore-reset-button:hover{background:var(--yadore-primary);color:#fff}.yadore-search-results-grid{display:grid;gap:1.5rem}.yadore-columns-2{grid-template-columns:repeat(2,1fr)}.yadore-columns-3{grid-template-columns:repeat(3,1fr)}.yadore-columns-4{grid-template-columns:repeat(4,1fr)}.yadore-product-card{position:relative;background:var(--yadore-bg);border:1px solid var(--yadore-border);border-radius:var(--yadore-radius);overflow:hidden;transition:box-shadow 0.2s,transform 0.2s}.yadore-product-card:hover{box-shadow:var(--yadore-shadow-lg);transform:translateY(-2px)}.yadore-product-link{display:block;text-decoration:none;color:inherit}.yadore-product-source{position:absolute;top:.5rem;right:.5rem;width:8px;height:8px;border-radius:50%;z-index:2}.yadore-source-yadore{background:#10b981}.yadore-source-amazon{background:#f59e0b}.yadore-product-image{position:relative;padding-top:100%;background:#f9fafb;overflow:hidden}.yadore-product-image img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;padding:1rem;transition:transform 0.3s}.yadore-product-card:hover .yadore-product-image img{transform:scale(1.05)}.yadore-product-image.yadore-no-image,.yadore-product-image.yadore-image-error{display:flex;align-items:center;justify-content:center;color:#d1d5db}.yadore-product-image.yadore-no-image svg,.yadore-product-image.yadore-image-error svg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:48px;height:48px}.yadore-product-image.yadore-image-error img{display:none}.yadore-product-content{padding:1rem}.yadore-product-title{margin:0 0 .5rem;font-size:.95rem;font-weight:600;color:var(--yadore-text);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.yadore-product-merchant{font-size:.8rem;color:var(--yadore-text-muted);margin-bottom:.5rem}.yadore-product-price{font-size:1.1rem;font-weight:700;color:var(--yadore-primary);margin-bottom:.75rem}.yadore-product-cta{display:inline-block;font-size:.85rem;font-weight:600;color:var(--yadore-primary);transition:transform 0.2s}.yadore-product-card:hover .yadore-product-cta{transform:translateX(4px)}@keyframes yadore-fade-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.yadore-search-results .yadore-product-card{animation:yadore-fade-in 0.3s ease forwards}.yadore-search-results .yadore-product-card:nth-child(1){animation-delay:0.05s}.yadore-search-results .yadore-product-card:nth-child(2){animation-delay:0.1s}.yadore-search-results .yadore-product-card:nth-child(3){animation-delay:0.15s}.yadore-search-results .yadore-product-card:nth-child(4){animation-delay:0.2s}.yadore-search-results .yadore-product-card:nth-child(5){animation-delay:0.25s}.yadore-search-results .yadore-product-card:nth-child(6){animation-delay:0.3s}@media (max-width:768px){.yadore-search-input-wrapper{flex-direction:column}.yadore-search-button{width:100%}.yadore-columns-3,.yadore-columns-4{grid-template-columns:repeat(2,1fr)}.yadore-search-results-header{flex-direction:column;align-items:flex-start}.yadore-reset-button{width:100%;text-align:center}}@media (max-width:480px){.yadore-columns-2,.yadore-columns-3,.yadore-columns-4{grid-template-columns:1fr}.yadore-search-input{padding:.75rem}.yadore-search-button{padding:.75rem 1rem}.yadore-initial-title{font-size:1.1rem}}@media (prefers-color-scheme:dark){.yadore-search-container{--yadore-text:#f3f4f6;--yadore-text-muted:#9ca3af;--yadore-border:#374151;--yadore-bg:#1f2937;--yadore-bg-hover:#374151}.yadore-product-image{background:#374151}.yadore-status-loading{background:#1e3a5f;color:#93c5fd}.yadore-status-error{background:#450a0a;color:#fca5a5}.yadore-status-empty{background:#422006;color:#fcd34d}.yadore-status-info{background:#374151;color:#9ca3af}} 
@@ -548,6 +964,107 @@ var fallbackState=img.getAttribute('data-fallback-attempted');if(fallbackState==
 if(img.getAttribute('data-thumbnail')){hasThumbnail++}
 if(img.getAttribute('data-shop-logo')){hasShopLogo++}
 var originalSrc=img.getAttribute('data-original-src')||img.src;if(getProxyUrl(originalSrc)){hasProxy++}});return{total:images.length,loaded:loaded,broken:broken,loadingThumbnail:loadingThumbnail,loadingProxy:loadingProxy,showingShopLogo:showingShopLogo,withThumbnailFallback:hasThumbnail,withProxyAvailable:hasProxy,withShopLogoAvailable:hasShopLogo,proxyEnabled:isProxyEnabled()}}})() 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\yaa-banner.js 
+ 
+/**
+ * YAA Banner Shortcode JavaScript
+ * 
+ * Handles scroll behavior and indicators
+ * @since 1.7.0
+ */
+
+(function() {
+    'use strict';
+
+    /**
+     * Initialize all banner containers
+     */
+    function initBanners() {
+        const containers = document.querySelectorAll('.yaa-banner-container');
+        containers.forEach(initBanner);
+    }
+
+    /**
+     * Initialize single banner
+     */
+    function initBanner(container) {
+        const wrapper = container.querySelector('.yaa-banner-scroll-wrapper');
+        const track = container.querySelector('.yaa-banner-track');
+        const arrowLeft = container.querySelector('.yaa-banner-arrow-left');
+        const arrowRight = container.querySelector('.yaa-banner-arrow-right');
+
+        if (!wrapper || !track) return;
+
+        // Update scroll indicators
+        function updateScrollIndicators() {
+            const scrollLeft = wrapper.scrollLeft;
+            const maxScroll = wrapper.scrollWidth - wrapper.clientWidth;
+            const threshold = 10;
+
+            // Toggle classes based on scroll position
+            container.classList.toggle('has-scroll-left', scrollLeft > threshold);
+            container.classList.toggle('has-scroll-right', scrollLeft < maxScroll - threshold);
+        }
+
+        // Scroll by amount
+        function scrollBy(direction) {
+            const scrollAmount = wrapper.clientWidth * 0.8;
+            wrapper.scrollBy({
+                left: direction * scrollAmount,
+                behavior: 'smooth'
+            });
+        }
+
+        // Event listeners
+        wrapper.addEventListener('scroll', updateScrollIndicators, { passive: true });
+
+        if (arrowLeft) {
+            arrowLeft.addEventListener('click', function(e) {
+                e.preventDefault();
+                scrollBy(-1);
+            });
+        }
+
+        if (arrowRight) {
+            arrowRight.addEventListener('click', function(e) {
+                e.preventDefault();
+                scrollBy(1);
+            });
+        }
+
+        // Handle resize
+        let resizeTimeout;
+        window.addEventListener('resize', function() {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(updateScrollIndicators, 100);
+        }, { passive: true });
+
+        // Initial check
+        updateScrollIndicators();
+
+        // Re-check after images load
+        const images = track.querySelectorAll('img');
+        images.forEach(function(img) {
+            if (img.complete) {
+                updateScrollIndicators();
+            } else {
+                img.addEventListener('load', updateScrollIndicators);
+            }
+        });
+    }
+
+    // Initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initBanners);
+    } else {
+        initBanners();
+    }
+
+    // Re-initialize on AJAX content load (for dynamic loading)
+    document.addEventListener('yaa:content-loaded', initBanners);
+
+})();
+ 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\yaa-search.js 
  
 /**
@@ -4883,6 +5400,534 @@ final class YAA_Autoloader {
         }
         
         return null;
+    }
+}
+ 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-banner-shortcode.php 
+ 
+<?php
+/**
+ * Banner Shortcode Class
+ * 
+ * Responsive Affiliate-Banner als AdSense-Ersatz
+ * 
+ * @package Yadore_Amazon_API
+ * @since 1.7.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class YAA_Banner_Shortcode {
+
+    /**
+     * API Dependencies
+     */
+    private YAA_Yadore_API $yadore_api;
+    private YAA_Amazon_PAAPI $amazon_api;
+    private YAA_Custom_Products $custom_products;
+
+    /**
+     * Default Attribute Values
+     */
+    private array $defaults = [
+        'keyword'    => '',
+        'source'     => 'yadore',    // yadore, amazon, custom, all
+        'limit'      => 6,
+        'cta'        => 'Zum Angebot',
+        'style'      => 'horizontal', // horizontal, compact, minimal
+        'show_price' => 'yes',
+        'aspect'     => '1:1',        // 1:1, 16:9, 4:3
+        'market'     => '',
+        'category'   => 'All',
+    ];
+
+    /**
+     * Constructor with Dependency Injection
+     */
+    public function __construct(
+        YAA_Yadore_API $yadore_api,
+        YAA_Amazon_PAAPI $amazon_api,
+        YAA_Custom_Products $custom_products
+    ) {
+        $this->yadore_api      = $yadore_api;
+        $this->amazon_api      = $amazon_api;
+        $this->custom_products = $custom_products;
+
+        $this->register_shortcode();
+        $this->register_assets();
+    }
+
+    /**
+     * Register Shortcode
+     */
+    private function register_shortcode(): void {
+        add_shortcode('yaa_banner', [$this, 'render_banner']);
+    }
+
+    /**
+     * Register CSS and JS Assets
+     */
+    private function register_assets(): void {
+        add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
+    }
+
+    /**
+     * Enqueue CSS and JS (nur wenn Shortcode vorhanden)
+     */
+    public function enqueue_assets(): void {
+        global $post;
+
+        if (!($post instanceof WP_Post) || !has_shortcode($post->post_content, 'yaa_banner')) {
+            return;
+        }
+
+        wp_enqueue_style(
+            'yaa-banner',
+            YAA_PLUGIN_URL . 'assets/css/yaa-banner.css',
+            ['yaa-frontend-grid'],
+            YAA_VERSION
+        );
+
+        wp_enqueue_script(
+            'yaa-banner',
+            YAA_PLUGIN_URL . 'assets/js/yaa-banner.js',
+            [],
+            YAA_VERSION,
+            true
+        );
+    }
+
+    /**
+     * Render Banner Shortcode
+     */
+    public function render_banner(array $atts): string {
+        $atts = shortcode_atts($this->defaults, $atts, 'yaa_banner');
+
+        // Validate keyword
+        if (empty($atts['keyword'])) {
+            return $this->render_error('Bitte ein Keyword angeben.');
+        }
+
+        // Sanitize attributes
+        $atts['limit']      = absint($atts['limit']);
+        $atts['limit']      = max(1, min(12, $atts['limit']));
+        $atts['show_price'] = $atts['show_price'] === 'yes';
+        $atts['aspect']     = $this->sanitize_aspect($atts['aspect']);
+        $atts['style']      = in_array($atts['style'], ['horizontal', 'compact', 'minimal'], true) 
+                              ? $atts['style'] : 'horizontal';
+
+        // Fetch products based on source
+        $products = $this->fetch_products($atts);
+
+        if (empty($products)) {
+            return $this->render_error('Keine Produkte gefunden.');
+        }
+
+        // Render banner HTML
+        return $this->render_html($products, $atts);
+    }
+
+    /**
+     * Fetch Products from Selected Source(s)
+     */
+    private function fetch_products(array $atts): array {
+        $products = [];
+        $source   = strtolower($atts['source']);
+        $keyword  = sanitize_text_field($atts['keyword']);
+        $limit    = $atts['limit'];
+
+        // Determine which sources to query
+        $sources = ($source === 'all') 
+            ? ['yadore', 'amazon', 'custom'] 
+            : [$source];
+
+        foreach ($sources as $src) {
+            $remaining = $limit - count($products);
+            if ($remaining <= 0) {
+                break;
+            }
+
+            $fetched = match ($src) {
+                'yadore' => $this->fetch_yadore($keyword, $remaining, $atts['market']),
+                'amazon' => $this->fetch_amazon($keyword, $remaining, $atts['category']),
+                'custom' => $this->fetch_custom($keyword, $remaining),
+                default  => [],
+            };
+
+            $products = array_merge($products, $fetched);
+        }
+
+        return array_slice($products, 0, $limit);
+    }
+
+    /**
+     * Fetch from Yadore API
+     */
+    private function fetch_yadore(string $keyword, int $limit, string $market): array {
+        if (!$this->yadore_api->is_configured()) {
+            return [];
+        }
+
+        $market = !empty($market) ? $market : yaa_get_option('yadore_market', 'de');
+        
+        $response = $this->yadore_api->fetch([
+            'keyword' => $keyword,
+            'market'  => $market,
+            'limit'   => $limit,
+        ]);
+
+        if (empty($response) || !is_array($response)) {
+            return [];
+        }
+
+        $products = [];
+        foreach ($response as $offer) {
+            if (!is_array($offer)) {
+                continue;
+            }
+
+            $products[] = [
+                'source'   => 'yadore',
+                'title'    => $this->extract_string($offer, ['title', 'name']),
+                'price'    => $this->extract_string($offer, ['price', 'displayPrice']),
+                'currency' => $this->extract_string($offer, ['currency'], '€'),
+                'image'    => $this->extract_string($offer, ['image_url', 'image', 'imageUrl', 'thumbnail']),
+                'url'      => $this->extract_string($offer, ['deeplink', 'url', 'link', 'affiliateUrl']),
+                'merchant' => $this->extract_string($offer, ['merchant_name', 'merchant', 'shop', 'shopName']),
+            ];
+        }
+
+        return $products;
+    }
+
+    /**
+     * Fetch from Amazon PA-API
+     */
+    private function fetch_amazon(string $keyword, int $limit, string $category): array {
+        if (!$this->amazon_api->is_configured()) {
+            return [];
+        }
+
+        $response = $this->amazon_api->search_items($keyword, $category, $limit);
+
+        if (empty($response) || !is_array($response)) {
+            return [];
+        }
+
+        $products = [];
+        foreach ($response as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $products[] = [
+                'source'   => 'amazon',
+                'title'    => $this->extract_string($item, ['title', 'name']),
+                'price'    => $this->extract_string($item, ['price', 'displayPrice', 'priceFormatted']),
+                'currency' => '€',
+                'image'    => $this->extract_string($item, ['image', 'imageUrl', 'mediumImage', 'largeImage']),
+                'url'      => $this->extract_string($item, ['url', 'detailPageURL', 'link']),
+                'merchant' => 'Amazon',
+            ];
+        }
+
+        return $products;
+    }
+
+    /**
+     * Fetch from Custom Products (CPT)
+     */
+    private function fetch_custom(string $keyword, int $limit): array {
+        $args = [
+            'post_type'      => 'yaa_custom_product',
+            'posts_per_page' => $limit,
+            's'              => $keyword,
+            'post_status'    => 'publish',
+        ];
+
+        $query = new WP_Query($args);
+        $products = [];
+
+        if ($query->have_posts()) {
+            while ($query->have_posts()) {
+                $query->the_post();
+                $post_id = get_the_ID();
+
+                $price = get_post_meta($post_id, '_yaa_price', true);
+                $currency = get_post_meta($post_id, '_yaa_currency', true);
+                $url = get_post_meta($post_id, '_yaa_affiliate_url', true);
+                $merchant = get_post_meta($post_id, '_yaa_merchant', true);
+                $image = get_the_post_thumbnail_url($post_id, 'medium');
+
+                $products[] = [
+                    'source'   => 'custom',
+                    'title'    => get_the_title(),
+                    'price'    => is_string($price) ? $price : '',
+                    'currency' => is_string($currency) && !empty($currency) ? $currency : '€',
+                    'image'    => is_string($image) ? $image : '',
+                    'url'      => is_string($url) ? $url : '',
+                    'merchant' => is_string($merchant) ? $merchant : '',
+                ];
+            }
+            wp_reset_postdata();
+        }
+
+        return $products;
+    }
+
+    /**
+     * Extract string value from array with multiple possible keys
+     * 
+     * @param array $data Source array
+     * @param array $keys Possible keys to try (in order of priority)
+     * @param string $default Default value if not found
+     * @return string
+     */
+    private function extract_string(array $data, array $keys, string $default = ''): string {
+        foreach ($keys as $key) {
+            if (isset($data[$key])) {
+                $value = $data[$key];
+                
+                // Handle nested arrays (e.g., image might be ['url' => '...'])
+                if (is_array($value)) {
+                    // Try common nested keys
+                    foreach (['url', 'src', 'href', 'value', 'text', 0] as $nestedKey) {
+                        if (isset($value[$nestedKey]) && is_string($value[$nestedKey])) {
+                            return $value[$nestedKey];
+                        }
+                    }
+                    // Last resort: get first string value
+                    foreach ($value as $v) {
+                        if (is_string($v) && !empty($v)) {
+                            return $v;
+                        }
+                    }
+                    continue;
+                }
+                
+                // Handle scalar values
+                if (is_string($value)) {
+                    return $value;
+                }
+                
+                if (is_numeric($value)) {
+                    return (string) $value;
+                }
+            }
+        }
+        
+        return $default;
+    }
+
+    /**
+     * Render Banner HTML
+     */
+    private function render_html(array $products, array $atts): string {
+        $style        = esc_attr($atts['style']);
+        $aspect_class = 'yaa-banner-aspect-' . str_replace(':', '-', $atts['aspect']);
+
+        ob_start();
+        ?>
+        <div class="yaa-banner-container yaa-banner-<?php echo $style; ?>">
+            <?php if ($style === 'minimal') : ?>
+                <div class="yaa-banner-track">
+                    <?php foreach ($products as $product) : ?>
+                        <?php echo $this->render_minimal_item($product, $atts); ?>
+                    <?php endforeach; ?>
+                </div>
+            <?php else : ?>
+                <div class="yaa-banner-scroll-wrapper">
+                    <div class="yaa-banner-track">
+                        <?php foreach ($products as $product) : ?>
+                            <?php echo $this->render_item($product, $atts, $aspect_class); ?>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                
+                <!-- Scroll Indicators -->
+                <div class="yaa-banner-fade yaa-banner-fade-left"></div>
+                <div class="yaa-banner-fade yaa-banner-fade-right"></div>
+                <button class="yaa-banner-arrow yaa-banner-arrow-left" aria-label="Zurück" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+                <button class="yaa-banner-arrow yaa-banner-arrow-right" aria-label="Weiter" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                </button>
+            <?php endif; ?>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Render Single Banner Item (horizontal & compact)
+     */
+    private function render_item(array $product, array $atts, string $aspect_class): string {
+        $style      = $atts['style'];
+        $show_price = $atts['show_price'];
+        $cta_text   = esc_html($atts['cta']);
+        $source     = esc_attr($product['source'] ?? 'unknown');
+
+        // Ensure all values are strings before escaping
+        $title    = esc_html($this->truncate_title($this->ensure_string($product['title'] ?? ''), $style));
+        $url      = esc_url($this->ensure_string($product['url'] ?? ''));
+        $image    = esc_url($this->ensure_string($product['image'] ?? ''));
+        $price    = esc_html($this->ensure_string($product['price'] ?? ''));
+        $currency = esc_html($this->ensure_string($product['currency'] ?? '€'));
+
+        // Skip items without URL
+        if (empty($url)) {
+            return '';
+        }
+
+        ob_start();
+        ?>
+        <div class="yaa-banner-item yaa-<?php echo $source; ?> <?php echo esc_attr($aspect_class); ?>">
+            <a href="<?php echo $url; ?>" 
+               target="_blank" 
+               rel="nofollow noopener sponsored"
+               class="yaa-banner-link">
+                
+                <?php if (!empty($image)) : ?>
+                <div class="yaa-banner-image <?php echo esc_attr($aspect_class); ?>">
+                    <img src="<?php echo $image; ?>" 
+                         alt="<?php echo $title; ?>" 
+                         loading="lazy">
+                </div>
+                <?php endif; ?>
+
+                <div class="yaa-banner-content">
+                    <span class="yaa-banner-title"><?php echo $title; ?></span>
+                    
+                    <?php if ($show_price && !empty($price)) : ?>
+                    <span class="yaa-banner-price">
+                        <?php echo $price; ?> <?php echo $currency; ?>
+                    </span>
+                    <?php endif; ?>
+
+                    <?php if ($style === 'horizontal') : ?>
+                    <span class="yaa-banner-cta"><?php echo $cta_text; ?></span>
+                    <?php endif; ?>
+                </div>
+            </a>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Render Minimal Style Item (Text-Link Only)
+     */
+    private function render_minimal_item(array $product, array $atts): string {
+        $show_price = $atts['show_price'];
+        $source     = esc_attr($product['source'] ?? 'unknown');
+
+        // Ensure all values are strings before escaping
+        $title    = esc_html($this->truncate_title($this->ensure_string($product['title'] ?? ''), 'minimal'));
+        $url      = esc_url($this->ensure_string($product['url'] ?? ''));
+        $price    = esc_html($this->ensure_string($product['price'] ?? ''));
+        $currency = esc_html($this->ensure_string($product['currency'] ?? '€'));
+
+        // Skip items without URL
+        if (empty($url)) {
+            return '';
+        }
+
+        ob_start();
+        ?>
+        <span class="yaa-banner-item yaa-banner-minimal-item yaa-<?php echo $source; ?>">
+            <a href="<?php echo $url; ?>" 
+               target="_blank" 
+               rel="nofollow noopener sponsored"
+               class="yaa-banner-minimal-link">
+                <?php echo $title; ?>
+                <?php if ($show_price && !empty($price)) : ?>
+                    <span class="yaa-banner-minimal-price">(<?php echo $price; ?> <?php echo $currency; ?>)</span>
+                <?php endif; ?>
+            </a>
+        </span>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Ensure value is a string
+     * 
+     * @param mixed $value
+     * @return string
+     */
+    private function ensure_string(mixed $value): string {
+        if (is_string($value)) {
+            return $value;
+        }
+        
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+        
+        if (is_array($value)) {
+            // Try to extract a string from common array structures
+            foreach (['url', 'src', 'href', 'value', 'text', 0] as $key) {
+                if (isset($value[$key]) && is_string($value[$key])) {
+                    return $value[$key];
+                }
+            }
+            // Return first string found
+            foreach ($value as $v) {
+                if (is_string($v)) {
+                    return $v;
+                }
+            }
+        }
+        
+        if (is_bool($value)) {
+            return $value ? '1' : '';
+        }
+        
+        return '';
+    }
+
+    /**
+     * Truncate Title Based on Style
+     */
+    private function truncate_title(string $title, string $style): string {
+        $limits = [
+            'horizontal' => 50,
+            'compact'    => 30,
+            'minimal'    => 40,
+        ];
+
+        $limit = $limits[$style] ?? 50;
+
+        if (mb_strlen($title) > $limit) {
+            return mb_substr($title, 0, $limit - 3) . '...';
+        }
+
+        return $title;
+    }
+
+    /**
+     * Sanitize Aspect Ratio
+     */
+    private function sanitize_aspect(string $aspect): string {
+        $allowed = ['1:1', '16:9', '4:3'];
+        return in_array($aspect, $allowed, true) ? $aspect : '1:1';
+    }
+
+    /**
+     * Render Error Message (nur für Admins)
+     */
+    private function render_error(string $message): string {
+        if (current_user_can('edit_posts')) {
+            return '<div class="yaa-banner-error">' . esc_html($message) . '</div>';
+        }
+        return '';
     }
 }
  
@@ -11760,7 +12805,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Admin Documentation Page
  * Dokumentation und Shortcode-Referenz
  * PHP 8.3+ compatible
- * Version: 1.4.0
+ * Version: 1.7.0
  */
 
 declare(strict_types=1);
@@ -11789,9 +12834,10 @@ final class YAA_Admin_Docs {
             
             <!-- Quick Navigation -->
             <div class="yaa-card" style="background: #f0f6fc;">
-                <h2 style="margin-top: 0;">🧭 Schnellnavigation</h2>
+                <h2 style="margin-top: 0;">📍 Schnellnavigation</h2>
                 <div style="display: flex; flex-wrap: wrap; gap: 10px;">
                     <a href="#shortcodes" class="button">📝 Shortcodes</a>
+                    <a href="#banner-shortcode" class="button">🎯 Banner (NEU)</a>
                     <a href="#css-classes" class="button">🎨 CSS Klassen</a>
                     <a href="#wp-config" class="button">⚙️ wp-config.php</a>
                     <a href="#cpc-info" class="button">💰 CPC-Informationen</a>
@@ -11834,6 +12880,159 @@ final class YAA_Admin_Docs {
                 
                 <div class="yaa-tip">
                     <strong>Tipp:</strong> <code>custom_position</code> akzeptiert: <code>start</code>, <code>end</code>, <code>shuffle</code>, <code>alternate</code>
+                </div>
+            </div>
+            
+            <!-- NEU: Banner Shortcode Dokumentation -->
+            <div id="banner-shortcode" class="yaa-card">
+                <h2>🎯 Banner Shortcode <span class="yaa-badge-new">NEU in 1.7.0</span></h2>
+                
+                <p>Responsiver Affiliate-Banner als AdSense-Ersatz. Füllt die verfügbare Container-Breite und passt die Anzahl der sichtbaren Produkte automatisch an.</p>
+                
+                <h3>Grundlegende Verwendung</h3>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Laptop"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Smartphone" cta="Jetzt kaufen"]</div>
+                
+                <h3>Mit Quellenauswahl</h3>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Kopfhörer" source="yadore"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Gaming" source="amazon" category="VideoGames"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Monitor" source="all" limit="8"]</div>
+                
+                <h3>Style-Varianten</h3>
+                <table class="widefat" style="margin: 15px 0;">
+                    <thead>
+                        <tr>
+                            <th>Style</th>
+                            <th>Höhe</th>
+                            <th>Beschreibung</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>horizontal</code></td>
+                            <td>~90px</td>
+                            <td>Klassischer Leaderboard-Ersatz mit Bild, Titel, Preis und CTA</td>
+                        </tr>
+                        <tr>
+                            <td><code>compact</code></td>
+                            <td>~70px</td>
+                            <td>Kompakt mit Bild, Titel und Preis</td>
+                        </tr>
+                        <tr>
+                            <td><code>minimal</code></td>
+                            <td>Inline</td>
+                            <td>Nur Text-Links, ideal für Fließtext</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Tablet" style="horizontal"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Kamera" style="compact" limit="8"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Bücher" style="minimal" limit="5"]</div>
+                
+                <h3>Bild-Seitenverhältnis</h3>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Monitor" aspect="16:9"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Smartphone" aspect="1:1"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Tablet" aspect="4:3"]</div>
+                
+                <h3>Weitere Optionen</h3>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Laptop" show_price="no"]</div>
+                <div class="yaa-shortcode-box">[yaa_banner keyword="Gaming" source="amazon" cta="Bei Amazon kaufen"]</div>
+                
+                <h3>Alle Attribute</h3>
+                <table class="widefat striped">
+                    <thead>
+                        <tr>
+                            <th>Attribut</th>
+                            <th>Standard</th>
+                            <th>Beschreibung</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>keyword</code></td>
+                            <td>—</td>
+                            <td>Suchbegriff (Pflichtfeld)</td>
+                        </tr>
+                        <tr>
+                            <td><code>source</code></td>
+                            <td>yadore</td>
+                            <td>Produktquelle: <code>yadore</code>, <code>amazon</code>, <code>custom</code>, <code>all</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>limit</code></td>
+                            <td>6</td>
+                            <td>Maximale Produktanzahl (1-12)</td>
+                        </tr>
+                        <tr>
+                            <td><code>cta</code></td>
+                            <td>Zum Angebot</td>
+                            <td>Text des Call-to-Action Buttons</td>
+                        </tr>
+                        <tr>
+                            <td><code>style</code></td>
+                            <td>horizontal</td>
+                            <td>Darstellung: <code>horizontal</code>, <code>compact</code>, <code>minimal</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>show_price</code></td>
+                            <td>yes</td>
+                            <td>Preisanzeige: <code>yes</code> oder <code>no</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>aspect</code></td>
+                            <td>1:1</td>
+                            <td>Bild-Seitenverhältnis: <code>1:1</code>, <code>16:9</code>, <code>4:3</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>market</code></td>
+                            <td>Plugin-Standard</td>
+                            <td>Yadore Market-Code (de, at, ch, etc.)</td>
+                        </tr>
+                        <tr>
+                            <td><code>category</code></td>
+                            <td>All</td>
+                            <td>Amazon SearchIndex</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <h3>Responsive Verhalten</h3>
+                <table class="widefat" style="margin: 15px 0;">
+                    <thead>
+                        <tr>
+                            <th>Viewport</th>
+                            <th>Sichtbare Produkte</th>
+                            <th>Verhalten</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Desktop (≥1200px)</td>
+                            <td>4-5</td>
+                            <td>Nebeneinander</td>
+                        </tr>
+                        <tr>
+                            <td>Tablet (768-1199px)</td>
+                            <td>3-4</td>
+                            <td>Nebeneinander</td>
+                        </tr>
+                        <tr>
+                            <td>Mobile (&lt;768px)</td>
+                            <td>1-2</td>
+                            <td>Horizontal scrollbar mit Fade-Out und Pfeilen</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="yaa-feature-box info">
+                    <h4 style="margin-top: 0;">💡 Tipp: Quellen-Markierung</h4>
+                    <p>Banner-Items werden dezent nach Quelle markiert:</p>
+                    <ul style="margin-bottom: 0;">
+                        <li><span style="color: #10b981;">■</span> Grün = Yadore</li>
+                        <li><span style="color: #f59e0b;">■</span> Orange = Amazon</li>
+                        <li><span style="color: #8b5cf6;">■</span> Lila = Eigene Produkte</li>
+                    </ul>
                 </div>
             </div>
             
@@ -11937,6 +13136,7 @@ final class YAA_Admin_Docs {
                 <h2>🎨 CSS Klassen Referenz</h2>
                 <p>Nutzen Sie diese Klassen, um das Design über <strong>Custom CSS</strong> in Ihrem Theme anzupassen.</p>
                 
+                <h3>Grid-Shortcodes</h3>
                 <div class="yaa-code-block">
                     <pre>
 /* Haupt-Container */
@@ -11986,10 +13186,62 @@ final class YAA_Admin_Docs {
                     </pre>
                 </div>
                 
+                <h3>Banner-Shortcode (NEU)</h3>
+                <div class="yaa-code-block">
+                    <pre>
+/* Container */
+.yaa-banner-container { }
+.yaa-banner-horizontal { }
+.yaa-banner-compact { }
+.yaa-banner-minimal { }
+
+/* Scroll-Wrapper */
+.yaa-banner-scroll-wrapper { }
+.yaa-banner-track { }
+
+/* Einzelnes Banner-Item */
+.yaa-banner-item { }
+.yaa-banner-item.yaa-yadore { }    /* Grüner Akzent */
+.yaa-banner-item.yaa-amazon { }    /* Oranger Akzent */
+.yaa-banner-item.yaa-custom { }    /* Lila Akzent */
+
+/* Item-Komponenten */
+.yaa-banner-link { }
+.yaa-banner-image { }
+.yaa-banner-content { }
+.yaa-banner-title { }
+.yaa-banner-price { }
+.yaa-banner-cta { }
+
+/* Minimal-Style */
+.yaa-banner-minimal-item { }
+.yaa-banner-minimal-link { }
+.yaa-banner-minimal-price { }
+
+/* Aspect Ratios */
+.yaa-banner-aspect-1-1 { }
+.yaa-banner-aspect-16-9 { }
+.yaa-banner-aspect-4-3 { }
+
+/* Scroll-Indikatoren */
+.yaa-banner-fade { }
+.yaa-banner-fade-left { }
+.yaa-banner-fade-right { }
+.yaa-banner-arrow { }
+.yaa-banner-arrow-left { }
+.yaa-banner-arrow-right { }
+
+/* Zustandsklassen (via JS) */
+.yaa-banner-container.has-scroll-left { }
+.yaa-banner-container.has-scroll-right { }
+                    </pre>
+                </div>
+                
                 <h3>CSS Custom Properties (Variablen)</h3>
                 <div class="yaa-code-block">
                     <pre>
-.yaa-grid-container {
+.yaa-grid-container,
+.yaa-banner-container {
     --yaa-primary: #ff00cc;
     --yaa-secondary: #00ffff;
     --yaa-amazon: #ff9900;
@@ -11997,6 +13249,17 @@ final class YAA_Admin_Docs {
     --yaa-columns-desktop: 3;
     --yaa-columns-tablet: 2;
     --yaa-columns-mobile: 1;
+}
+
+/* Banner-spezifische Variablen */
+.yaa-banner-container {
+    --yaa-banner-bg: #1a1a2e;
+    --yaa-banner-text: #e4e4e7;
+    --yaa-banner-text-muted: #a1a1aa;
+    --yaa-banner-accent: #6366f1;
+    --yaa-banner-border: #27273a;
+    --yaa-banner-radius: 8px;
+    --yaa-banner-gap: 12px;
 }
                     </pre>
                 </div>
@@ -12176,6 +13439,21 @@ define('YAA_GITHUB_TOKEN', 'ghp_xxxxxxxxxxxx');
                 </ul>
             </div>
         </div>
+        
+        <style>
+            .yaa-badge-new {
+                display: inline-block;
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                color: #fff;
+                font-size: 0.7rem;
+                font-weight: 600;
+                padding: 3px 8px;
+                border-radius: 4px;
+                margin-left: 8px;
+                vertical-align: middle;
+                text-transform: uppercase;
+            }
+        </style>
         <?php
     }
 }
