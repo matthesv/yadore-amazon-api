@@ -1,12 +1,12 @@
 /**
  * Yadore-Amazon-API Frontend Grid Styles
- * Version 1.2.7 - PHP 8.3+ compatible
+ * Version 1.3.0 - PHP 8.3+ compatible
  * 
  * Features:
  * - CSS Custom Properties
  * - Responsive Grid
  * - Glassmorphism Design
- * - Image Error Placeholders
+ * - VERBESSERTES Image Error Placeholder Design (Anforderung 4)
  * - Accessibility Support
  * - Dark/Light Mode
  */
@@ -179,6 +179,12 @@
     opacity: 1;
 }
 
+/* NEU: Image loading thumbnail state */
+.yaa-image-wrapper img.yaa-img-loading {
+    opacity: 0.7;
+    filter: blur(2px);
+}
+
 .yaa-item:hover .yaa-image-wrapper img {
     transform: scale(1.08);
     filter: brightness(1.05) saturate(1.1) drop-shadow(0 8px 30px rgba(255, 0, 204, 0.3));
@@ -212,16 +218,17 @@
 
 /* =========================================
  * IMAGE ERROR / 404 PLACEHOLDER (JavaScript-generated)
+ * VERBESSERTES DESIGN - Version 1.3.0
  * ========================================= */
 
 /* Wrapper with broken image */
 .yaa-image-wrapper.yaa-image-error {
     background: linear-gradient(135deg, 
-        rgba(30, 30, 30, 0.6) 0%, 
-        rgba(20, 20, 20, 0.8) 100%);
+        rgba(25, 25, 30, 0.9) 0%, 
+        rgba(15, 15, 20, 0.95) 100%);
 }
 
-/* CSS-only Placeholder (inserted by JS) */
+/* CSS-only Placeholder (inserted by JS) - MODERNISIERT */
 .yaa-placeholder {
     position: absolute;
     top: 0;
@@ -232,53 +239,152 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, 
-        rgba(30, 30, 30, 0.95) 0%, 
-        rgba(20, 20, 20, 0.98) 100%);
+    background: linear-gradient(145deg, 
+        rgba(30, 30, 35, 0.95) 0%, 
+        rgba(20, 20, 25, 0.98) 50%,
+        rgba(25, 25, 30, 0.95) 100%);
     border-radius: inherit;
+    overflow: hidden;
 }
 
-/* Placeholder Icon (CSS-generated SVG) */
+/* Glassmorphism overlay effect */
 .yaa-placeholder::before {
     content: "";
-    width: 80px;
-    height: 80px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Crect x='15' y='20' width='70' height='50' rx='6' stroke='%23555' stroke-width='3'/%3E%3Ccircle cx='35' cy='38' r='8' stroke='%23555' stroke-width='2'/%3E%3Cpath d='M20 60 L38 45 L52 55 L72 35 L85 50 L85 65 L15 65 Z' fill='%23444' opacity='0.8'/%3E%3Cline x1='50' y1='75' x2='50' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3Cline x1='40' y1='85' x2='60' y2='85' stroke='%23555' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23666'/%3E%3Cstop offset='100%25' style='stop-color:%23444'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='15' y='20' width='70' height='50' rx='8' stroke='url(%23g)' stroke-width='2' fill='none'/%3E%3Ccircle cx='32' cy='38' r='8' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3Cpath d='M18 58 L35 42 L50 52 L68 32 L82 48 L82 62 L18 62 Z' fill='%23333' fill-opacity='0.6'/%3E%3Cpath d='M50 72 L50 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M42 82 L58 82' stroke='%23555' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
     background-size: contain;
-    opacity: 0.5;
-    transition: opacity 0.3s ease;
+    opacity: 0.4;
+    transition: all 0.4s ease;
 }
 
-/* Placeholder Text */
+/* Subtle shimmer animation */
 .yaa-placeholder::after {
     content: "Bild nicht verfügbar";
-    margin-top: 15px;
-    font-size: 0.7rem;
-    color: var(--yaa-text-muted, #666);
+    position: absolute;
+    bottom: 25%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.35);
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 2px;
     white-space: nowrap;
-    opacity: 0.4;
+    font-weight: 500;
+    background: linear-gradient(90deg, 
+        rgba(255,255,255,0.2) 0%, 
+        rgba(255,255,255,0.4) 50%, 
+        rgba(255,255,255,0.2) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: yaa-placeholder-shimmer 3s ease-in-out infinite;
+}
+
+@keyframes yaa-placeholder-shimmer {
+    0% { background-position: 200% center; }
+    100% { background-position: -200% center; }
+}
+
+/* Decorative corner accents */
+.yaa-placeholder .yaa-placeholder-corner {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: rgba(255, 255, 255, 0.1);
+    border-style: solid;
+    border-width: 0;
 }
 
 /* Hover effect on placeholder */
 .yaa-item:hover .yaa-placeholder::before {
-    opacity: 0.7;
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(1.05);
 }
 
-/* Source-specific placeholder colors */
+.yaa-item:hover .yaa-placeholder::after {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* =========================================
+ * SOURCE-SPECIFIC PLACEHOLDER COLORS
+ * Verbesserte farbliche Integration
+ * ========================================= */
+
+/* Amazon Placeholder - Orange Akzent */
+.yaa-placeholder-amazon {
+    background: linear-gradient(145deg, 
+        rgba(40, 30, 20, 0.95) 0%, 
+        rgba(25, 20, 15, 0.98) 50%,
+        rgba(35, 25, 18, 0.95) 100%);
+    border-bottom: 2px solid rgba(255, 153, 0, 0.3);
+}
+
 .yaa-placeholder-amazon::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(350deg);
+    filter: sepia(50%) saturate(200%) hue-rotate(350deg) brightness(1.1);
+}
+
+.yaa-placeholder-amazon::after {
+    background: linear-gradient(90deg, 
+        rgba(255, 153, 0, 0.3) 0%, 
+        rgba(255, 180, 50, 0.5) 50%, 
+        rgba(255, 153, 0, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+/* Custom Product Placeholder - Grüner Akzent */
+.yaa-placeholder-custom {
+    background: linear-gradient(145deg, 
+        rgba(20, 35, 25, 0.95) 0%, 
+        rgba(15, 25, 18, 0.98) 50%,
+        rgba(18, 30, 22, 0.95) 100%);
+    border-bottom: 2px solid rgba(76, 175, 80, 0.3);
 }
 
 .yaa-placeholder-custom::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(80deg);
+    filter: sepia(50%) saturate(200%) hue-rotate(80deg) brightness(1.1);
+}
+
+.yaa-placeholder-custom::after {
+    background: linear-gradient(90deg, 
+        rgba(76, 175, 80, 0.3) 0%, 
+        rgba(129, 199, 132, 0.5) 50%, 
+        rgba(76, 175, 80, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+/* Yadore Placeholder - Magenta/Cyan Akzent */
+.yaa-placeholder-yadore {
+    background: linear-gradient(145deg, 
+        rgba(30, 20, 35, 0.95) 0%, 
+        rgba(20, 15, 25, 0.98) 50%,
+        rgba(25, 18, 30, 0.95) 100%);
+    border-bottom: 2px solid rgba(255, 0, 204, 0.3);
 }
 
 .yaa-placeholder-yadore::before {
-    filter: sepia(100%) saturate(300%) hue-rotate(280deg);
+    filter: sepia(50%) saturate(250%) hue-rotate(280deg) brightness(1.1);
+}
+
+.yaa-placeholder-yadore::after {
+    background: linear-gradient(90deg, 
+        rgba(255, 0, 204, 0.3) 0%, 
+        rgba(0, 255, 255, 0.5) 50%, 
+        rgba(255, 0, 204, 0.3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 
 /* =========================================
@@ -727,12 +833,13 @@
     }
     
     .yaa-placeholder::before {
-        width: 60px;
-        height: 60px;
+        width: 70px;
+        height: 70px;
     }
     
     .yaa-placeholder::after {
-        font-size: 0.6rem;
+        font-size: 0.55rem;
+        letter-spacing: 1.5px;
     }
 }
 
@@ -762,6 +869,16 @@
     .yaa-button {
         padding: 10px 12px;
         font-size: 0.65rem;
+    }
+    
+    .yaa-placeholder::before {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .yaa-placeholder::after {
+        font-size: 0.5rem;
+        bottom: 20%;
     }
 }
 
@@ -795,6 +912,15 @@
     .yaa-price {
         color: #000 !important;
         -webkit-text-fill-color: #000 !important;
+    }
+    
+    .yaa-placeholder {
+        background: #f5f5f5 !important;
+    }
+    
+    .yaa-placeholder::after {
+        color: #666 !important;
+        -webkit-text-fill-color: #666 !important;
     }
 }
 
@@ -839,9 +965,24 @@
 }
 
 .yaa-grid-container.yaa-theme-light .yaa-placeholder {
-    background: linear-gradient(135deg, 
-        rgba(245, 245, 245, 0.98) 0%, 
-        rgba(235, 235, 235, 0.98) 100%);
+    background: linear-gradient(145deg, 
+        rgba(245, 245, 248, 0.98) 0%, 
+        rgba(235, 235, 240, 0.98) 50%,
+        rgba(240, 240, 245, 0.98) 100%);
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-placeholder::before {
+    opacity: 0.3;
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-placeholder::after {
+    background: linear-gradient(90deg, 
+        rgba(100, 100, 100, 0.4) 0%, 
+        rgba(50, 50, 50, 0.6) 50%, 
+        rgba(100, 100, 100, 0.4) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
 }
 
 /* =========================================
@@ -852,7 +993,8 @@
     .yaa-button,
     .yaa-image-wrapper img,
     .yaa-description,
-    .yaa-read-more::after {
+    .yaa-read-more::after,
+    .yaa-placeholder::before {
         transition: none;
     }
     
@@ -865,6 +1007,10 @@
     }
     
     .yaa-price {
+        animation: none;
+    }
+    
+    .yaa-placeholder::after {
         animation: none;
     }
     

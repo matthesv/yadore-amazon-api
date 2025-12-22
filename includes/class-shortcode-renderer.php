@@ -841,8 +841,9 @@ final class YAA_Shortcode_Renderer {
         return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
-    /**
+        /**
      * Render the product grid
+     * NEU in 1.5.1: data-thumbnail Attribut für Fallback-Kette
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -885,9 +886,27 @@ final class YAA_Shortcode_Renderer {
                 $url = $item['url'] ?? '#';
                 $title = $item['title'] ?? '';
                 
-                // Bild-Verarbeitung mit Produktname für SEO-Dateinamen
+                // === BILD-VERARBEITUNG MIT THUMBNAIL-FALLBACK ===
+                
+                // Haupt-Bild URL
                 $raw_image_url = $item['image']['url'] ?? '';
                 
+                // Thumbnail URL für Fallback (NEU)
+                $thumbnail_url = '';
+                
+                // Yadore: Thumbnail aus API-Response
+                if ($source === 'yadore') {
+                    $thumbnail_url = $item['image']['thumbnail_url'] ?? '';
+                }
+                
+                // Amazon: Medium-Bild als Thumbnail-Fallback
+                // Die Amazon API liefert verschiedene Größen - wir nutzen bereits die beste verfügbare
+                // Aber wir können das Small-Bild als Fallback speichern falls vorhanden
+                if ($source === 'amazon' && isset($item['image']['medium_url'])) {
+                    $thumbnail_url = $item['image']['medium_url'];
+                }
+                
+                // Unique ID für Bild-Verarbeitung
                 $image_unique_id = match($source) {
                     'amazon' => $item['asin'] ?? $item['id'] ?? uniqid('amz_'),
                     'custom' => (string) ($item['post_id'] ?? $item['id'] ?? uniqid('cst_')),
@@ -903,6 +922,18 @@ final class YAA_Shortcode_Renderer {
                     $title,
                     $atts
                 );
+                
+                // Auch Thumbnail lokal speichern wenn aktiviert (aber nur wenn unterschiedlich)
+                $processed_thumbnail_url = '';
+                if ($thumbnail_url !== '' && $thumbnail_url !== $raw_image_url) {
+                    $processed_thumbnail_url = $this->process_image_url(
+                        $thumbnail_url,
+                        $image_unique_id . '_thumb',
+                        $source,
+                        $title . ' Thumbnail',
+                        $atts
+                    );
+                }
                 
                 $description = $item['description'] ?? '';
                 $price_amount = $item['price']['amount'] ?? '';
@@ -940,7 +971,12 @@ final class YAA_Shortcode_Renderer {
                                 <img src="<?php echo esc_url($image_url); ?>" 
                                      alt="<?php echo esc_attr($title); ?>" 
                                      loading="lazy"
-                                     decoding="async">
+                                     decoding="async"
+                                     data-fallback-attempted="false"
+                                     <?php if ($processed_thumbnail_url !== ''): ?>
+                                     data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                     <?php endif; ?>
+                                     data-source="<?php echo esc_attr($source); ?>">
                             </a>
                         <?php else: ?>
                             <div class="yaa-no-image">
@@ -1008,6 +1044,7 @@ final class YAA_Shortcode_Renderer {
         <?php
         return ob_get_clean() ?: '';
     }
+
     
     /**
      * Render error message

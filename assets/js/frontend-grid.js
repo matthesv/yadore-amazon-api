@@ -1,13 +1,17 @@
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.2.7 - PHP 8.3+ compatible
+ * Version 1.3.0 - PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
- * - Image 404 Error Handling
+ * - Image 404 Error Handling with Thumbnail Fallback
  * - Public API
+ * 
+ * NEU in 1.3.0:
+ * - Thumbnail-Fallback vor CSS-Placeholder (Anforderung 3)
+ * - Verbesserte Bildlade-Logik
  */
 
 (function() {
@@ -130,16 +134,21 @@
 
     /**
      * Initialize image error handling for 404/broken images
-     * Creates CSS placeholder when image fails to load
+     * NEU: Versucht erst Thumbnail zu laden, dann CSS-Placeholder
      */
     function initImageErrorHandling() {
         const images = document.querySelectorAll('.yaa-image-wrapper img');
         
         images.forEach(function(img) {
+            // Mark image as not yet processed for fallback
+            if (!img.hasAttribute('data-fallback-attempted')) {
+                img.setAttribute('data-fallback-attempted', 'false');
+            }
+            
             // Handle images that are already broken (cached or immediate 404)
             if (img.complete) {
                 if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                    handleBrokenImage(img);
+                    attemptImageFallback(img);
                 } else {
                     // Image loaded successfully
                     img.classList.add('yaa-img-loaded');
@@ -149,27 +158,82 @@
             // Handle future load events
             img.addEventListener('load', function() {
                 img.classList.add('yaa-img-loaded');
+                img.classList.remove('yaa-img-loading');
             });
             
             // Handle future errors (async loading)
             img.addEventListener('error', function() {
-                handleBrokenImage(img);
+                attemptImageFallback(img);
             });
         });
     }
 
     /**
-     * Handle a broken/404 image
-     * Hides the image and shows a CSS placeholder
+     * NEU: Attempt image fallback chain
+     * 1. Original image (already failed)
+     * 2. Try thumbnail if available (data-thumbnail attribute)
+     * 3. Fall back to CSS placeholder
+     * 
      * @param {HTMLImageElement} img
      */
-    function handleBrokenImage(img) {
+    function attemptImageFallback(img) {
         const wrapper = img.closest('.yaa-image-wrapper');
         
         if (!wrapper) {
             return;
         }
         
+        // Get fallback state
+        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        
+        // Store original src on first attempt
+        if (!img.hasAttribute('data-original-src')) {
+            img.setAttribute('data-original-src', img.src);
+        }
+        
+        // ========================================
+        // FALLBACK CHAIN
+        // ========================================
+        
+        // Step 1: If we haven't tried thumbnail yet and it exists, try it
+        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+            if (window.console) {
+                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'thumbnail');
+            img.classList.add('yaa-img-loading');
+            
+            // Try loading the thumbnail
+            img.src = thumbnailUrl;
+            
+            // Don't proceed to placeholder yet - wait for thumbnail load/error
+            return;
+        }
+        
+        // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
+            if (window.console && fallbackAttempted === 'thumbnail') {
+                console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
+            } else if (window.console) {
+                console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'complete');
+            showCSSPlaceholder(img, wrapper);
+        }
+    }
+
+    /**
+     * NEU: Show CSS placeholder after all fallbacks failed
+     * Extracted from handleBrokenImage for cleaner code
+     * 
+     * @param {HTMLImageElement} img
+     * @param {HTMLElement} wrapper
+     */
+    function showCSSPlaceholder(img, wrapper) {
         // Prevent multiple executions
         if (wrapper.classList.contains('yaa-image-error')) {
             return;
@@ -181,6 +245,7 @@
         // Hide the broken image
         img.style.display = 'none';
         img.style.visibility = 'hidden';
+        img.classList.remove('yaa-img-loading');
         
         // Check if placeholder already exists
         if (wrapper.querySelector('.yaa-placeholder')) {
@@ -213,11 +278,15 @@
         } else {
             wrapper.appendChild(placeholder);
         }
-        
-        // Log error for debugging (optional)
-        if (window.console && img.src) {
-            console.warn('YAA: Image failed to load:', img.src);
-        }
+    }
+
+    /**
+     * Legacy function for backwards compatibility
+     * @deprecated Use attemptImageFallback instead
+     * @param {HTMLImageElement} img
+     */
+    function handleBrokenImage(img) {
+        attemptImageFallback(img);
     }
 
     /**
@@ -295,10 +364,33 @@
      */
     window.YAA.recheckImage = function(img) {
         if (img && img.tagName === 'IMG') {
+            // Reset fallback state
+            img.setAttribute('data-fallback-attempted', 'false');
+            
             if (img.complete && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
-                handleBrokenImage(img);
+                attemptImageFallback(img);
             }
         }
+    };
+
+    /**
+     * NEU: Manually trigger thumbnail fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if thumbnail was attempted
+     */
+    window.YAA.tryThumbnail = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        if (thumbnailUrl && thumbnailUrl !== '') {
+            img.setAttribute('data-fallback-attempted', 'false');
+            attemptImageFallback(img);
+            return true;
+        }
+        
+        return false;
     };
 
     /**
@@ -323,12 +415,14 @@
             price: priceElement ? priceElement.textContent.trim() : '',
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
+            thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
             isYadore: item.classList.contains('yaa-yadore'),
             isPrime: item.querySelector('.yaa-prime-badge') !== null,
             hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
-            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false
+            imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false,
+            fallbackAttempted: imageElement ? imageElement.getAttribute('data-fallback-attempted') : null
         };
     };
 
@@ -367,6 +461,51 @@
      */
     window.YAA.getBrokenImageCount = function() {
         return document.querySelectorAll('.yaa-image-wrapper.yaa-image-error').length;
+    };
+
+    /**
+     * NEU: Get count of images currently loading thumbnails
+     * @returns {number}
+     */
+    window.YAA.getLoadingThumbnailCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="thumbnail"]').length;
+    };
+
+    /**
+     * NEU: Get detailed image status for debugging
+     * @returns {Object}
+     */
+    window.YAA.getImageStats = function() {
+        const images = document.querySelectorAll('.yaa-image-wrapper img');
+        let loaded = 0;
+        let broken = 0;
+        let loadingThumbnail = 0;
+        let hasThumbnail = 0;
+        
+        images.forEach(function(img) {
+            if (img.classList.contains('yaa-img-loaded')) {
+                loaded++;
+            }
+            
+            const fallbackState = img.getAttribute('data-fallback-attempted');
+            if (fallbackState === 'complete') {
+                broken++;
+            } else if (fallbackState === 'thumbnail') {
+                loadingThumbnail++;
+            }
+            
+            if (img.getAttribute('data-thumbnail')) {
+                hasThumbnail++;
+            }
+        });
+        
+        return {
+            total: images.length,
+            loaded: loaded,
+            broken: broken,
+            loadingThumbnail: loadingThumbnail,
+            withThumbnailFallback: hasThumbnail
+        };
     };
 
 })();
