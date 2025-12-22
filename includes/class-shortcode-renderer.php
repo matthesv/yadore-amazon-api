@@ -965,9 +965,7 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                    // Im render_grid() - ersetze den Image-Block:
-
-                <div class="yaa-image-wrapper">
+                    <div class="yaa-image-wrapper">
                     <?php if ($image_url !== '' && $image_url !== null): ?>
                         <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
                             <img src="<?php echo esc_url($image_url); ?>" 
