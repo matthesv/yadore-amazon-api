@@ -658,49 +658,221 @@ final class YAA_Search_Shortcode {
         return [];
     }
 
-    /**
-     * Normalize products - MUST MATCH JavaScript product structure
-     */
-    private function normalize_products(array $products, string $source): array {
-        $normalized = [];
+/**
+ * Normalize products - MUST MATCH JavaScript product structure
+ * FIX: Improved price extraction for different API formats
+ */
+private function normalize_products(array $products, string $source): array {
+    $normalized = [];
+    
+    foreach ($products as $product) {
+        // === PRICE EXTRACTION - FIXED ===
+        $price_data = $this->extract_price_data($product);
         
-        foreach ($products as $product) {
-            $normalized[] = [
-                // IDs
-                'id'              => $product['id'] ?? $product['asin'] ?? uniqid('prod_'),
-                'asin'            => $product['asin'] ?? '',
-                
-                // Content
-                'title'           => $product['title'] ?? '',
-                'description'     => $product['description'] ?? '',
-                'url'             => $product['url'] ?? '#',
-                
-                // Image
-                'image_url'       => $product['image']['url'] ?? $product['image_url'] ?? '',
-                
-                // Price
-                'price'           => $product['price']['display'] ?? $this->format_price($product),
-                'price_amount'    => $product['price']['amount'] ?? '',
-                'price_old'       => $product['price_old'] ?? '',
-                'currency'        => $product['price']['currency'] ?? 'EUR',
-                'discount_percent'=> $product['discount_percent'] ?? null,
-                
-                // Merchant
-                'merchant'        => $product['merchant']['name'] ?? $product['merchant'] ?? '',
-                
-                // Meta
-                'source'          => $source,
-                'is_prime'        => !empty($product['is_prime']),
-                'rating'          => $product['rating'] ?? null,
-                'reviews_count'   => $product['reviews_count'] ?? null,
-                'availability'    => $product['availability'] ?? null,
-                'availability_status' => $product['availability_status'] ?? 'unknown',
-                'sponsored'       => $product['sponsored'] ?? false,
-            ];
-        }
-        
-        return $normalized;
+        $normalized[] = [
+            // IDs
+            'id'              => $product['id'] ?? $product['asin'] ?? $product['offerId'] ?? uniqid('prod_'),
+            'asin'            => $product['asin'] ?? '',
+            
+            // Content
+            'title'           => $product['title'] ?? $product['name'] ?? '',
+            'description'     => $product['description'] ?? '',
+            'url'             => $product['url'] ?? $product['clickUrl'] ?? $product['deeplink'] ?? '#',
+            
+            // Image - check multiple possible locations
+            'image_url'       => $product['image']['url'] 
+                                 ?? $product['image_url'] 
+                                 ?? $product['imageUrl'] 
+                                 ?? $product['thumbnail']['url'] 
+                                 ?? '',
+            
+            // Price - FIXED
+            'price'           => $price_data['display'],
+            'price_amount'    => $price_data['amount'],
+            'price_old'       => $this->extract_old_price($product),
+            'currency'        => $price_data['currency'],
+            'discount_percent'=> $product['discount_percent'] ?? $product['discountPercent'] ?? null,
+            
+            // Merchant - check multiple possible locations
+            'merchant'        => $product['merchant']['name'] 
+                                 ?? (is_string($product['merchant'] ?? null) ? $product['merchant'] : '')
+                                 ?? $product['merchantName'] 
+                                 ?? '',
+            
+            // Meta
+            'source'          => $source,
+            'is_prime'        => !empty($product['is_prime']) || !empty($product['isPrime']),
+            'rating'          => $product['rating'] ?? $product['reviewRating'] ?? null,
+            'reviews_count'   => $product['reviews_count'] ?? $product['reviewCount'] ?? null,
+            'availability'    => $product['availability'] ?? $product['availabilityMessage'] ?? null,
+            'availability_status' => $product['availability_status'] ?? 'unknown',
+            'sponsored'       => $product['sponsored'] ?? false,
+        ];
     }
+    
+    return $normalized;
+}
+
+/**
+ * Extract price data from product - handles multiple API formats
+ * 
+ * @param array $product Raw product data
+ * @return array{display: string, amount: string, currency: string}
+ */
+private function extract_price_data(array $product): array {
+    $amount = '';
+    $currency = 'EUR';
+    $display = '';
+    
+    // Method 1: price.display exists (Amazon format)
+    if (!empty($product['price']['display'])) {
+        return [
+            'display'  => $product['price']['display'],
+            'amount'   => $product['price']['amount'] ?? '',
+            'currency' => $product['price']['currency'] ?? 'EUR',
+        ];
+    }
+    
+    // Method 2: price.amount exists (Yadore format)
+    if (!empty($product['price']['amount'])) {
+        $amount = $product['price']['amount'];
+        $currency = $product['price']['currency'] ?? 'EUR';
+        $display = $this->format_price_display($amount, $currency);
+        
+        return [
+            'display'  => $display,
+            'amount'   => $amount,
+            'currency' => $currency,
+        ];
+    }
+    
+    // Method 3: price is a string directly
+    if (is_string($product['price'] ?? null) && !empty($product['price'])) {
+        return [
+            'display'  => $product['price'],
+            'amount'   => preg_replace('/[^\d,.]/', '', $product['price']) ?? '',
+            'currency' => 'EUR',
+        ];
+    }
+    
+    // Method 4: displayPrice field (alternative Yadore response)
+    if (!empty($product['displayPrice'])) {
+        return [
+            'display'  => $product['displayPrice'],
+            'amount'   => preg_replace('/[^\d,.]/', '', $product['displayPrice']) ?? '',
+            'currency' => $product['currency'] ?? 'EUR',
+        ];
+    }
+    
+    // Method 5: priceAmount / price_amount flat fields
+    if (!empty($product['price_amount']) || !empty($product['priceAmount'])) {
+        $amount = $product['price_amount'] ?? $product['priceAmount'];
+        $currency = $product['currency'] ?? 'EUR';
+        $display = $this->format_price_display($amount, $currency);
+        
+        return [
+            'display'  => $display,
+            'amount'   => $amount,
+            'currency' => $currency,
+        ];
+    }
+    
+    // Method 6: currentPrice object
+    if (!empty($product['currentPrice']['amount'])) {
+        $amount = $product['currentPrice']['amount'];
+        $currency = $product['currentPrice']['currency'] ?? 'EUR';
+        $display = $this->format_price_display($amount, $currency);
+        
+        return [
+            'display'  => $display,
+            'amount'   => $amount,
+            'currency' => $currency,
+        ];
+    }
+    
+    // No price found
+    return [
+        'display'  => '',
+        'amount'   => '',
+        'currency' => 'EUR',
+    ];
+}
+
+/**
+ * Format price amount for display
+ * 
+ * @param string|float|int $amount Numeric price amount
+ * @param string $currency Currency code (EUR, USD, etc.)
+ * @return string Formatted price like "29,99 €"
+ */
+private function format_price_display(string|float|int $amount, string $currency = 'EUR'): string {
+    if (empty($amount) || $amount === '0' || $amount === 0) {
+        return '';
+    }
+    
+    // Convert string to float (handle both 29.99 and 29,99 formats)
+    $amount_str = (string) $amount;
+    
+    // If comma is decimal separator (European format like "29,99")
+    if (preg_match('/^\d+,\d{2}$/', $amount_str)) {
+        $amount_float = (float) str_replace(',', '.', $amount_str);
+    }
+    // If comma is thousands separator (like "1,234.56")
+    elseif (str_contains($amount_str, ',') && str_contains($amount_str, '.')) {
+        $amount_float = (float) str_replace(',', '', $amount_str);
+    }
+    // Standard format
+    else {
+        $amount_float = (float) $amount_str;
+    }
+    
+    if ($amount_float <= 0) {
+        return '';
+    }
+    
+    // Currency symbol mapping
+    $symbols = [
+        'EUR' => '€',
+        'USD' => '$',
+        'GBP' => '£',
+        'CHF' => 'CHF',
+        'PLN' => 'zł',
+        'SEK' => 'kr',
+        'DKK' => 'kr',
+        'NOK' => 'kr',
+    ];
+    
+    $symbol = $symbols[strtoupper($currency)] ?? $currency;
+    
+    // German format: 1.234,56 €
+    return number_format($amount_float, 2, ',', '.') . ' ' . $symbol;
+}
+
+/**
+ * Extract old/original price from product
+ */
+private function extract_old_price(array $product): string {
+    // Try various field names for original/old price
+    $old_price = $product['price_old'] 
+                 ?? $product['originalPrice']['amount'] 
+                 ?? $product['originalPrice']['display']
+                 ?? $product['listPrice']['amount']
+                 ?? $product['wasPrice']
+                 ?? '';
+    
+    if (empty($old_price)) {
+        return '';
+    }
+    
+    // If it's just a number, format it
+    if (is_numeric($old_price)) {
+        $currency = $product['price']['currency'] ?? $product['currency'] ?? 'EUR';
+        return $this->format_price_display($old_price, $currency);
+    }
+    
+    return (string) $old_price;
+}
+
 
     /**
      * Format price from product data
