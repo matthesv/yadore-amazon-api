@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.3
+ * Version: 1.5.9
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.3');
+define('YAA_VERSION', '1.5.9');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -80,36 +80,6 @@ YAA_Autoloader::register(YAA_PLUGIN_PATH);
 YAA_Autoloader::add_directory('includes/admin');
 
 // =========================================
-// LEGACY REQUIRES (für Klassen die noch nicht migriert wurden)
-// Diese können nach und nach entfernt werden, sobald der Autoloader greift
-// =========================================
-
-// Core-Klassen die immer benötigt werden
-// Der Autoloader lädt diese automatisch, aber wir können sie auch explizit laden
-// für bessere Kontrolle über die Ladereihenfolge
-
-// Hinweis: Die folgenden require_once Statements sind optional
-// wenn der Autoloader korrekt funktioniert. Sie dienen als Fallback.
-
-/*
- * Liste der Kern-Klassen (werden durch Autoloader geladen):
- * - YAA_Cache_Handler
- * - YAA_Image_Handler
- * - YAA_Fuzzy_Matcher
- * - YAA_Yadore_API
- * - YAA_Amazon_PAAPI
- * - YAA_Custom_Products
- * - YAA_Shortcode_Renderer
- * - YAA_Merchant_Filter
- * - YAA_Admin (Koordinator)
- * - YAA_Admin_Settings
- * - YAA_Admin_Ajax
- * - YAA_Admin_Status
- * - YAA_Admin_Docs
- * - YAA_Admin_Merchants (NEU: Händlerübersicht mit CPC)
- */
-
-// =========================================
 // PLUGIN UPDATE CHECKER (GitHub)
 // =========================================
 if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-checker.php')) {
@@ -131,7 +101,7 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.4.0 - Mit Autoloader Support
+ * Version 1.5.4 - Mit Image Proxy Support
  */
 final class Yadore_Amazon_API_Plugin {
     
@@ -143,6 +113,7 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Custom_Products $custom_products;
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
+    public readonly YAA_Image_Proxy $image_proxy; // NEU
     
     public static function get_instance(): self {
         if (self::$instance === null) {
@@ -168,6 +139,9 @@ final class Yadore_Amazon_API_Plugin {
             $this->cache,
             $this->custom_products
         );
+        
+        // NEU: Image Proxy Component
+        $this->image_proxy = new YAA_Image_Proxy();
         
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
@@ -213,6 +187,10 @@ final class Yadore_Amazon_API_Plugin {
             // Local Image Storage
             'enable_local_images'    => 'yes',
             'image_filename_format'  => 'seo',
+            
+            // NEU: Image Proxy Settings
+            'enable_image_proxy'     => 'yes',
+            'image_proxy_cache'      => 24, // Stunden
             
             // Fuzzy Search settings
             'enable_fuzzy_search'    => 'yes',
@@ -366,6 +344,13 @@ final class Yadore_Amazon_API_Plugin {
             YAA_VERSION,
             true
         );
+        
+        // NEU: Proxy-URL ans Frontend übergeben
+        wp_localize_script('yaa-frontend-grid', 'yaaProxy', [
+            'enabled'  => yaa_get_option('enable_image_proxy', 'yes') === 'yes',
+            'endpoint' => admin_url('admin-ajax.php'),
+            'action'   => 'yaa_proxy_image',
+        ]);
     }
     
     public function preload_cache(): void {
@@ -1445,18 +1430,16 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.3.0 - PHP 8.3+ compatible
+ * Version 1.5.4 - Mit Image Proxy Support
+ * PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
  * - Image 404 Error Handling with Thumbnail Fallback
+ * - NEU: Server-seitiger Image Proxy als letzter Fallback
  * - Public API
- * 
- * NEU in 1.3.0:
- * - Thumbnail-Fallback vor CSS-Placeholder (Anforderung 3)
- * - Verbesserte Bildlade-Logik
  */
 
 (function() {
@@ -1579,119 +1562,218 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 
     /**
      * Initialize image error handling for 404/broken images
-     * NEU: Versucht erst Thumbnail zu laden, dann CSS-Placeholder
-     */
-    function initImageErrorHandling() {
-        const images = document.querySelectorAll('.yaa-image-wrapper img');
-        
-        images.forEach(function(img) {
-            // Mark image as not yet processed for fallback
-            if (!img.hasAttribute('data-fallback-attempted')) {
-                img.setAttribute('data-fallback-attempted', 'false');
-            }
-            
-            // Handle images that are already broken (cached or immediate 404)
-            if (img.complete) {
-                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                    attemptImageFallback(img);
-                } else {
-                    // Image loaded successfully
-                    img.classList.add('yaa-img-loaded');
-                }
-            }
-            
-            // Handle future load events
-            img.addEventListener('load', function() {
-                img.classList.add('yaa-img-loaded');
-                img.classList.remove('yaa-img-loading');
-            });
-            
-            // Handle future errors (async loading)
-            img.addEventListener('error', function() {
-                attemptImageFallback(img);
-            });
-        });
-    }
-
-    /**
-     * NEU: Attempt image fallback chain
-     * 1. Original image (already failed)
-     * 2. Try thumbnail if available (data-thumbnail attribute)
-     * 3. Fall back to CSS placeholder
+     * NEU: Erweiterte Fallback-Kette mit Image Proxy
      * 
-     * @param {HTMLImageElement} img
+     * Fallback-Reihenfolge:
+     * 1. Original Image → Error
+     * 2. Thumbnail (data-thumbnail) → Error
+     * 3. Server-seitiger Proxy (yaaProxy.endpoint) → Error
+     * 4. CSS Placeholder
      */
     /**
- * NEU: Attempt image fallback chain
- * 1. Original image (already failed)
- * 2. Try thumbnail if available (data-thumbnail attribute)
- * 3. Fall back to CSS placeholder
- * 
- * FIX: referrerpolicy="no-referrer" gegen Hotlink-Protection
- * 
- * @param {HTMLImageElement} img
+ * Initialize image error handling for 404/broken images
  */
-function attemptImageFallback(img) {
-    const wrapper = img.closest('.yaa-image-wrapper');
+function initImageErrorHandling() {
+    var images = document.querySelectorAll('.yaa-image-wrapper img');
     
-    if (!wrapper) {
-        return;
-    }
-    
-    // ========================================
-    // FIX: Referrer-Policy setzen um Hotlink-Protection zu umgehen
-    // ========================================
-    if (!img.hasAttribute('referrerpolicy')) {
-        img.setAttribute('referrerpolicy', 'no-referrer');
-    }
-    
-    // Get fallback state
-    const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-    const thumbnailUrl = img.getAttribute('data-thumbnail');
-    const originalSrc = img.getAttribute('data-original-src') || img.src;
-    
-    // Store original src on first attempt
-    if (!img.hasAttribute('data-original-src')) {
-        img.setAttribute('data-original-src', img.src);
-    }
-    
-    // ========================================
-    // FALLBACK CHAIN
-    // ========================================
-    
-    // Step 1: If we haven't tried thumbnail yet and it exists, try it
-    if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
-        if (window.console) {
-            console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+    images.forEach(function(img) {
+        // Mark image as not yet processed for fallback
+        if (!img.hasAttribute('data-fallback-attempted')) {
+            img.setAttribute('data-fallback-attempted', 'false');
         }
         
-        img.setAttribute('data-fallback-attempted', 'thumbnail');
-        img.classList.add('yaa-img-loading');
+        // NEU: Prüfe auf leeres src mit vorhandener Alternative
+        var currentSrc = img.getAttribute('src') || '';
+        var proxySrc = img.getAttribute('data-proxy-src') || '';
+        var originalSrc = img.getAttribute('data-original-src') || '';
         
-        // Try loading the thumbnail
-        img.src = thumbnailUrl;
-        
-        // Don't proceed to placeholder yet - wait for thumbnail load/error
-        return;
-    }
-    
-    // Step 2: If thumbnail also failed or doesn't exist, show CSS placeholder
-    if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail') {
-        if (window.console && fallbackAttempted === 'thumbnail') {
-            console.warn('YAA: Thumbnail also failed, showing placeholder for:', originalSrc);
-        } else if (window.console) {
-            console.warn('YAA: Image failed (no thumbnail), showing placeholder:', originalSrc);
+        // Wenn src leer ist aber Alternativen existieren, sofort laden
+        if (currentSrc === '' || currentSrc === window.location.href) {
+            if (proxySrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Empty src detected, using proxy:', proxySrc);
+                }
+                img.setAttribute('data-fallback-attempted', 'proxy');
+                img.src = proxySrc;
+                return;
+            } else if (originalSrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Empty src detected, using original:', originalSrc);
+                }
+                img.setAttribute('data-fallback-attempted', 'original');
+                img.src = originalSrc;
+                return;
+            }
         }
         
-        img.setAttribute('data-fallback-attempted', 'complete');
-        showCSSPlaceholder(img, wrapper);
-    }
+        // Handle images that are already broken (cached or immediate 404)
+        if (img.complete) {
+            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+                attemptImageFallback(img);
+            } else {
+                // Image loaded successfully
+                img.classList.add('yaa-img-loaded');
+            }
+        }
+        
+        // Handle future load events
+        img.addEventListener('load', function() {
+            img.classList.add('yaa-img-loaded');
+            img.classList.remove('yaa-img-loading');
+        });
+        
+        // Handle future errors (async loading)
+        img.addEventListener('error', function() {
+            attemptImageFallback(img);
+        });
+    });
 }
 
 
     /**
-     * NEU: Show CSS placeholder after all fallbacks failed
-     * Extracted from handleBrokenImage for cleaner code
+     * NEU: Attempt image fallback chain
+     * 
+     * Fallback-Reihenfolge:
+     * 1. Original image (already failed)
+     * 2. Try thumbnail if available (data-thumbnail attribute)
+     * 3. Try server-side proxy (if enabled)
+     * 4. Fall back to CSS placeholder
+     * 
+     * @param {HTMLImageElement} img
+     */
+    function attemptImageFallback(img) {
+        const wrapper = img.closest('.yaa-image-wrapper');
+        
+        if (!wrapper) {
+            return;
+        }
+        
+        // ========================================
+        // Referrer-Policy setzen um Hotlink-Protection zu umgehen
+        // ========================================
+        if (!img.hasAttribute('referrerpolicy')) {
+            img.setAttribute('referrerpolicy', 'no-referrer');
+        }
+        
+        // Get fallback state
+        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        
+        // Store original src on first attempt
+        if (!img.hasAttribute('data-original-src')) {
+            img.setAttribute('data-original-src', img.src);
+        }
+        
+        // ========================================
+        // FALLBACK CHAIN
+        // ========================================
+        
+        // Step 1: If we haven't tried thumbnail yet and it exists, try it
+        if (fallbackAttempted === 'false' && thumbnailUrl && thumbnailUrl !== '' && thumbnailUrl !== originalSrc) {
+            if (window.console) {
+                console.log('YAA: Original image failed, trying thumbnail:', thumbnailUrl);
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'thumbnail');
+            img.classList.add('yaa-img-loading');
+            
+            // Try loading the thumbnail
+            img.src = thumbnailUrl;
+            
+            // Don't proceed to next fallback yet - wait for thumbnail load/error
+            return;
+        }
+        
+        // Step 2: If thumbnail failed or doesn't exist, try proxy (NEU)
+        if (fallbackAttempted === 'thumbnail' || (fallbackAttempted === 'false' && !thumbnailUrl)) {
+            // Check if proxy is enabled
+            if (isProxyEnabled() && originalSrc && originalSrc !== '') {
+                if (window.console) {
+                    console.log('YAA: Trying server-side proxy for:', originalSrc);
+                }
+                
+                img.setAttribute('data-fallback-attempted', 'proxy');
+                img.classList.add('yaa-img-loading');
+                
+                // Generate proxy URL
+                const proxyUrl = getProxyUrl(originalSrc);
+                
+                if (proxyUrl) {
+                    img.src = proxyUrl;
+                    return;
+                }
+            }
+        }
+        
+        // Step 3: Proxy also failed or not available, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || fallbackAttempted === 'proxy') {
+            if (window.console) {
+                if (fallbackAttempted === 'proxy') {
+                    console.warn('YAA: Proxy also failed, showing placeholder for:', originalSrc);
+                } else if (fallbackAttempted === 'thumbnail') {
+                    console.warn('YAA: Thumbnail failed, showing placeholder:', originalSrc);
+                } else {
+                    console.warn('YAA: Image failed (no fallbacks), showing placeholder:', originalSrc);
+                }
+            }
+            
+            img.setAttribute('data-fallback-attempted', 'complete');
+            showCSSPlaceholder(img, wrapper);
+        }
+    }
+
+    /**
+     * NEU: Check if image proxy is enabled
+     * @returns {boolean}
+     */
+    function isProxyEnabled() {
+        // Check global config from wp_localize_script
+        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.enabled) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * NEU: Generate proxy URL for an image
+     * @param {string} originalUrl - The original image URL
+     * @returns {string|null} - Proxy URL or null if not available
+     */
+    function getProxyUrl(originalUrl) {
+        if (!originalUrl || originalUrl === '') {
+            return null;
+        }
+        
+        // Don't proxy local URLs
+        if (originalUrl.indexOf(window.location.origin) === 0) {
+            return null;
+        }
+        
+        // Don't proxy data URLs
+        if (originalUrl.indexOf('data:') === 0) {
+            return null;
+        }
+        
+        // Don't proxy already proxied URLs
+        if (originalUrl.indexOf('action=yaa_proxy_image') !== -1) {
+            return null;
+        }
+        
+        // Build proxy URL
+        if (typeof window.yaaProxy !== 'undefined' && window.yaaProxy.endpoint) {
+            var params = new URLSearchParams();
+            params.append('action', window.yaaProxy.action || 'yaa_proxy_image');
+            params.append('url', originalUrl);
+            
+            return window.yaaProxy.endpoint + '?' + params.toString();
+        }
+        
+        return null;
+    }
+
+    /**
+     * Show CSS placeholder after all fallbacks failed
      * 
      * @param {HTMLImageElement} img
      * @param {HTMLElement} wrapper
@@ -1716,14 +1798,14 @@ function attemptImageFallback(img) {
         }
         
         // Create CSS placeholder element
-        const placeholder = document.createElement('div');
+        var placeholder = document.createElement('div');
         placeholder.className = 'yaa-placeholder';
         placeholder.setAttribute('aria-hidden', 'true');
         placeholder.setAttribute('role', 'img');
         placeholder.setAttribute('aria-label', 'Bild nicht verfügbar');
         
         // Determine source type for colored placeholder
-        const item = wrapper.closest('.yaa-item');
+        var item = wrapper.closest('.yaa-item');
         if (item) {
             if (item.classList.contains('yaa-amazon')) {
                 placeholder.classList.add('yaa-placeholder-amazon');
@@ -1735,7 +1817,7 @@ function attemptImageFallback(img) {
         }
         
         // Insert placeholder (inside the link if exists, otherwise directly)
-        const link = wrapper.querySelector('a');
+        var link = wrapper.querySelector('a');
         if (link) {
             link.appendChild(placeholder);
         } else {
@@ -1757,7 +1839,7 @@ function attemptImageFallback(img) {
      */
     function initAccessibilityEnhancements() {
         // Add ARIA labels to read more buttons
-        const buttons = document.querySelectorAll('.yaa-read-more');
+        var buttons = document.querySelectorAll('.yaa-read-more');
         buttons.forEach(function(button) {
             if (!button.hasAttribute('aria-expanded')) {
                 button.setAttribute('aria-expanded', 'false');
@@ -1771,11 +1853,11 @@ function attemptImageFallback(img) {
         });
 
         // Add ARIA labels to product links
-        const productLinks = document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');
+        var productLinks = document.querySelectorAll('.yaa-item .yaa-title a, .yaa-item .yaa-button');
         productLinks.forEach(function(link) {
             if (link.hasAttribute('target') && link.getAttribute('target') === '_blank') {
                 if (!link.querySelector('.screen-reader-text')) {
-                    const srText = document.createElement('span');
+                    var srText = document.createElement('span');
                     srText.className = 'screen-reader-text';
                     srText.textContent = ' (öffnet in neuem Tab)';
                     srText.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
@@ -1795,8 +1877,8 @@ function attemptImageFallback(img) {
      * @param {string} id - The description ID (without 'desc-' prefix)
      */
     window.YAA.toggleDescription = function(id) {
-        const description = document.getElementById('desc-' + id);
-        const button = description ? description.parentElement.querySelector('.yaa-read-more') : null;
+        var description = document.getElementById('desc-' + id);
+        var button = description ? description.parentElement.querySelector('.yaa-read-more') : null;
         
         if (description && button) {
             toggleDescription(description, button);
@@ -1837,7 +1919,7 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Manually trigger thumbnail fallback for an image
+     * Manually trigger thumbnail fallback for an image
      * @param {HTMLImageElement} img - The image element
      * @returns {boolean} True if thumbnail was attempted
      */
@@ -1846,7 +1928,7 @@ function attemptImageFallback(img) {
             return false;
         }
         
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
+        var thumbnailUrl = img.getAttribute('data-thumbnail');
         if (thumbnailUrl && thumbnailUrl !== '') {
             img.setAttribute('data-fallback-attempted', 'false');
             attemptImageFallback(img);
@@ -1854,6 +1936,52 @@ function attemptImageFallback(img) {
         }
         
         return false;
+    };
+
+    /**
+     * NEU: Manually trigger proxy fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if proxy was attempted
+     */
+    window.YAA.tryProxy = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        if (!isProxyEnabled()) {
+            if (window.console) {
+                console.warn('YAA: Image proxy is not enabled');
+            }
+            return false;
+        }
+        
+        var originalSrc = img.getAttribute('data-original-src') || img.src;
+        var proxyUrl = getProxyUrl(originalSrc);
+        
+        if (proxyUrl) {
+            img.setAttribute('data-fallback-attempted', 'proxy');
+            img.src = proxyUrl;
+            return true;
+        }
+        
+        return false;
+    };
+
+    /**
+     * NEU: Generate proxy URL for external use
+     * @param {string} imageUrl - Original image URL
+     * @returns {string|null} Proxy URL or null
+     */
+    window.YAA.getProxyUrl = function(imageUrl) {
+        return getProxyUrl(imageUrl);
+    };
+
+    /**
+     * NEU: Check if proxy is enabled
+     * @returns {boolean}
+     */
+    window.YAA.isProxyEnabled = function() {
+        return isProxyEnabled();
     };
 
     /**
@@ -1866,11 +1994,11 @@ function attemptImageFallback(img) {
             return null;
         }
 
-        const titleElement = item.querySelector('.yaa-title a');
-        const priceElement = item.querySelector('.yaa-price');
-        const merchantElement = item.querySelector('.yaa-merchant');
-        const imageElement = item.querySelector('.yaa-image-wrapper img');
-        const wrapper = item.querySelector('.yaa-image-wrapper');
+        var titleElement = item.querySelector('.yaa-title a');
+        var priceElement = item.querySelector('.yaa-price');
+        var merchantElement = item.querySelector('.yaa-merchant');
+        var imageElement = item.querySelector('.yaa-image-wrapper img');
+        var wrapper = item.querySelector('.yaa-image-wrapper');
 
         return {
             title: titleElement ? titleElement.textContent.trim() : '',
@@ -1878,7 +2006,9 @@ function attemptImageFallback(img) {
             price: priceElement ? priceElement.textContent.trim() : '',
             merchant: merchantElement ? merchantElement.textContent.replace('via ', '').trim() : '',
             image: imageElement ? imageElement.src : '',
+            originalImage: imageElement ? imageElement.getAttribute('data-original-src') : '',
             thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
+            proxyUrl: imageElement ? getProxyUrl(imageElement.getAttribute('data-original-src') || imageElement.src) : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
             isYadore: item.classList.contains('yaa-yadore'),
@@ -1895,7 +2025,7 @@ function attemptImageFallback(img) {
      * @returns {Array} Array of product data objects
      */
     window.YAA.getAllProducts = function(container) {
-        let containerEl = container;
+        var containerEl = container;
         
         if (typeof container === 'string') {
             containerEl = document.querySelector(container);
@@ -1905,11 +2035,11 @@ function attemptImageFallback(img) {
             containerEl = document;
         }
         
-        const items = containerEl.querySelectorAll('.yaa-item');
-        const products = [];
+        var items = containerEl.querySelectorAll('.yaa-item');
+        var products = [];
         
         items.forEach(function(item) {
-            const data = window.YAA.getProductData(item);
+            var data = window.YAA.getProductData(item);
             if (data) {
                 products.push(data);
             }
@@ -1927,7 +2057,7 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Get count of images currently loading thumbnails
+     * Get count of images currently loading thumbnails
      * @returns {number}
      */
     window.YAA.getLoadingThumbnailCount = function() {
@@ -1935,30 +2065,47 @@ function attemptImageFallback(img) {
     };
 
     /**
-     * NEU: Get detailed image status for debugging
+     * NEU: Get count of images currently using proxy
+     * @returns {number}
+     */
+    window.YAA.getProxyImageCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length;
+    };
+
+    /**
+     * Get detailed image status for debugging
      * @returns {Object}
      */
     window.YAA.getImageStats = function() {
-        const images = document.querySelectorAll('.yaa-image-wrapper img');
-        let loaded = 0;
-        let broken = 0;
-        let loadingThumbnail = 0;
-        let hasThumbnail = 0;
+        var images = document.querySelectorAll('.yaa-image-wrapper img');
+        var loaded = 0;
+        var broken = 0;
+        var loadingThumbnail = 0;
+        var loadingProxy = 0;
+        var hasThumbnail = 0;
+        var hasProxy = 0;
         
         images.forEach(function(img) {
             if (img.classList.contains('yaa-img-loaded')) {
                 loaded++;
             }
             
-            const fallbackState = img.getAttribute('data-fallback-attempted');
+            var fallbackState = img.getAttribute('data-fallback-attempted');
             if (fallbackState === 'complete') {
                 broken++;
             } else if (fallbackState === 'thumbnail') {
                 loadingThumbnail++;
+            } else if (fallbackState === 'proxy') {
+                loadingProxy++;
             }
             
             if (img.getAttribute('data-thumbnail')) {
                 hasThumbnail++;
+            }
+            
+            var originalSrc = img.getAttribute('data-original-src') || img.src;
+            if (getProxyUrl(originalSrc)) {
+                hasProxy++;
             }
         });
         
@@ -1967,7 +2114,10 @@ function attemptImageFallback(img) {
             loaded: loaded,
             broken: broken,
             loadingThumbnail: loadingThumbnail,
-            withThumbnailFallback: hasThumbnail
+            loadingProxy: loadingProxy,
+            withThumbnailFallback: hasThumbnail,
+            withProxyAvailable: hasProxy,
+            proxyEnabled: isProxyEnabled()
         };
     };
 
@@ -6691,9 +6841,10 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Handles downloading remote images and serving local versions.
  * Includes validation, retry mechanism, SEO filenames, and admin logging.
  * 
- * Version: 1.3.1
+ * Version: 1.4.0
  * PHP 8.3+ compatible
  * 
+ * NEU 1.4.0: Verbesserte Download-Logik mit curl für Hotlink-Protection Bypass
  * FIX 1.3.1: Fehlende Methoden get_image_library() und can_resize_images() hinzugefügt
  */
 
@@ -6776,9 +6927,11 @@ class YAA_Image_Handler {
      * Process an image: Download if not exists, return local URL.
      * Includes validation, retry logic, and SEO filename generation.
      * 
+     * NEU 1.4.0: Verbesserte Download-Logik mit curl für Hotlink-Protection Bypass
+     * 
      * @param string|null $remote_url The remote image URL.
      * @param string $id Unique identifier (ASIN or EAN) for the filename.
-     * @param string $product_name Product name for SEO filename (NEU).
+     * @param string $product_name Product name for SEO filename.
      * @param string $source Source identifier (amazon, yadore, custom).
      * @return string Local URL or Placeholder URL.
      */
@@ -6850,59 +7003,39 @@ class YAA_Image_Handler {
             @unlink($file_path);
         }
 
-        // 8. Optional: Pre-check if remote URL is accessible (HEAD request)
-        if (!self::is_remote_url_accessible($remote_url)) {
-            self::log_failed_image($remote_url, $id, 'URL not accessible (HEAD check)');
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        // 9. Download Image
-        $response = wp_remote_get($remote_url, [
-            'timeout'    => 15,
-            'sslverify'  => false,
-            'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'headers'    => [
-                'Accept' => 'image/webp,image/apng,image/*,*/*;q=0.8',
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
-            self::log_failed_image($remote_url, $id, 'Download error: ' . $response->get_error_message());
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        $status_code = wp_remote_retrieve_response_code($response);
-        if ($status_code !== 200) {
-            self::log_failed_image($remote_url, $id, 'HTTP ' . $status_code);
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        $body = wp_remote_retrieve_body($response);
+        // ========================================
+        // 8. NEU 1.4.0: Download mit verbesserter Methode
+        // Verwendet curl mit Browser-Headern um Hotlink-Protection zu umgehen
+        // ========================================
+        $download_result = self::download_image_smart($remote_url);
         
-        // 10. Validate that it's actually an image
-        if (empty($body) || !self::is_valid_image_data($body)) {
+        if ($download_result === false || $download_result === '') {
+            self::log_failed_image($remote_url, $id, 'Download failed (all methods)');
+            self::increment_retry_counter($remote_url);
+            return self::get_placeholder_url();
+        }
+
+        // 9. Validate that it's actually an image
+        if (!self::is_valid_image_data($download_result)) {
             self::log_failed_image($remote_url, $id, 'Invalid image data');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 11. Check minimum size (avoid 1x1 tracking pixels)
-        if (strlen($body) < 500) {
+        // 10. Check minimum size (avoid 1x1 tracking pixels)
+        if (strlen($download_result) < 500) {
             self::log_failed_image($remote_url, $id, 'Image too small (likely tracking pixel)');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 12. Save File
-        if (file_put_contents($file_path, $body) === false) {
+        // 11. Save File
+        if (file_put_contents($file_path, $download_result) === false) {
             self::log_failed_image($remote_url, $id, 'Could not save file');
             return self::get_placeholder_url();
         }
 
-        // 13. Optional: Resize image if enabled
+        // 12. Optional: Resize image if enabled
         $resize_enabled = function_exists('yaa_get_option') 
             ? yaa_get_option('image_resize_enabled', 'yes') === 'yes' 
             : false;
@@ -6915,10 +7048,215 @@ class YAA_Image_Handler {
             self::resize_image($file_path, $preferred_size);
         }
 
-        // 14. Clear retry counter on success
+        // 13. Clear retry counter on success
         self::clear_retry_counter($remote_url);
 
         return $file_url;
+    }
+
+    /**
+     * NEU 1.4.0: Smart Download mit mehreren Methoden
+     * Versucht verschiedene Techniken um Hotlink-Protection zu umgehen
+     * 
+     * Reihenfolge:
+     * 1. curl mit realistischen Browser-Headern (beste Methode)
+     * 2. wp_remote_get mit angepassten Headern
+     * 3. file_get_contents mit Stream Context (letzter Fallback)
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    public static function download_image_smart(string $url): string|false {
+        // Methode 1: curl mit realistischen Browser-Headern (beste Chance)
+        $result = self::download_with_curl($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        // Methode 2: wp_remote_get mit angepassten Headern
+        $result = self::download_with_wp_remote($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        // Methode 3: file_get_contents mit Stream Context (letzter Versuch)
+        $result = self::download_with_stream_context($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        return false;
+    }
+
+    /**
+     * NEU 1.4.0: Download mit curl - beste Methode für Hotlink-Protection Bypass
+     * 
+     * Verwendet realistische Browser-Header um als normaler Benutzer zu erscheinen:
+     * - Echter Chrome User-Agent
+     * - Korrekter Referer (Domain der Bild-URL)
+     * - Accept-Header wie ein echter Browser
+     * - Sec-Ch-Ua Headers (Chrome-spezifisch)
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_curl(string $url): string|false {
+        if (!function_exists('curl_init')) {
+            return false;
+        }
+        
+        $ch = curl_init();
+        
+        // Realistischer Browser User-Agent (Chrome 120 auf Windows 10)
+        $user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        
+        // Domain aus URL extrahieren für Referer (wichtig für Hotlink-Protection!)
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_USERAGENT      => $user_agent,
+            CURLOPT_REFERER        => $referer, // Täuscht vor, von der gleichen Domain zu kommen
+            CURLOPT_ENCODING       => '', // Akzeptiert gzip/deflate automatisch
+            CURLOPT_HTTPHEADER     => [
+                'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language: de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding: gzip, deflate, br',
+                'Cache-Control: no-cache',
+                'Pragma: no-cache',
+                // Chrome-spezifische Headers (machen Request noch realistischer)
+                'Sec-Ch-Ua: "Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile: ?0',
+                'Sec-Ch-Ua-Platform: "Windows"',
+                'Sec-Fetch-Dest: image',
+                'Sec-Fetch-Mode: no-cors',
+                'Sec-Fetch-Site: cross-site',
+                'Connection: keep-alive',
+            ],
+            // Cookie-Handling (manche Shops setzen Cookies)
+            CURLOPT_COOKIESESSION  => true,
+            CURLOPT_COOKIEFILE     => '', // Leerer String aktiviert In-Memory Cookies
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $error = curl_error($ch);
+        
+        curl_close($ch);
+        
+        // Prüfen ob Request erfolgreich war
+        if ($response === false) {
+            error_log('YAA Image curl error: ' . $error . ' - URL: ' . $url);
+            return false;
+        }
+        
+        if ($http_code !== 200) {
+            error_log('YAA Image curl HTTP ' . $http_code . ' - URL: ' . $url);
+            return false;
+        }
+        
+        // Content-Type prüfen (optional, da wir später Magic Bytes checken)
+        if ($content_type !== null && !str_starts_with($content_type, 'image/')) {
+            // Manche Server senden falschen Content-Type, wir prüfen später die Magic Bytes
+            // Also nur warnen, nicht abbrechen
+            error_log('YAA Image curl warning: Content-Type is ' . $content_type . ' - URL: ' . $url);
+        }
+        
+        return $response;
+    }
+
+    /**
+     * Download mit wp_remote_get (WordPress native)
+     * Fallback wenn curl nicht verfügbar
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_wp_remote(string $url): string|false {
+        // Domain für Referer
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        $response = wp_remote_get($url, [
+            'timeout'    => 30,
+            'sslverify'  => false,
+            'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'headers'    => [
+                'Accept'          => 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                'Accept-Language' => 'de-DE,de;q=0.9,en;q=0.8',
+                'Referer'         => $referer,
+                'Cache-Control'   => 'no-cache',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('YAA Image wp_remote error: ' . $response->get_error_message() . ' - URL: ' . $url);
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            error_log('YAA Image wp_remote HTTP ' . $status_code . ' - URL: ' . $url);
+            return false;
+        }
+
+        return wp_remote_retrieve_body($response);
+    }
+
+    /**
+     * Download mit file_get_contents und Stream Context (Fallback)
+     * Letzte Option wenn curl und wp_remote_get fehlschlagen
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_stream_context(string $url): string|false {
+        if (!ini_get('allow_url_fopen')) {
+            return false;
+        }
+        
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        $opts = [
+            'http' => [
+                'method'           => 'GET',
+                'timeout'          => 30,
+                'follow_location'  => true,
+                'max_redirects'    => 5,
+                'ignore_errors'    => true,
+                'user_agent'       => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'header'           => implode("\r\n", [
+                    'Accept: image/*,*/*;q=0.8',
+                    'Accept-Language: de-DE,de;q=0.9',
+                    'Referer: ' . $referer,
+                ]),
+            ],
+            'ssl' => [
+                'verify_peer'      => false,
+                'verify_peer_name' => false,
+            ],
+        ];
+        
+        $context = stream_context_create($opts);
+        
+        $result = @file_get_contents($url, false, $context);
+        
+        if ($result === false) {
+            error_log('YAA Image stream error - URL: ' . $url);
+            return false;
+        }
+        
+        return $result;
     }
 
     /**
@@ -7240,10 +7578,31 @@ class YAA_Image_Handler {
     /**
      * Check if a remote URL is accessible via HEAD request
      * Faster than downloading the whole image
+     * 
+     * HINWEIS: Diese Methode kann bei manchen Servern fehlschlagen, da sie
+     * HEAD-Requests anders behandeln als GET-Requests. Im Zweifelsfall
+     * lieber direkt downloaden.
      */
     public static function is_remote_url_accessible(string $url): bool {
         if (empty($url)) {
             return false;
+        }
+
+        // Bei bekannten Shops die HEAD-Prüfung überspringen
+        $skip_head_check_domains = [
+            'proshop.de',
+            'amazon.',
+            'ebay.',
+            'otto.de',
+            'mediamarkt.',
+            'saturn.',
+        ];
+        
+        $url_host = parse_url($url, PHP_URL_HOST) ?? '';
+        foreach ($skip_head_check_domains as $domain) {
+            if (str_contains($url_host, $domain)) {
+                return true; // Überspringen, direkt zum Download
+            }
         }
 
         $response = wp_remote_head($url, [
@@ -7253,7 +7612,8 @@ class YAA_Image_Handler {
         ]);
 
         if (is_wp_error($response)) {
-            return false;
+            // HEAD fehlgeschlagen, aber trotzdem versuchen zu laden
+            return true;
         }
 
         $status = wp_remote_retrieve_response_code($response);
@@ -7379,6 +7739,25 @@ class YAA_Image_Handler {
     private static function clear_retry_counter(string $url): void {
         $retry_key = 'yaa_img_retry_' . md5($url);
         delete_transient($retry_key);
+    }
+
+    /**
+     * Reset all retry counters (useful after fixing issues)
+     * 
+     * @return int Number of cleared counters
+     */
+    public static function reset_all_retry_counters(): int {
+        global $wpdb;
+        
+        $deleted = $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_img_retry_%'"
+        );
+        
+        $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yaa_img_retry_%'"
+        );
+        
+        return (int) $deleted;
     }
 
     /**
@@ -7599,6 +7978,628 @@ class YAA_Image_Handler {
      */
     public static function preview_seo_filename(string $product_name): string {
         return self::generate_seo_filename($product_name, 'jpg');
+    }
+
+    /**
+     * Test download methods for debugging
+     * Returns info about which methods are available and work
+     * 
+     * @param string $test_url URL to test (optional)
+     * @return array<string, mixed> Test results
+     */
+    public static function test_download_methods(string $test_url = ''): array {
+        $results = [
+            'curl_available'        => function_exists('curl_init'),
+            'curl_version'          => function_exists('curl_version') ? curl_version()['version'] ?? 'unknown' : null,
+            'allow_url_fopen'       => (bool) ini_get('allow_url_fopen'),
+            'openssl_available'     => extension_loaded('openssl'),
+            'image_library'         => self::get_image_library(),
+        ];
+        
+        if ($test_url !== '') {
+            $results['test_url'] = $test_url;
+            
+            // Test curl
+            $start = microtime(true);
+            $curl_result = self::download_with_curl($test_url);
+            $results['curl_test'] = [
+                'success'  => $curl_result !== false && strlen($curl_result) > 500,
+                'size'     => $curl_result !== false ? strlen($curl_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $curl_result !== false ? self::is_valid_image_data($curl_result) : false,
+            ];
+            
+            // Test wp_remote
+            $start = microtime(true);
+            $wp_result = self::download_with_wp_remote($test_url);
+            $results['wp_remote_test'] = [
+                'success'  => $wp_result !== false && strlen($wp_result) > 500,
+                'size'     => $wp_result !== false ? strlen($wp_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $wp_result !== false ? self::is_valid_image_data($wp_result) : false,
+            ];
+            
+            // Test stream
+            $start = microtime(true);
+            $stream_result = self::download_with_stream_context($test_url);
+            $results['stream_test'] = [
+                'success'  => $stream_result !== false && strlen($stream_result) > 500,
+                'size'     => $stream_result !== false ? strlen($stream_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $stream_result !== false ? self::is_valid_image_data($stream_result) : false,
+            ];
+        }
+        
+        return $results;
+    }
+}
+ 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-image-proxy.php 
+ 
+<?php
+/**
+ * Image Proxy Handler
+ * Server-seitiger Proxy für externe Bilder
+ * Umgeht Hotlink-Protection und CORS-Probleme
+ * 
+ * PHP 8.3+ compatible
+ * Version: 1.0.0
+ * 
+ * @see Anforderung: Option C - Server-seitiger Bild-Proxy
+ */
+
+declare(strict_types=1);
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+final class YAA_Image_Proxy {
+    
+    /**
+     * Cache-Dauer für Proxy-Bilder (24 Stunden)
+     */
+    private const CACHE_DURATION = DAY_IN_SECONDS;
+    
+    /**
+     * Maximale Bildgröße die gecacht wird (5 MB)
+     */
+    private const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+    
+    /**
+     * Timeout für Remote-Requests (Sekunden)
+     */
+    private const REQUEST_TIMEOUT = 15;
+    
+    /**
+     * Erlaubte MIME-Types
+     */
+    private const ALLOWED_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/svg+xml',
+    ];
+    
+    /**
+     * Erlaubte Hosts (leer = alle erlaubt)
+     * Kann über Filter erweitert werden
+     * 
+     * @var array<string>
+     */
+    private array $allowed_hosts = [];
+    
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        // AJAX Actions registrieren (für eingeloggte und nicht-eingeloggte User)
+        add_action('wp_ajax_yaa_proxy_image', [$this, 'handle_proxy_request']);
+        add_action('wp_ajax_nopriv_yaa_proxy_image', [$this, 'handle_proxy_request']);
+        
+        // REST API Endpoint (Alternative zu AJAX)
+        add_action('rest_api_init', [$this, 'register_rest_route']);
+        
+        // Erlaubte Hosts über Filter laden
+        $this->allowed_hosts = apply_filters('yaa_proxy_allowed_hosts', [
+            // Standard: Bekannte Produkt-Bild-Hosts
+            'images-na.ssl-images-amazon.com',
+            'images-eu.ssl-images-amazon.com',
+            'm.media-amazon.com',
+            'images.yadore.com',
+            'cdn.yadore.com',
+        ]);
+    }
+    
+    /**
+     * Generiert die Proxy-URL für ein Bild
+     * 
+     * @param string $image_url Original-Bild-URL
+     * @param string $source Quelle (amazon, yadore, custom)
+     * @return string Proxy-URL
+     */
+    public static function get_proxy_url(string $image_url, string $source = ''): string {
+        if ($image_url === '') {
+            return '';
+        }
+        
+        // Bereits lokale URL? Kein Proxy nötig
+        $site_url = get_site_url();
+        if (str_starts_with($image_url, $site_url)) {
+            return $image_url;
+        }
+        
+        // Data-URLs brauchen keinen Proxy
+        if (str_starts_with($image_url, 'data:')) {
+            return $image_url;
+        }
+        
+        // Proxy-URL generieren
+        $params = [
+            'action' => 'yaa_proxy_image',
+            'url'    => $image_url,
+        ];
+        
+        // Source für Logging/Debugging
+        if ($source !== '') {
+            $params['source'] = $source;
+        }
+        
+        // Nonce für Sicherheit (optional, da öffentlich zugänglich)
+        // $params['_wpnonce'] = wp_create_nonce('yaa_proxy_image');
+        
+        return admin_url('admin-ajax.php') . '?' . http_build_query($params);
+    }
+    
+    /**
+     * Generiert REST API Proxy-URL (Alternative)
+     * 
+     * @param string $image_url Original-Bild-URL
+     * @return string REST API Proxy-URL
+     */
+    public static function get_rest_proxy_url(string $image_url): string {
+        if ($image_url === '') {
+            return '';
+        }
+        
+        return rest_url('yaa/v1/image-proxy') . '?' . http_build_query([
+            'url' => $image_url,
+        ]);
+    }
+    
+    /**
+     * REST API Route registrieren
+     */
+    public function register_rest_route(): void {
+        register_rest_route('yaa/v1', '/image-proxy', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'handle_rest_request'],
+            'permission_callback' => '__return_true', // Öffentlich zugänglich
+            'args'                => [
+                'url' => [
+                    'required'          => true,
+                    'type'              => 'string',
+                    'sanitize_callback' => 'esc_url_raw',
+                ],
+            ],
+        ]);
+    }
+    
+    /**
+     * AJAX Handler für Proxy-Requests
+     */
+    public function handle_proxy_request(): void {
+        // URL aus Request holen
+        $url = isset($_GET['url']) ? esc_url_raw(wp_unslash($_GET['url'])) : '';
+        
+        if ($url === '') {
+            $this->send_error_response('No URL provided', 400);
+            return;
+        }
+        
+        // Bild laden und ausgeben
+        $this->proxy_image($url);
+    }
+    
+    /**
+     * REST API Handler für Proxy-Requests
+     * 
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public function handle_rest_request(\WP_REST_Request $request): \WP_REST_Response|\WP_Error {
+        $url = $request->get_param('url');
+        
+        if (empty($url)) {
+            return new \WP_Error('no_url', 'No URL provided', ['status' => 400]);
+        }
+        
+        // Bild laden und als Response zurückgeben
+        $result = $this->fetch_image($url);
+        
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        
+        // Bei REST API: Bild direkt ausgeben mit korrekten Headern
+        $this->output_image($result['body'], $result['type']);
+        exit; // Nach Bildausgabe beenden
+    }
+    
+    /**
+     * Hauptfunktion: Bild proxyen
+     * 
+     * @param string $url Externe Bild-URL
+     */
+    private function proxy_image(string $url): void {
+        // URL validieren
+        if (!$this->is_valid_url($url)) {
+            $this->send_error_response('Invalid URL', 400);
+            return;
+        }
+        
+        // Host-Whitelist prüfen (wenn aktiviert)
+        if (!$this->is_host_allowed($url)) {
+            $this->send_error_response('Host not allowed', 403);
+            return;
+        }
+        
+        // Cache prüfen
+        $cache_key = 'yaa_proxy_' . md5($url);
+        $cached = get_transient($cache_key);
+        
+        if ($cached !== false && is_array($cached)) {
+            // Aus Cache laden
+            $this->output_image($cached['body'], $cached['type'], true);
+            return;
+        }
+        
+        // Bild von externer URL laden
+        $result = $this->fetch_image($url);
+        
+        if (is_wp_error($result)) {
+            $this->send_error_response($result->get_error_message(), 502);
+            return;
+        }
+        
+        // In Cache speichern (wenn nicht zu groß)
+        if (strlen($result['body']) <= self::MAX_IMAGE_SIZE) {
+            set_transient($cache_key, $result, self::CACHE_DURATION);
+        }
+        
+        // Bild ausgeben
+        $this->output_image($result['body'], $result['type'], false);
+    }
+    
+    /**
+     * Bild von externer URL laden
+     * 
+     * @param string $url Externe URL
+     * @return array{body: string, type: string}|\WP_Error
+     */
+    private function fetch_image(string $url): array|\WP_Error {
+        // HTTP Request mit angepassten Headern
+        $response = wp_remote_get($url, [
+            'timeout'    => self::REQUEST_TIMEOUT,
+            'sslverify'  => false, // Manche CDNs haben ungültige Zertifikate
+            'user-agent' => $this->get_user_agent(),
+            'headers'    => [
+                'Accept'          => 'image/webp,image/apng,image/*,*/*;q=0.8',
+                'Accept-Language' => 'de-DE,de;q=0.9,en;q=0.8',
+                'Cache-Control'   => 'no-cache',
+                'Referer'         => home_url(), // Manche Server prüfen den Referer
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            error_log('YAA Image Proxy Error: ' . $response->get_error_message() . ' - URL: ' . $url);
+            return $response;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        
+        if ($status_code !== 200) {
+            error_log('YAA Image Proxy HTTP Error: ' . $status_code . ' - URL: ' . $url);
+            return new \WP_Error(
+                'http_error',
+                sprintf('HTTP Error %d', $status_code),
+                ['status' => $status_code]
+            );
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $content_type = wp_remote_retrieve_header($response, 'content-type');
+        
+        // Content-Type validieren
+        if (!$this->is_valid_content_type($content_type)) {
+            // Versuche Content-Type aus Magic Bytes zu ermitteln
+            $detected_type = $this->detect_image_type($body);
+            
+            if ($detected_type === null) {
+                error_log('YAA Image Proxy: Invalid content type - URL: ' . $url);
+                return new \WP_Error('invalid_type', 'Not a valid image');
+            }
+            
+            $content_type = $detected_type;
+        }
+        
+        // Mindestgröße prüfen (Tracking-Pixel filtern)
+        if (strlen($body) < 100) {
+            error_log('YAA Image Proxy: Image too small (tracking pixel?) - URL: ' . $url);
+            return new \WP_Error('too_small', 'Image too small');
+        }
+        
+        return [
+            'body' => $body,
+            'type' => $content_type,
+        ];
+    }
+    
+    /**
+     * Bild mit korrekten Headern ausgeben
+     * 
+     * @param string $body Bild-Daten
+     * @param string $content_type MIME-Type
+     * @param bool $from_cache Ob aus Cache geladen
+     */
+    private function output_image(string $body, string $content_type, bool $from_cache = false): void {
+        // Status Code
+        http_response_code(200);
+        
+        // Content-Type Header
+        header('Content-Type: ' . $content_type);
+        
+        // Caching Header
+        header('Cache-Control: public, max-age=86400'); // 24 Stunden
+        header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+        
+        // ETag für Browser-Caching
+        $etag = '"' . md5($body) . '"';
+        header('ETag: ' . $etag);
+        
+        // If-None-Match prüfen (304 Not Modified)
+        $if_none_match = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
+        if ($if_none_match === $etag) {
+            http_response_code(304);
+            exit;
+        }
+        
+        // Content-Length
+        header('Content-Length: ' . strlen($body));
+        
+        // Debug-Header (optional)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            header('X-YAA-Proxy: ' . ($from_cache ? 'cache' : 'fetch'));
+        }
+        
+        // CORS Header (erlaubt Zugriff von überall)
+        header('Access-Control-Allow-Origin: *');
+        
+        // Bild ausgeben
+        echo $body;
+        exit;
+    }
+    
+    /**
+     * Fehler-Response senden
+     * 
+     * @param string $message Fehlermeldung
+     * @param int $status_code HTTP Status Code
+     */
+    private function send_error_response(string $message, int $status_code = 400): void {
+        http_response_code($status_code);
+        
+        // Placeholder-Bild als Fallback
+        $placeholder = $this->generate_error_placeholder($message);
+        
+        header('Content-Type: image/svg+xml');
+        header('Cache-Control: no-cache, no-store, must-revalidate');
+        header('X-YAA-Proxy-Error: ' . $message);
+        
+        echo $placeholder;
+        exit;
+    }
+    
+    /**
+     * URL validieren
+     */
+    private function is_valid_url(string $url): bool {
+        if ($url === '') {
+            return false;
+        }
+        
+        // Nur HTTP(S) URLs erlauben
+        if (!preg_match('/^https?:\/\//i', $url)) {
+            return false;
+        }
+        
+        // URL-Validierung
+        $parsed = wp_parse_url($url);
+        
+        if ($parsed === false || empty($parsed['host'])) {
+            return false;
+        }
+        
+        // Keine lokalen IPs
+        $host = $parsed['host'];
+        $ip = gethostbyname($host);
+        
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+            // Erlaube dennoch, falls es sich um einen gültigen Hostnamen handelt
+            // (manche CDNs resolven zu privaten IPs)
+            if ($ip === $host) {
+                return false; // Konnte nicht aufgelöst werden
+            }
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Prüft ob Host in Whitelist ist
+     */
+    private function is_host_allowed(string $url): bool {
+        // Wenn keine Whitelist definiert, alle erlauben
+        if (empty($this->allowed_hosts)) {
+            return true;
+        }
+        
+        $parsed = wp_parse_url($url);
+        $host = $parsed['host'] ?? '';
+        
+        if ($host === '') {
+            return false;
+        }
+        
+        // Exakter Match oder Subdomain-Match
+        foreach ($this->allowed_hosts as $allowed) {
+            if ($host === $allowed) {
+                return true;
+            }
+            
+            // Subdomain-Match (z.B. "*.amazon.com")
+            if (str_ends_with($host, '.' . $allowed)) {
+                return true;
+            }
+        }
+        
+        // Filter für dynamische Erweiterung
+        return apply_filters('yaa_proxy_is_host_allowed', false, $host, $url);
+    }
+    
+    /**
+     * Content-Type validieren
+     */
+    private function is_valid_content_type(?string $content_type): bool {
+        if ($content_type === null || $content_type === '') {
+            return false;
+        }
+        
+        // Nur den MIME-Type extrahieren (charset etc. ignorieren)
+        $parts = explode(';', $content_type);
+        $mime = strtolower(trim($parts[0]));
+        
+        return in_array($mime, self::ALLOWED_MIME_TYPES, true);
+    }
+    
+    /**
+     * Bildtyp aus Magic Bytes erkennen
+     */
+    private function detect_image_type(string $data): ?string {
+        if (strlen($data) < 12) {
+            return null;
+        }
+        
+        // Magic Bytes prüfen
+        if (str_starts_with($data, "\xFF\xD8\xFF")) {
+            return 'image/jpeg';
+        }
+        
+        if (str_starts_with($data, "\x89PNG\r\n\x1A\n")) {
+            return 'image/png';
+        }
+        
+        if (str_starts_with($data, "GIF87a") || str_starts_with($data, "GIF89a")) {
+            return 'image/gif';
+        }
+        
+        if (str_starts_with($data, "RIFF") && substr($data, 8, 4) === "WEBP") {
+            return 'image/webp';
+        }
+        
+        // SVG (Text-basiert)
+        if (str_contains(substr($data, 0, 500), '<svg')) {
+            return 'image/svg+xml';
+        }
+        
+        return null;
+    }
+    
+    /**
+     * User-Agent für Requests
+     */
+    private function get_user_agent(): string {
+        // Realistischer Browser User-Agent
+        return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    }
+    
+    /**
+     * Error-Placeholder SVG generieren
+     */
+    private function generate_error_placeholder(string $message): string {
+        $escaped_message = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+        
+        return <<<SVG
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+    <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#2d2d2d"/>
+            <stop offset="100%" style="stop-color:#1a1a1a"/>
+        </linearGradient>
+    </defs>
+    <rect width="400" height="400" fill="url(#bg)"/>
+    <g transform="translate(200,160)" fill="none" stroke="#666" stroke-width="2">
+        <circle cx="0" cy="0" r="50"/>
+        <line x1="-20" y1="-20" x2="20" y2="20"/>
+        <line x1="20" y1="-20" x2="-20" y2="20"/>
+    </g>
+    <text x="200" y="260" text-anchor="middle" font-family="system-ui, sans-serif" font-size="14" fill="#888">
+        Bild nicht verfügbar
+    </text>
+    <text x="200" y="285" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" fill="#555">
+        {$escaped_message}
+    </text>
+</svg>
+SVG;
+    }
+    
+    /**
+     * Cache für eine URL löschen
+     * 
+     * @param string $url Original-Bild-URL
+     */
+    public static function clear_cache(string $url): void {
+        $cache_key = 'yaa_proxy_' . md5($url);
+        delete_transient($cache_key);
+    }
+    
+    /**
+     * Alle Proxy-Caches löschen
+     */
+    public static function clear_all_cache(): int {
+        global $wpdb;
+        
+        $deleted = $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_proxy_%'"
+        );
+        
+        $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yaa_proxy_%'"
+        );
+        
+        return (int) $deleted;
+    }
+    
+    /**
+     * Statistiken über gecachte Proxy-Bilder
+     * 
+     * @return array{count: int, estimated_size: string}
+     */
+    public static function get_cache_stats(): array {
+        global $wpdb;
+        
+        $count = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_proxy_%' AND option_name NOT LIKE '_transient_timeout_%'"
+        );
+        
+        // Geschätzte Größe (können wir nicht exakt bestimmen ohne alle zu laden)
+        $estimated_size = $count > 0 ? '~' . size_format($count * 50000) : '0 B';
+        
+        return [
+            'count'          => $count,
+            'estimated_size' => $estimated_size,
+        ];
     }
 }
  
@@ -8950,26 +9951,64 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                    <div class="yaa-image-wrapper">
-                        <?php if ($image_url !== ''): ?>
-                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                                <img src="<?php echo esc_url($image_url); ?>" 
-                                     alt="<?php echo esc_attr($title); ?>" 
-                                     loading="lazy"
-                                     decoding="async"
-                                     referrerpolicy="no-referrer"
-                                     data-fallback-attempted="false"
-                                     <?php if ($processed_thumbnail_url !== ''): ?>
-                                     data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
-                                     <?php endif; ?>
-                                     data-source="<?php echo esc_attr($source); ?>">
-                            </a>
-                        <?php else: ?>
-                            <div class="yaa-no-image">
-                                <span>📦</span>
+                <div class="yaa-image-wrapper">
+                    <?php 
+                    // Proxy-URL generieren falls Proxy aktiviert
+                    $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
+                    $proxy_url = '';
+                    
+                    if ($proxy_enabled && $raw_image_url !== '') {
+                        $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
+                            'action' => 'yaa_proxy_image',
+                            'url'    => $raw_image_url,
+                        ]);
+                    }
+                    
+                    // Finale Bild-URL bestimmen:
+                    // 1. Lokales/verarbeitetes Bild wenn verfügbar
+                    // 2. Proxy-URL als Fallback
+                    // 3. Original-URL als letzter Fallback
+                    $final_src = $image_url;
+                    
+                    // Fix: esc_url() filtert data: URLs - also prüfen ob leer
+                    if ($final_src === '' || str_starts_with($final_src, 'data:')) {
+                        // Proxy als primäre Quelle verwenden
+                        $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
+                    }
+                    ?>
+                    
+                    <?php if ($final_src !== ''): ?>
+                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                            <img src="<?php echo esc_url($final_src); ?>" 
+                                alt="<?php echo esc_attr($title); ?>" 
+                                loading="lazy"
+                                decoding="async"
+                                referrerpolicy="no-referrer"
+                                data-fallback-attempted="false"
+                                <?php if ($processed_thumbnail_url !== ''): ?>
+                                data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                <?php endif; ?>
+                                <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
+                                data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                <?php endif; ?>
+                                <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
+                                data-proxy-src="<?php echo esc_url($proxy_url); ?>"
+                                <?php endif; ?>
+                                data-source="<?php echo esc_attr($source); ?>">
+                        </a>
+                    <?php else: ?>
+                        <!-- Kein Bild verfügbar -->
+                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                            <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
+                                aria-hidden="true" 
+                                role="img" 
+                                aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
                             </div>
-                        <?php endif; ?>
-                    </div>
+                        </a>
+                    <?php endif; ?>
+                </div>
+
+
 
                     <div class="yaa-content">
                         <h3 class="yaa-title">
