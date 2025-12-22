@@ -4,9 +4,10 @@
  * Handles downloading remote images and serving local versions.
  * Includes validation, retry mechanism, SEO filenames, and admin logging.
  * 
- * Version: 1.3.1
+ * Version: 1.4.0
  * PHP 8.3+ compatible
  * 
+ * NEU 1.4.0: Verbesserte Download-Logik mit curl für Hotlink-Protection Bypass
  * FIX 1.3.1: Fehlende Methoden get_image_library() und can_resize_images() hinzugefügt
  */
 
@@ -89,9 +90,11 @@ class YAA_Image_Handler {
      * Process an image: Download if not exists, return local URL.
      * Includes validation, retry logic, and SEO filename generation.
      * 
+     * NEU 1.4.0: Verbesserte Download-Logik mit curl für Hotlink-Protection Bypass
+     * 
      * @param string|null $remote_url The remote image URL.
      * @param string $id Unique identifier (ASIN or EAN) for the filename.
-     * @param string $product_name Product name for SEO filename (NEU).
+     * @param string $product_name Product name for SEO filename.
      * @param string $source Source identifier (amazon, yadore, custom).
      * @return string Local URL or Placeholder URL.
      */
@@ -163,59 +166,39 @@ class YAA_Image_Handler {
             @unlink($file_path);
         }
 
-        // 8. Optional: Pre-check if remote URL is accessible (HEAD request)
-        if (!self::is_remote_url_accessible($remote_url)) {
-            self::log_failed_image($remote_url, $id, 'URL not accessible (HEAD check)');
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        // 9. Download Image
-        $response = wp_remote_get($remote_url, [
-            'timeout'    => 15,
-            'sslverify'  => false,
-            'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'headers'    => [
-                'Accept' => 'image/webp,image/apng,image/*,*/*;q=0.8',
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
-            self::log_failed_image($remote_url, $id, 'Download error: ' . $response->get_error_message());
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        $status_code = wp_remote_retrieve_response_code($response);
-        if ($status_code !== 200) {
-            self::log_failed_image($remote_url, $id, 'HTTP ' . $status_code);
-            self::increment_retry_counter($remote_url);
-            return self::get_placeholder_url();
-        }
-
-        $body = wp_remote_retrieve_body($response);
+        // ========================================
+        // 8. NEU 1.4.0: Download mit verbesserter Methode
+        // Verwendet curl mit Browser-Headern um Hotlink-Protection zu umgehen
+        // ========================================
+        $download_result = self::download_image_smart($remote_url);
         
-        // 10. Validate that it's actually an image
-        if (empty($body) || !self::is_valid_image_data($body)) {
+        if ($download_result === false || $download_result === '') {
+            self::log_failed_image($remote_url, $id, 'Download failed (all methods)');
+            self::increment_retry_counter($remote_url);
+            return self::get_placeholder_url();
+        }
+
+        // 9. Validate that it's actually an image
+        if (!self::is_valid_image_data($download_result)) {
             self::log_failed_image($remote_url, $id, 'Invalid image data');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 11. Check minimum size (avoid 1x1 tracking pixels)
-        if (strlen($body) < 500) {
+        // 10. Check minimum size (avoid 1x1 tracking pixels)
+        if (strlen($download_result) < 500) {
             self::log_failed_image($remote_url, $id, 'Image too small (likely tracking pixel)');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 12. Save File
-        if (file_put_contents($file_path, $body) === false) {
+        // 11. Save File
+        if (file_put_contents($file_path, $download_result) === false) {
             self::log_failed_image($remote_url, $id, 'Could not save file');
             return self::get_placeholder_url();
         }
 
-        // 13. Optional: Resize image if enabled
+        // 12. Optional: Resize image if enabled
         $resize_enabled = function_exists('yaa_get_option') 
             ? yaa_get_option('image_resize_enabled', 'yes') === 'yes' 
             : false;
@@ -228,10 +211,215 @@ class YAA_Image_Handler {
             self::resize_image($file_path, $preferred_size);
         }
 
-        // 14. Clear retry counter on success
+        // 13. Clear retry counter on success
         self::clear_retry_counter($remote_url);
 
         return $file_url;
+    }
+
+    /**
+     * NEU 1.4.0: Smart Download mit mehreren Methoden
+     * Versucht verschiedene Techniken um Hotlink-Protection zu umgehen
+     * 
+     * Reihenfolge:
+     * 1. curl mit realistischen Browser-Headern (beste Methode)
+     * 2. wp_remote_get mit angepassten Headern
+     * 3. file_get_contents mit Stream Context (letzter Fallback)
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    public static function download_image_smart(string $url): string|false {
+        // Methode 1: curl mit realistischen Browser-Headern (beste Chance)
+        $result = self::download_with_curl($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        // Methode 2: wp_remote_get mit angepassten Headern
+        $result = self::download_with_wp_remote($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        // Methode 3: file_get_contents mit Stream Context (letzter Versuch)
+        $result = self::download_with_stream_context($url);
+        if ($result !== false && strlen($result) > 500) {
+            return $result;
+        }
+        
+        return false;
+    }
+
+    /**
+     * NEU 1.4.0: Download mit curl - beste Methode für Hotlink-Protection Bypass
+     * 
+     * Verwendet realistische Browser-Header um als normaler Benutzer zu erscheinen:
+     * - Echter Chrome User-Agent
+     * - Korrekter Referer (Domain der Bild-URL)
+     * - Accept-Header wie ein echter Browser
+     * - Sec-Ch-Ua Headers (Chrome-spezifisch)
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_curl(string $url): string|false {
+        if (!function_exists('curl_init')) {
+            return false;
+        }
+        
+        $ch = curl_init();
+        
+        // Realistischer Browser User-Agent (Chrome 120 auf Windows 10)
+        $user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        
+        // Domain aus URL extrahieren für Referer (wichtig für Hotlink-Protection!)
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_USERAGENT      => $user_agent,
+            CURLOPT_REFERER        => $referer, // Täuscht vor, von der gleichen Domain zu kommen
+            CURLOPT_ENCODING       => '', // Akzeptiert gzip/deflate automatisch
+            CURLOPT_HTTPHEADER     => [
+                'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language: de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding: gzip, deflate, br',
+                'Cache-Control: no-cache',
+                'Pragma: no-cache',
+                // Chrome-spezifische Headers (machen Request noch realistischer)
+                'Sec-Ch-Ua: "Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile: ?0',
+                'Sec-Ch-Ua-Platform: "Windows"',
+                'Sec-Fetch-Dest: image',
+                'Sec-Fetch-Mode: no-cors',
+                'Sec-Fetch-Site: cross-site',
+                'Connection: keep-alive',
+            ],
+            // Cookie-Handling (manche Shops setzen Cookies)
+            CURLOPT_COOKIESESSION  => true,
+            CURLOPT_COOKIEFILE     => '', // Leerer String aktiviert In-Memory Cookies
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $error = curl_error($ch);
+        
+        curl_close($ch);
+        
+        // Prüfen ob Request erfolgreich war
+        if ($response === false) {
+            error_log('YAA Image curl error: ' . $error . ' - URL: ' . $url);
+            return false;
+        }
+        
+        if ($http_code !== 200) {
+            error_log('YAA Image curl HTTP ' . $http_code . ' - URL: ' . $url);
+            return false;
+        }
+        
+        // Content-Type prüfen (optional, da wir später Magic Bytes checken)
+        if ($content_type !== null && !str_starts_with($content_type, 'image/')) {
+            // Manche Server senden falschen Content-Type, wir prüfen später die Magic Bytes
+            // Also nur warnen, nicht abbrechen
+            error_log('YAA Image curl warning: Content-Type is ' . $content_type . ' - URL: ' . $url);
+        }
+        
+        return $response;
+    }
+
+    /**
+     * Download mit wp_remote_get (WordPress native)
+     * Fallback wenn curl nicht verfügbar
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_wp_remote(string $url): string|false {
+        // Domain für Referer
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        $response = wp_remote_get($url, [
+            'timeout'    => 30,
+            'sslverify'  => false,
+            'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'headers'    => [
+                'Accept'          => 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                'Accept-Language' => 'de-DE,de;q=0.9,en;q=0.8',
+                'Referer'         => $referer,
+                'Cache-Control'   => 'no-cache',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('YAA Image wp_remote error: ' . $response->get_error_message() . ' - URL: ' . $url);
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            error_log('YAA Image wp_remote HTTP ' . $status_code . ' - URL: ' . $url);
+            return false;
+        }
+
+        return wp_remote_retrieve_body($response);
+    }
+
+    /**
+     * Download mit file_get_contents und Stream Context (Fallback)
+     * Letzte Option wenn curl und wp_remote_get fehlschlagen
+     * 
+     * @param string $url Remote image URL
+     * @return string|false Binary image data or false on failure
+     */
+    private static function download_with_stream_context(string $url): string|false {
+        if (!ini_get('allow_url_fopen')) {
+            return false;
+        }
+        
+        $parsed = parse_url($url);
+        $referer = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '');
+        
+        $opts = [
+            'http' => [
+                'method'           => 'GET',
+                'timeout'          => 30,
+                'follow_location'  => true,
+                'max_redirects'    => 5,
+                'ignore_errors'    => true,
+                'user_agent'       => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'header'           => implode("\r\n", [
+                    'Accept: image/*,*/*;q=0.8',
+                    'Accept-Language: de-DE,de;q=0.9',
+                    'Referer: ' . $referer,
+                ]),
+            ],
+            'ssl' => [
+                'verify_peer'      => false,
+                'verify_peer_name' => false,
+            ],
+        ];
+        
+        $context = stream_context_create($opts);
+        
+        $result = @file_get_contents($url, false, $context);
+        
+        if ($result === false) {
+            error_log('YAA Image stream error - URL: ' . $url);
+            return false;
+        }
+        
+        return $result;
     }
 
     /**
@@ -553,10 +741,31 @@ class YAA_Image_Handler {
     /**
      * Check if a remote URL is accessible via HEAD request
      * Faster than downloading the whole image
+     * 
+     * HINWEIS: Diese Methode kann bei manchen Servern fehlschlagen, da sie
+     * HEAD-Requests anders behandeln als GET-Requests. Im Zweifelsfall
+     * lieber direkt downloaden.
      */
     public static function is_remote_url_accessible(string $url): bool {
         if (empty($url)) {
             return false;
+        }
+
+        // Bei bekannten Shops die HEAD-Prüfung überspringen
+        $skip_head_check_domains = [
+            'proshop.de',
+            'amazon.',
+            'ebay.',
+            'otto.de',
+            'mediamarkt.',
+            'saturn.',
+        ];
+        
+        $url_host = parse_url($url, PHP_URL_HOST) ?? '';
+        foreach ($skip_head_check_domains as $domain) {
+            if (str_contains($url_host, $domain)) {
+                return true; // Überspringen, direkt zum Download
+            }
         }
 
         $response = wp_remote_head($url, [
@@ -566,7 +775,8 @@ class YAA_Image_Handler {
         ]);
 
         if (is_wp_error($response)) {
-            return false;
+            // HEAD fehlgeschlagen, aber trotzdem versuchen zu laden
+            return true;
         }
 
         $status = wp_remote_retrieve_response_code($response);
@@ -692,6 +902,25 @@ class YAA_Image_Handler {
     private static function clear_retry_counter(string $url): void {
         $retry_key = 'yaa_img_retry_' . md5($url);
         delete_transient($retry_key);
+    }
+
+    /**
+     * Reset all retry counters (useful after fixing issues)
+     * 
+     * @return int Number of cleared counters
+     */
+    public static function reset_all_retry_counters(): int {
+        global $wpdb;
+        
+        $deleted = $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_img_retry_%'"
+        );
+        
+        $wpdb->query(
+            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yaa_img_retry_%'"
+        );
+        
+        return (int) $deleted;
     }
 
     /**
@@ -912,5 +1141,58 @@ class YAA_Image_Handler {
      */
     public static function preview_seo_filename(string $product_name): string {
         return self::generate_seo_filename($product_name, 'jpg');
+    }
+
+    /**
+     * Test download methods for debugging
+     * Returns info about which methods are available and work
+     * 
+     * @param string $test_url URL to test (optional)
+     * @return array<string, mixed> Test results
+     */
+    public static function test_download_methods(string $test_url = ''): array {
+        $results = [
+            'curl_available'        => function_exists('curl_init'),
+            'curl_version'          => function_exists('curl_version') ? curl_version()['version'] ?? 'unknown' : null,
+            'allow_url_fopen'       => (bool) ini_get('allow_url_fopen'),
+            'openssl_available'     => extension_loaded('openssl'),
+            'image_library'         => self::get_image_library(),
+        ];
+        
+        if ($test_url !== '') {
+            $results['test_url'] = $test_url;
+            
+            // Test curl
+            $start = microtime(true);
+            $curl_result = self::download_with_curl($test_url);
+            $results['curl_test'] = [
+                'success'  => $curl_result !== false && strlen($curl_result) > 500,
+                'size'     => $curl_result !== false ? strlen($curl_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $curl_result !== false ? self::is_valid_image_data($curl_result) : false,
+            ];
+            
+            // Test wp_remote
+            $start = microtime(true);
+            $wp_result = self::download_with_wp_remote($test_url);
+            $results['wp_remote_test'] = [
+                'success'  => $wp_result !== false && strlen($wp_result) > 500,
+                'size'     => $wp_result !== false ? strlen($wp_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $wp_result !== false ? self::is_valid_image_data($wp_result) : false,
+            ];
+            
+            // Test stream
+            $start = microtime(true);
+            $stream_result = self::download_with_stream_context($test_url);
+            $results['stream_test'] = [
+                'success'  => $stream_result !== false && strlen($stream_result) > 500,
+                'size'     => $stream_result !== false ? strlen($stream_result) : 0,
+                'time_ms'  => round((microtime(true) - $start) * 1000),
+                'is_image' => $stream_result !== false ? self::is_valid_image_data($stream_result) : false,
+            ];
+        }
+        
+        return $results;
     }
 }
