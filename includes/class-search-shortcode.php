@@ -4,13 +4,13 @@
  * Mit Initial-Produkten vor der Suche
  * 
  * @package Yadore_Amazon_API
- * @since 1.6.0
+ * @since 1.6.1
  * 
- * KORRIGIERT:
- * - Klassenreferenzen zu YAA_* geändert
- * - Constructor auf public geändert (für Dependency Injection)
- * - YAA_URL zu YAA_PLUGIN_URL korrigiert
- * - Singleton-Initialisierung am Ende entfernt (wird in Hauptdatei instanziiert)
+ * FIX 1.6.1:
+ * - fetch_yadore_products korrigiert: market und precision Parameter hinzugefügt
+ * - Cache-Bypass für Initial-Produkte optional
+ * - Bessere Fehlerbehandlung bei API-Aufrufen
+ * - Debug-Logging hinzugefügt
  */
 
 declare(strict_types=1);
@@ -64,12 +64,17 @@ class YAA_Search_Shortcode {
         'show_price'        => true,
         'show_merchant'     => true,
         'new_tab'           => true,
-        'sort'              => 'cpc_desc',
+        'sort'              => 'rel_desc', // Geändert von cpc_desc zu rel_desc für stabilere Ergebnisse
         'merchant_filter'   => '',
+        
+        // API-Optionen (NEU)
+        'market'            => '', // Leer = Plugin-Standard verwenden
+        'precision'         => '', // Leer = Plugin-Standard verwenden
         
         // UI-Optionen
         'show_reset'        => true,
         'hide_form'         => false,
+        'debug'             => false, // NEU: Debug-Modus
     ];
 
     /**
@@ -139,6 +144,12 @@ class YAA_Search_Shortcode {
         $atts['new_tab'] = filter_var($atts['new_tab'], FILTER_VALIDATE_BOOLEAN);
         $atts['show_reset'] = filter_var($atts['show_reset'], FILTER_VALIDATE_BOOLEAN);
         $atts['hide_form'] = filter_var($atts['hide_form'], FILTER_VALIDATE_BOOLEAN);
+        $atts['debug'] = filter_var($atts['debug'], FILTER_VALIDATE_BOOLEAN);
+        
+        // Numerische Werte sicherstellen
+        $atts['initial_count'] = max(1, (int) $atts['initial_count']);
+        $atts['max_results'] = max(1, (int) $atts['max_results']);
+        $atts['columns'] = max(1, min(6, (int) $atts['columns']));
 
         // Assets nur einmal laden
         if (!self::$shortcode_rendered) {
@@ -153,9 +164,21 @@ class YAA_Search_Shortcode {
         // Initial-Produkte laden (serverseitig)
         $initial_products = [];
         $initial_html = '';
+        $debug_output = '';
         
         if ($atts['show_initial']) {
             $initial_products = $this->get_initial_products($atts);
+            
+            // Debug-Ausgabe
+            if ($atts['debug']) {
+                $debug_output = sprintf(
+                    '<!-- YAA Debug: initial_count=%d, products_loaded=%d, keywords=%s -->',
+                    $atts['initial_count'],
+                    count($initial_products),
+                    esc_html($atts['initial_keywords'] ?: $atts['initial_keyword'])
+                );
+            }
+            
             $initial_html = $this->render_product_grid($initial_products, $atts);
         }
 
@@ -183,6 +206,7 @@ class YAA_Search_Shortcode {
         }
 
         ob_start();
+        echo $debug_output;
         ?>
         <div id="<?php echo esc_attr($instance_id); ?>" class="yadore-search-container"<?php echo $data_string; ?>>
             
@@ -222,6 +246,10 @@ class YAA_Search_Shortcode {
                 <div class="yadore-search-results-grid yadore-columns-<?php echo (int) $atts['columns']; ?>">
                     <?php echo $initial_html; ?>
                 </div>
+            </div>
+            <?php elseif ($atts['show_initial'] && empty($initial_products) && $atts['debug']): ?>
+            <div class="yadore-initial-products">
+                <p style="color: #999; font-style: italic;">Debug: Keine Initial-Produkte geladen. Prüfe API-Konfiguration und Keywords.</p>
             </div>
             <?php endif; ?>
 
@@ -266,6 +294,16 @@ class YAA_Search_Shortcode {
             $keywords = [trim((string) $atts['initial_keyword'])];
         }
 
+        // Debug-Log
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf(
+                'YAA Search: get_initial_products called - count=%d, source=%s, keywords=%s',
+                $count,
+                $source,
+                implode(',', $keywords)
+            ));
+        }
+
         // Wenn keine Keywords, versuche Featured/Trending zu laden
         if (empty($keywords)) {
             $keywords = $this->get_default_keywords();
@@ -275,6 +313,14 @@ class YAA_Search_Shortcode {
         if (in_array($source, ['yadore', 'both'], true)) {
             $yadore_products = $this->fetch_yadore_products($keywords, $count, $atts);
             $products = array_merge($products, $yadore_products);
+            
+            // Debug-Log
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf(
+                    'YAA Search: Yadore returned %d products',
+                    count($yadore_products)
+                ));
+            }
         }
 
         // Produkte von Amazon laden
@@ -297,7 +343,7 @@ class YAA_Search_Shortcode {
      */
     private function get_default_keywords(): array {
         // Option 1: Aus Plugin-Einstellungen
-        $saved_keywords = get_option('yadore_featured_keywords', '');
+        $saved_keywords = yaa_get_option('yadore_featured_keywords', '');
         if (!empty($saved_keywords) && is_string($saved_keywords)) {
             return array_map('trim', explode(',', $saved_keywords));
         }
@@ -309,6 +355,8 @@ class YAA_Search_Shortcode {
     /**
      * Produkte von Yadore API laden
      * 
+     * FIX 1.6.1: market und precision Parameter hinzugefügt
+     * 
      * @param array<string> $keywords Suchbegriffe
      * @param int $count Anzahl
      * @param array<string, mixed> $atts Shortcode-Attribute
@@ -316,21 +364,45 @@ class YAA_Search_Shortcode {
      */
     private function fetch_yadore_products(array $keywords, int $count, array $atts): array {
         if (!$this->yadore_api->is_configured()) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('YAA Search: Yadore API not configured');
+            }
             return [];
         }
 
         $products = [];
-        $per_keyword = max(1, (int) ceil($count / count($keywords)));
+        $keyword_count = count($keywords);
+        
+        if ($keyword_count === 0) {
+            return [];
+        }
+        
+        // FIX: Bei nur einem Keyword das volle Limit verwenden
+        $per_keyword = $keyword_count === 1 ? $count : max(1, (int) ceil($count / $keyword_count));
+
+        // Debug-Log
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf(
+                'YAA Search: fetch_yadore_products - keywords=%d, count=%d, per_keyword=%d',
+                $keyword_count,
+                $count,
+                $per_keyword
+            ));
+        }
 
         foreach ($keywords as $keyword) {
             if (count($products) >= $count) {
                 break;
             }
 
+            // FIX 1.6.1: Vollständige API-Parameter übergeben
             $api_params = [
-                'keyword' => $keyword,
-                'limit'   => $per_keyword,
-                'sort'    => (string) $atts['sort'],
+                'keyword'   => $keyword,
+                'limit'     => $per_keyword,
+                'sort'      => (string) ($atts['sort'] ?: 'rel_desc'),
+                // NEU: market und precision aus Shortcode oder Plugin-Standard
+                'market'    => !empty($atts['market']) ? (string) $atts['market'] : yaa_get_option('yadore_market', 'de'),
+                'precision' => !empty($atts['precision']) ? (string) $atts['precision'] : yaa_get_option('yadore_precision', 'fuzzy'),
             ];
 
             if (!empty($atts['network'])) {
@@ -341,14 +413,46 @@ class YAA_Search_Shortcode {
                 $api_params['merchant_whitelist'] = (string) $atts['merchant_filter'];
             }
 
+            // Debug-Log
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf(
+                    'YAA Search: API call for keyword "%s" with limit=%d',
+                    $keyword,
+                    $api_params['limit']
+                ));
+            }
+
             $results = $this->yadore_api->fetch($api_params);
 
-            if (!is_wp_error($results) && !empty($results)) {
+            if (is_wp_error($results)) {
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('YAA Search: API error - ' . $results->get_error_message());
+                }
+                continue;
+            }
+            
+            if (!empty($results)) {
+                // Debug-Log
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf(
+                        'YAA Search: API returned %d results for "%s"',
+                        count($results),
+                        $keyword
+                    ));
+                }
+                
                 foreach ($results as $offer) {
                     $products[] = $this->format_yadore_product($offer, $atts);
                     if (count($products) >= $count) {
                         break;
                     }
+                }
+            } else {
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf(
+                        'YAA Search: API returned 0 results for "%s"',
+                        $keyword
+                    ));
                 }
             }
         }
@@ -370,7 +474,13 @@ class YAA_Search_Shortcode {
         }
 
         $products = [];
-        $per_keyword = max(1, (int) ceil($count / count($keywords)));
+        $keyword_count = count($keywords);
+        
+        if ($keyword_count === 0) {
+            return [];
+        }
+        
+        $per_keyword = $keyword_count === 1 ? $count : max(1, (int) ceil($count / $keyword_count));
 
         foreach ($keywords as $keyword) {
             if (count($products) >= $count) {
@@ -424,11 +534,14 @@ class YAA_Search_Shortcode {
 
         // Preis formatieren
         $price_display = '';
-        if ($atts['show_price'] && !empty($offer['price']['amount'])) {
+        $show_price = $atts['show_price'] ?? true;
+        if ($show_price && !empty($offer['price']['amount'])) {
             $currency = $offer['price']['currency'] ?? 'EUR';
             $amount = (float) $offer['price']['amount'];
             $price_display = number_format($amount, 2, ',', '.') . ' ' . $currency;
         }
+
+        $show_merchant = $atts['show_merchant'] ?? true;
 
         return [
             'id'            => $offer['id'] ?? uniqid(),
@@ -438,9 +551,9 @@ class YAA_Search_Shortcode {
             'price_raw'     => $offer['price']['amount'] ?? 0,
             'image'         => $image_url,
             'url'           => $offer['url'] ?? '#',
-            'merchant'      => $atts['show_merchant'] ? ($offer['merchant']['name'] ?? '') : '',
+            'merchant'      => $show_merchant ? ($offer['merchant']['name'] ?? '') : '',
             'merchant_logo' => $offer['merchant']['logo'] ?? '',
-            'new_tab'       => (bool) $atts['new_tab'],
+            'new_tab'       => (bool) ($atts['new_tab'] ?? true),
             'source'        => 'yadore',
         ];
     }
@@ -465,14 +578,17 @@ class YAA_Search_Shortcode {
             );
         }
 
+        $show_price = $atts['show_price'] ?? true;
         $price_display = '';
-        if ($atts['show_price'] && !empty($item['price']['display'])) {
+        if ($show_price && !empty($item['price']['display'])) {
             $price_display = $item['price']['display'];
-        } elseif ($atts['show_price'] && !empty($item['price']['amount'])) {
+        } elseif ($show_price && !empty($item['price']['amount'])) {
             $currency = $item['price']['currency'] ?? 'EUR';
             $amount = (float) $item['price']['amount'];
             $price_display = number_format($amount, 2, ',', '.') . ' ' . $currency;
         }
+
+        $show_merchant = $atts['show_merchant'] ?? true;
 
         return [
             'id'            => $item['asin'] ?? $item['id'] ?? uniqid(),
@@ -482,9 +598,9 @@ class YAA_Search_Shortcode {
             'price_raw'     => $item['price']['amount'] ?? 0,
             'image'         => $image_url,
             'url'           => $item['url'] ?? '#',
-            'merchant'      => $atts['show_merchant'] ? 'Amazon' : '',
+            'merchant'      => $show_merchant ? 'Amazon' : '',
             'merchant_logo' => '',
-            'new_tab'       => (bool) $atts['new_tab'],
+            'new_tab'       => (bool) ($atts['new_tab'] ?? true),
             'source'        => 'amazon',
         ];
     }
@@ -552,7 +668,7 @@ class YAA_Search_Shortcode {
             );
         }
 
-        // Source Badge (optional)
+        // Source Badge
         $source_badge = '';
         if (!empty($product['source'])) {
             $source_class = 'yadore-source-' . esc_attr($product['source']);
@@ -600,7 +716,7 @@ class YAA_Search_Shortcode {
         $query = isset($_POST['query']) ? sanitize_text_field(wp_unslash($_POST['query'])) : '';
         $network = isset($_POST['network']) ? sanitize_text_field(wp_unslash($_POST['network'])) : '';
         $max_results = isset($_POST['max_results']) ? (int) $_POST['max_results'] : 12;
-        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : 'cpc_desc';
+        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : 'rel_desc';
         $merchant_filter = isset($_POST['merchant_filter']) ? sanitize_text_field(wp_unslash($_POST['merchant_filter'])) : '';
         $show_price = isset($_POST['show_price']) && $_POST['show_price'] === '1';
         $show_merchant = isset($_POST['show_merchant']) && $_POST['show_merchant'] === '1';
@@ -625,6 +741,8 @@ class YAA_Search_Shortcode {
             'keyword' => $query,
             'limit'   => min($max_results, 50),
             'sort'    => $sort,
+            'market'  => yaa_get_option('yadore_market', 'de'),
+            'precision' => yaa_get_option('yadore_precision', 'fuzzy'),
         ];
 
         if (!empty($network)) {
