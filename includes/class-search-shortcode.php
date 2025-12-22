@@ -4,7 +4,11 @@
  *
  * @package Yadore_Amazon_API
  * @since 1.0.0
- * @version 1.8.0 - Unified with JavaScript, consistent naming
+ * @version 1.8.1 - Uses native browser clear button instead of custom
+ * 
+ * CHANGE in 1.8.1:
+ * - Removed custom .yaa-clear-btn in favor of native browser search clear button
+ * - Native clear button works automatically with <input type="search">
  */
 
 declare(strict_types=1);
@@ -253,6 +257,10 @@ final class YAA_Search_Shortcode {
             [],
             YAA_VERSION
         );
+        
+        // Styling for native search clear button
+        $native_clear_css = $this->get_native_clear_button_css();
+        wp_add_inline_style('yaa-search-style', $native_clear_css);
 
         // Main Script
         wp_enqueue_script(
@@ -268,6 +276,60 @@ final class YAA_Search_Shortcode {
     }
 
     /**
+     * CSS styling for native browser clear button
+     * Makes the native X button look consistent across browsers
+     * 
+     * @return string CSS code
+     */
+    private function get_native_clear_button_css(): string {
+        return '
+            /* =========================================
+               Native Browser Search Clear Button Styling
+               ========================================= */
+            
+            /* Webkit (Chrome, Safari, Edge) - Style the native clear button */
+            .yaa-search-wrapper .yaa-input::-webkit-search-cancel-button,
+            .yaa-search-wrapper .yadore-input::-webkit-search-cancel-button,
+            .yadore-search-container .yaa-input::-webkit-search-cancel-button,
+            .yadore-search-container .yadore-input::-webkit-search-cancel-button {
+                -webkit-appearance: none;
+                appearance: none;
+                height: 20px;
+                width: 20px;
+                cursor: pointer;
+                background: url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%236b7280\'%3E%3Cpath d=\'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z\'/%3E%3C/svg%3E") center center no-repeat;
+                background-size: 16px 16px;
+                opacity: 0.6;
+                transition: opacity 0.2s ease;
+                margin-left: 8px;
+            }
+            
+            .yaa-search-wrapper .yaa-input::-webkit-search-cancel-button:hover,
+            .yaa-search-wrapper .yadore-input::-webkit-search-cancel-button:hover,
+            .yadore-search-container .yaa-input::-webkit-search-cancel-button:hover,
+            .yadore-search-container .yadore-input::-webkit-search-cancel-button:hover {
+                opacity: 1;
+            }
+            
+            /* Adjust input padding to accommodate native clear button */
+            .yaa-search-wrapper .yaa-input,
+            .yaa-search-wrapper .yadore-input,
+            .yadore-search-container .yaa-input,
+            .yadore-search-container .yadore-input {
+                padding-right: 12px; /* Reduced since no custom button */
+            }
+            
+            /* Firefox - native clear button styling is limited */
+            @-moz-document url-prefix() {
+                .yaa-search-wrapper .yaa-input,
+                .yaa-search-wrapper .yadore-input {
+                    /* Firefox shows a built-in clear button for type="search" */
+                }
+            }
+        ';
+    }
+
+    /**
      * Get JavaScript configuration - MUST MATCH JS defaults
      */
     private function get_js_config(): array {
@@ -277,7 +339,7 @@ final class YAA_Search_Shortcode {
             'nonce'             => wp_create_nonce('yaa_search_nonce'),
             'restNonce'         => wp_create_nonce('wp_rest'),
             'i18n'              => $this->get_i18n_strings(),
-            'sortOptions'       => self::SORT_OPTIONS,  // Use consistent constant
+            'sortOptions'       => self::SORT_OPTIONS,
             'defaultSort'       => $this->get_default_sort(),
             'debounceDelay'     => (int)yaa_get_option('search_debounce', 300),
             'minChars'          => (int)yaa_get_option('search_min_chars', 3),
@@ -288,6 +350,8 @@ final class YAA_Search_Shortcode {
             'imageLoadError'    => YAA_PLUGIN_URL . 'assets/images/placeholder.svg',
             'debug'             => defined('WP_DEBUG') && WP_DEBUG,
             'buttonText'        => yaa_get_option('button_text_yadore', 'Zum Angebot'),
+            // Flag: Using native browser clear button
+            'useNativeClearButton' => true,
         ];
     }
 
@@ -710,8 +774,6 @@ final class YAA_Search_Shortcode {
 
     /**
      * Render product card - MUST MATCH JavaScript createProductCard()
-     * 
-     * IMPORTANT: Keep this HTML structure synchronized with yaa-search.js
      */
     private function render_product_card(array $product, array $atts): void {
         $target = esc_attr($atts['target']);
@@ -860,6 +922,7 @@ final class YAA_Search_Shortcode {
             'yaa-columns-tablet-' . $atts['columns_tablet'],
             'yaa-columns-mobile-' . $atts['columns_mobile'],
             'yaa-image-' . $atts['image_size'],
+            'yaa-native-clear', // Flag: Uses native browser clear button
         ];
         
         if ($atts['lazy_load']) {
@@ -875,8 +938,6 @@ final class YAA_Search_Shortcode {
 
     /**
      * Build data attributes - MUST MATCH JavaScript settings parsing
-     * 
-     * IMPORTANT: Use integers (1/0) for booleans, not strings
      */
     private function build_data_attributes(array $atts, bool $has_initial): string {
         $data = [
@@ -928,6 +989,9 @@ final class YAA_Search_Shortcode {
             'has-initial'        => $has_initial ? 1 : 0,
             'show-initial'       => $has_initial ? 1 : 0,
             'show-reset'         => $atts['show_reset'] ? 1 : 0,
+            
+            // Native clear button flag
+            'native-clear'       => 1,
         ];
 
         $output = '';
@@ -942,6 +1006,9 @@ final class YAA_Search_Shortcode {
 
     /**
      * Render search form
+     * 
+     * CHANGED in 1.8.1: Removed custom clear button (.yaa-clear-btn)
+     * Now uses native browser clear button for <input type="search">
      */
     private function render_search_form(array $atts): void {
         ?>
@@ -950,6 +1017,8 @@ final class YAA_Search_Shortcode {
                 <label for="<?php echo esc_attr($atts['id']); ?>-input" class="screen-reader-text">
                     <?php esc_html_e('Produktsuche', 'yadore-amazon-api'); ?>
                 </label>
+                
+                <?php // Native browser clear button is shown automatically for type="search" ?>
                 <input type="search" 
                        id="<?php echo esc_attr($atts['id']); ?>-input"
                        class="yaa-input yadore-input" 
@@ -961,11 +1030,7 @@ final class YAA_Search_Shortcode {
                        spellcheck="false"
                        aria-describedby="<?php echo esc_attr($atts['id']); ?>-desc">
                 
-                <button type="button" class="yaa-clear-btn yadore-clear-btn" 
-                        aria-label="<?php esc_attr_e('Suche löschen', 'yadore-amazon-api'); ?>" 
-                        style="display: none;">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+                <?php // REMOVED: Custom clear button - using native browser clear button instead ?>
                 
                 <button type="submit" class="yaa-submit-btn yadore-submit-btn yaa-btn-<?php echo esc_attr($atts['button_style']); ?>">
                     <span class="yaa-btn-text yadore-btn-text"><?php echo esc_html($atts['button_text']); ?></span>
