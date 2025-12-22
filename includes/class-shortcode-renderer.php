@@ -2,7 +2,7 @@
 /**
  * Shortcode Renderer - Vollständige Version mit allen Features
  * PHP 8.3+ compatible
- * Version: 1.5.0
+ * Version: 1.5.1
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
@@ -13,7 +13,8 @@
  * - Merchant Filter (Whitelist/Blacklist) für Yadore
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
- * - NEU: Sortierung nach Preis/CPC
+ * - Sortierung nach Preis/CPC
+ * - NEU: Shop-Logo als Bild-Fallback
  */
 
 declare(strict_types=1);
@@ -158,7 +159,7 @@ final class YAA_Shortcode_Renderer {
             'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'columns'            => '',
             'class'              => '',
             'local_images'       => '',
@@ -169,8 +170,8 @@ final class YAA_Shortcode_Renderer {
             // Merchant Filter
             'merchant_whitelist' => '',
             'merchant_blacklist' => '',
-            'merchants'          => '',  // Alias für whitelist
-            'exclude_merchants'  => '',  // Alias für blacklist
+            'merchants'          => '',
+            'exclude_merchants'  => '',
         ], $atts, 'yadore_products');
         
         if (!$this->yadore_api->is_configured()) {
@@ -203,7 +204,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $total_limit,
                 'market'             => (string) $atts['market'],
                 'precision'          => (string) $atts['precision'],
-                'sort'               => (string) $atts['sort'], // NEU
+                'sort'               => (string) $atts['sort'],
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -378,7 +379,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'shuffle'            => 'yes',
             'columns'            => '',
             'class'              => '',
@@ -444,7 +445,7 @@ final class YAA_Shortcode_Renderer {
                     'keyword'            => $keyword,
                     'limit'              => $yadore_limit,
                     'market'             => (string) $atts['market'],
-                    'sort'               => (string) $atts['sort'], // NEU
+                    'sort'               => (string) $atts['sort'],
                     'merchant_whitelist' => $merchant_whitelist,
                     'merchant_blacklist' => $merchant_blacklist,
                 ]);
@@ -498,7 +499,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'priority'           => 'custom,yadore,amazon',
             'shuffle'            => 'no',
             'columns'            => '',
@@ -568,7 +569,7 @@ final class YAA_Shortcode_Renderer {
                                 'keyword'            => $keyword,
                                 'limit'              => $remaining,
                                 'market'             => (string) $atts['market'],
-                                'sort'               => (string) $atts['sort'], // NEU
+                                'sort'               => (string) $atts['sort'],
                                 'merchant_whitelist' => $merchant_whitelist,
                                 'merchant_blacklist' => $merchant_blacklist,
                             ]);
@@ -759,7 +760,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $limit_for_this,
                 'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
                 'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
-                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')), // NEU
+                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')),
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -841,9 +842,16 @@ final class YAA_Shortcode_Renderer {
         return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
-        /**
+    /**
      * Render the product grid
-     * NEU in 1.5.1: data-thumbnail Attribut für Fallback-Kette
+     * Version 1.5.1: Mit Shop-Logo als Fallback in der Bilderkette
+     * 
+     * Fallback-Kette:
+     * 1. Original/Lokales Bild
+     * 2. Thumbnail (data-thumbnail)
+     * 3. Proxy (data-proxy-src)
+     * 4. Shop-Logo (data-shop-logo) - NEU
+     * 5. CSS Placeholder
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -886,24 +894,24 @@ final class YAA_Shortcode_Renderer {
                 $url = $item['url'] ?? '#';
                 $title = $item['title'] ?? '';
                 
-                // === BILD-VERARBEITUNG MIT THUMBNAIL-FALLBACK ===
+                // === BILD-VERARBEITUNG MIT ERWEITERTER FALLBACK-KETTE ===
                 
                 // Haupt-Bild URL
                 $raw_image_url = $item['image']['url'] ?? '';
                 
-                // Thumbnail URL für Fallback (NEU)
+                // Thumbnail URL für Fallback
                 $thumbnail_url = '';
-                
-                // Yadore: Thumbnail aus API-Response
                 if ($source === 'yadore') {
                     $thumbnail_url = $item['image']['thumbnail_url'] ?? '';
                 }
-                
-                // Amazon: Medium-Bild als Thumbnail-Fallback
-                // Die Amazon API liefert verschiedene Größen - wir nutzen bereits die beste verfügbare
-                // Aber wir können das Small-Bild als Fallback speichern falls vorhanden
                 if ($source === 'amazon' && isset($item['image']['medium_url'])) {
                     $thumbnail_url = $item['image']['medium_url'];
+                }
+                
+                // NEU: Shop-Logo als Fallback (aus Yadore API)
+                $shop_logo_url = '';
+                if (isset($item['merchant']['logo']) && !empty($item['merchant']['logo'])) {
+                    $shop_logo_url = $item['merchant']['logo'];
                 }
                 
                 // Unique ID für Bild-Verarbeitung
@@ -965,64 +973,79 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                <div class="yaa-image-wrapper">
-                    <?php 
-                    // Proxy-URL generieren falls Proxy aktiviert
-                    $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
-                    $proxy_url = '';
-                    
-                    if ($proxy_enabled && $raw_image_url !== '') {
-                        $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
-                            'action' => 'yaa_proxy_image',
-                            'url'    => $raw_image_url,
-                        ]);
-                    }
-                    
-                    // Finale Bild-URL bestimmen:
-                    // 1. Lokales/verarbeitetes Bild wenn verfügbar
-                    // 2. Proxy-URL als Fallback
-                    // 3. Original-URL als letzter Fallback
-                    $final_src = $image_url;
-                    
-                    // Fix: esc_url() filtert data: URLs - also prüfen ob leer
-                    if ($final_src === '' || str_starts_with($final_src, 'data:')) {
-                        // Proxy als primäre Quelle verwenden
-                        $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
-                    }
-                    ?>
-                    
-                    <?php if ($final_src !== ''): ?>
-                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                            <img src="<?php echo esc_url($final_src); ?>" 
-                                alt="<?php echo esc_attr($title); ?>" 
-                                loading="lazy"
-                                decoding="async"
-                                referrerpolicy="no-referrer"
-                                data-fallback-attempted="false"
-                                <?php if ($processed_thumbnail_url !== ''): ?>
-                                data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                    <div class="yaa-image-wrapper">
+                        <?php 
+                        // Proxy-URL generieren falls Proxy aktiviert
+                        $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
+                        $proxy_url = '';
+                        
+                        if ($proxy_enabled && $raw_image_url !== '') {
+                            $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
+                                'action' => 'yaa_proxy_image',
+                                'url'    => $raw_image_url,
+                            ]);
+                        }
+                        
+                        // Finale Bild-URL bestimmen:
+                        // 1. Lokales/verarbeitetes Bild wenn verfügbar
+                        // 2. Proxy-URL als Fallback
+                        // 3. Original-URL als letzter Fallback
+                        $final_src = $image_url;
+                        
+                        // Fix: esc_url() filtert data: URLs - also prüfen ob leer
+                        if ($final_src === '' || str_starts_with($final_src, 'data:')) {
+                            // Proxy als primäre Quelle verwenden
+                            $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
+                        }
+                        ?>
+                        
+                        <?php if ($final_src !== ''): ?>
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <img src="<?php echo esc_url($final_src); ?>" 
+                                    alt="<?php echo esc_attr($title); ?>" 
+                                    loading="lazy"
+                                    decoding="async"
+                                    referrerpolicy="no-referrer"
+                                    data-fallback-attempted="false"
+                                    <?php if ($processed_thumbnail_url !== ''): ?>
+                                    data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
+                                    data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
+                                    data-proxy-src="<?php echo esc_url($proxy_url); ?>"
+                                    <?php endif; ?>
+                                    <?php // NEU: Shop-Logo als Fallback ?>
+                                    <?php if ($shop_logo_url !== ''): ?>
+                                    data-shop-logo="<?php echo esc_url($shop_logo_url); ?>"
+                                    <?php endif; ?>
+                                    data-source="<?php echo esc_attr($source); ?>"
+                                    data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                            </a>
+                        <?php else: ?>
+                            <!-- Kein Bild verfügbar - Shop-Logo als erste Option, dann Placeholder -->
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <?php if ($shop_logo_url !== ''): ?>
+                                    <img src="<?php echo esc_url($shop_logo_url); ?>" 
+                                        alt="<?php echo esc_attr($merchant_name); ?>" 
+                                        loading="lazy"
+                                        decoding="async"
+                                        referrerpolicy="no-referrer"
+                                        class="yaa-shop-logo-fallback"
+                                        data-fallback-attempted="shop-logo"
+                                        data-source="<?php echo esc_attr($source); ?>"
+                                        data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                                <?php else: ?>
+                                    <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
+                                        aria-hidden="true" 
+                                        role="img" 
+                                        aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
+                                    </div>
                                 <?php endif; ?>
-                                <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
-                                data-original-src="<?php echo esc_url($raw_image_url); ?>"
-                                <?php endif; ?>
-                                <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
-                                data-proxy-src="<?php echo esc_url($proxy_url); ?>"
-                                <?php endif; ?>
-                                data-source="<?php echo esc_attr($source); ?>">
-                        </a>
-                    <?php else: ?>
-                        <!-- Kein Bild verfügbar -->
-                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                            <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
-                                aria-hidden="true" 
-                                role="img" 
-                                aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
-                            </div>
-                        </a>
-                    <?php endif; ?>
-                </div>
-
-
+                            </a>
+                        <?php endif; ?>
+                    </div>
 
                     <div class="yaa-content">
                         <h3 class="yaa-title">
@@ -1084,7 +1107,6 @@ final class YAA_Shortcode_Renderer {
         return ob_get_clean() ?: '';
     }
 
-    
     /**
      * Render error message
      */

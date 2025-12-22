@@ -1020,3 +1020,89 @@
         border-right-color: var(--yaa-primary);
     }
 }
+/* =========================================
+ * SHOP LOGO FALLBACK STYLES
+ * Version 1.5.1 - Shop-Logo als Bild-Fallback
+ * ========================================= */
+
+/* Shop-Logo als Fallback-Bild */
+.yaa-image-wrapper img.yaa-shop-logo-fallback {
+    width: 60% !important;
+    height: 60% !important;
+    object-fit: contain !important;
+    opacity: 0.9;
+    filter: brightness(1) saturate(1) drop-shadow(0 2px 10px rgba(0, 0, 0, 0.3));
+    transition: all 0.3s ease;
+}
+
+/* Hover-Effekt für Shop-Logo */
+.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
+    opacity: 1;
+    transform: scale(1.05);
+    filter: brightness(1.05) saturate(1.1) drop-shadow(0 4px 15px rgba(0, 0, 0, 0.4));
+}
+
+/* Hintergrund für Shop-Logo Container anpassen */
+.yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(40, 40, 45, 0.95) 0%, 
+        rgba(30, 30, 35, 0.98) 50%,
+        rgba(35, 35, 40, 0.95) 100%);
+}
+
+/* Yadore-spezifischer Hintergrund für Shop-Logo */
+.yaa-item.yaa-yadore .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(35, 25, 40, 0.95) 0%, 
+        rgba(25, 18, 30, 0.98) 50%,
+        rgba(30, 22, 35, 0.95) 100%);
+}
+
+/* Fallback für Browser ohne :has() Support */
+@supports not (selector(:has(*))) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        background: linear-gradient(145deg, 
+            rgba(40, 40, 45, 0.95) 0%, 
+            rgba(30, 30, 35, 0.98) 100%);
+        padding: 20%;
+        box-sizing: border-box;
+    }
+}
+
+/* Light Mode Support für Shop-Logo */
+.yaa-grid-container.yaa-theme-light .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(250, 250, 252, 0.98) 0%, 
+        rgba(240, 240, 245, 0.98) 50%,
+        rgba(245, 245, 248, 0.98) 100%);
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-image-wrapper img.yaa-shop-logo-fallback {
+    filter: brightness(1) saturate(1) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.15));
+}
+
+/* Responsive Anpassungen für Shop-Logo */
+@media (max-width: 767px) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        width: 50% !important;
+        height: 50% !important;
+    }
+}
+
+@media (max-width: 479px) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        width: 45% !important;
+        height: 45% !important;
+    }
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        transition: none;
+    }
+    
+    .yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        transform: none;
+    }
+}

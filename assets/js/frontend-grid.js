@@ -1,15 +1,23 @@
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.5.4 - Mit Image Proxy Support
+ * Version 1.5.1 - Mit Shop-Logo Fallback
  * PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
- * - Image 404 Error Handling with Thumbnail Fallback
- * - NEU: Server-seitiger Image Proxy als letzter Fallback
+ * - Image 404 Error Handling with extended Fallback Chain
+ * - Server-seitiger Image Proxy
+ * - NEU: Shop-Logo als Fallback vor Placeholder
  * - Public API
+ * 
+ * Fallback-Kette:
+ * 1. Original Image → Error
+ * 2. Thumbnail (data-thumbnail) → Error
+ * 3. Server-seitiger Proxy (data-proxy-src) → Error
+ * 4. Shop-Logo (data-shop-logo) → Error (NEU)
+ * 5. CSS Placeholder
  */
 
 (function() {
@@ -29,7 +37,7 @@
      * Initialize read more/less toggle buttons
      */
     function initReadMoreButtons() {
-        const buttons = document.querySelectorAll('.yaa-read-more');
+        var buttons = document.querySelectorAll('.yaa-read-more');
         
         buttons.forEach(function(button) {
             button.addEventListener('click', handleReadMoreClick);
@@ -44,9 +52,9 @@
     function handleReadMoreClick(event) {
         event.preventDefault();
         
-        const button = event.currentTarget;
-        const targetId = button.getAttribute('data-target');
-        const description = document.getElementById('desc-' + targetId);
+        var button = event.currentTarget;
+        var targetId = button.getAttribute('data-target');
+        var description = document.getElementById('desc-' + targetId);
         
         if (!description) {
             return;
@@ -72,9 +80,9 @@
      * @param {HTMLElement} button
      */
     function toggleDescription(description, button) {
-        const isExpanded = description.classList.contains('expanded');
-        const expandText = button.getAttribute('data-expand-text') || 'mehr lesen';
-        const collapseText = button.getAttribute('data-collapse-text') || 'weniger';
+        var isExpanded = description.classList.contains('expanded');
+        var expandText = button.getAttribute('data-expand-text') || 'mehr lesen';
+        var collapseText = button.getAttribute('data-collapse-text') || 'weniger';
         
         if (isExpanded) {
             description.classList.remove('expanded');
@@ -100,7 +108,7 @@
         }
 
         // Fallback for older browsers
-        const images = document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');
+        var images = document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');
         
         if (images.length === 0) {
             return;
@@ -108,10 +116,10 @@
 
         // Use IntersectionObserver if available
         if ('IntersectionObserver' in window) {
-            const imageObserver = new IntersectionObserver(function(entries, observer) {
+            var imageObserver = new IntersectionObserver(function(entries, observer) {
                 entries.forEach(function(entry) {
                     if (entry.isIntersecting) {
-                        const image = entry.target;
+                        var image = entry.target;
                         if (image.dataset.src) {
                             image.src = image.dataset.src;
                             image.removeAttribute('data-src');
@@ -132,103 +140,92 @@
 
     /**
      * Initialize image error handling for 404/broken images
-     * NEU: Erweiterte Fallback-Kette mit Image Proxy
-     * 
-     * Fallback-Reihenfolge:
-     * 1. Original Image → Error
-     * 2. Thumbnail (data-thumbnail) → Error
-     * 3. Server-seitiger Proxy (yaaProxy.endpoint) → Error
-     * 4. CSS Placeholder
      */
-    /**
- * Initialize image error handling for 404/broken images
- */
-function initImageErrorHandling() {
-    var images = document.querySelectorAll('.yaa-image-wrapper img');
-    
-    images.forEach(function(img) {
-        // Mark image as not yet processed for fallback
-        if (!img.hasAttribute('data-fallback-attempted')) {
-            img.setAttribute('data-fallback-attempted', 'false');
-        }
+    function initImageErrorHandling() {
+        var images = document.querySelectorAll('.yaa-image-wrapper img');
         
-        // NEU: Prüfe auf leeres src mit vorhandener Alternative
-        var currentSrc = img.getAttribute('src') || '';
-        var proxySrc = img.getAttribute('data-proxy-src') || '';
-        var originalSrc = img.getAttribute('data-original-src') || '';
-        
-        // Wenn src leer ist aber Alternativen existieren, sofort laden
-        if (currentSrc === '' || currentSrc === window.location.href) {
-            if (proxySrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Empty src detected, using proxy:', proxySrc);
-                }
-                img.setAttribute('data-fallback-attempted', 'proxy');
-                img.src = proxySrc;
-                return;
-            } else if (originalSrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Empty src detected, using original:', originalSrc);
-                }
-                img.setAttribute('data-fallback-attempted', 'original');
-                img.src = originalSrc;
-                return;
+        images.forEach(function(img) {
+            // Mark image as not yet processed for fallback
+            if (!img.hasAttribute('data-fallback-attempted')) {
+                img.setAttribute('data-fallback-attempted', 'false');
             }
-        }
-        
-        // Handle images that are already broken (cached or immediate 404)
-        if (img.complete) {
-            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                attemptImageFallback(img);
-            } else {
-                // Image loaded successfully
+            
+            // Prüfe auf leeres src mit vorhandener Alternative
+            var currentSrc = img.getAttribute('src') || '';
+            var proxySrc = img.getAttribute('data-proxy-src') || '';
+            var originalSrc = img.getAttribute('data-original-src') || '';
+            
+            // Wenn src leer ist aber Alternativen existieren, sofort laden
+            if (currentSrc === '' || currentSrc === window.location.href) {
+                if (proxySrc !== '') {
+                    if (window.console) {
+                        console.log('YAA: Empty src detected, using proxy:', proxySrc);
+                    }
+                    img.setAttribute('data-fallback-attempted', 'proxy');
+                    img.src = proxySrc;
+                    return;
+                } else if (originalSrc !== '') {
+                    if (window.console) {
+                        console.log('YAA: Empty src detected, using original:', originalSrc);
+                    }
+                    img.setAttribute('data-fallback-attempted', 'original');
+                    img.src = originalSrc;
+                    return;
+                }
+            }
+            
+            // Handle images that are already broken (cached or immediate 404)
+            if (img.complete) {
+                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+                    attemptImageFallback(img);
+                } else {
+                    // Image loaded successfully
+                    img.classList.add('yaa-img-loaded');
+                }
+            }
+            
+            // Handle future load events
+            img.addEventListener('load', function() {
                 img.classList.add('yaa-img-loaded');
-            }
-        }
-        
-        // Handle future load events
-        img.addEventListener('load', function() {
-            img.classList.add('yaa-img-loaded');
-            img.classList.remove('yaa-img-loading');
+                img.classList.remove('yaa-img-loading');
+            });
+            
+            // Handle future errors (async loading)
+            img.addEventListener('error', function() {
+                attemptImageFallback(img);
+            });
         });
-        
-        // Handle future errors (async loading)
-        img.addEventListener('error', function() {
-            attemptImageFallback(img);
-        });
-    });
-}
-
+    }
 
     /**
-     * NEU: Attempt image fallback chain
+     * Attempt image fallback chain
      * 
-     * Fallback-Reihenfolge:
+     * Erweiterte Fallback-Reihenfolge (Version 1.5.1):
      * 1. Original image (already failed)
-     * 2. Try thumbnail if available (data-thumbnail attribute)
-     * 3. Try server-side proxy (if enabled)
-     * 4. Fall back to CSS placeholder
+     * 2. Try thumbnail if available (data-thumbnail)
+     * 3. Try server-side proxy (data-proxy-src)
+     * 4. Try shop logo (data-shop-logo) - NEU
+     * 5. Fall back to CSS placeholder
      * 
      * @param {HTMLImageElement} img
      */
     function attemptImageFallback(img) {
-        const wrapper = img.closest('.yaa-image-wrapper');
+        var wrapper = img.closest('.yaa-image-wrapper');
         
         if (!wrapper) {
             return;
         }
         
-        // ========================================
         // Referrer-Policy setzen um Hotlink-Protection zu umgehen
-        // ========================================
         if (!img.hasAttribute('referrerpolicy')) {
             img.setAttribute('referrerpolicy', 'no-referrer');
         }
         
         // Get fallback state
-        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
-        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        var fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        var thumbnailUrl = img.getAttribute('data-thumbnail');
+        var originalSrc = img.getAttribute('data-original-src') || img.src;
+        var shopLogoUrl = img.getAttribute('data-shop-logo'); // NEU
         
         // Store original src on first attempt
         if (!img.hasAttribute('data-original-src')) {
@@ -236,7 +233,7 @@ function initImageErrorHandling() {
         }
         
         // ========================================
-        // FALLBACK CHAIN
+        // ERWEITERTE FALLBACK CHAIN
         // ========================================
         
         // Step 1: If we haven't tried thumbnail yet and it exists, try it
@@ -250,42 +247,65 @@ function initImageErrorHandling() {
             
             // Try loading the thumbnail
             img.src = thumbnailUrl;
-            
-            // Don't proceed to next fallback yet - wait for thumbnail load/error
             return;
         }
         
-        // Step 2: If thumbnail failed or doesn't exist, try proxy (NEU)
+        // Step 2: If thumbnail failed or doesn't exist, try proxy
         if (fallbackAttempted === 'thumbnail' || (fallbackAttempted === 'false' && !thumbnailUrl)) {
-            // Check if proxy is enabled
-            if (isProxyEnabled() && originalSrc && originalSrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Trying server-side proxy for:', originalSrc);
-                }
+            // Check if proxy is enabled and we have a proxy URL
+            if (isProxyEnabled()) {
+                var proxyUrl = img.getAttribute('data-proxy-src') || getProxyUrl(originalSrc);
                 
-                img.setAttribute('data-fallback-attempted', 'proxy');
-                img.classList.add('yaa-img-loading');
-                
-                // Generate proxy URL
-                const proxyUrl = getProxyUrl(originalSrc);
-                
-                if (proxyUrl) {
+                if (proxyUrl && proxyUrl !== '') {
+                    if (window.console) {
+                        console.log('YAA: Trying server-side proxy for:', originalSrc);
+                    }
+                    
+                    img.setAttribute('data-fallback-attempted', 'proxy');
+                    img.classList.add('yaa-img-loading');
                     img.src = proxyUrl;
                     return;
                 }
             }
+            
+            // No proxy available, skip to shop logo
+            img.setAttribute('data-fallback-attempted', 'proxy-skipped');
         }
         
-        // Step 3: Proxy also failed or not available, show CSS placeholder
-        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || fallbackAttempted === 'proxy') {
-            if (window.console) {
-                if (fallbackAttempted === 'proxy') {
-                    console.warn('YAA: Proxy also failed, showing placeholder for:', originalSrc);
-                } else if (fallbackAttempted === 'thumbnail') {
-                    console.warn('YAA: Thumbnail failed, showing placeholder:', originalSrc);
-                } else {
-                    console.warn('YAA: Image failed (no fallbacks), showing placeholder:', originalSrc);
+        // Step 3: NEU - If proxy failed or not available, try shop logo
+        if (fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
+            (fallbackAttempted === 'false' && !thumbnailUrl && !isProxyEnabled())) {
+            
+            if (shopLogoUrl && shopLogoUrl !== '') {
+                if (window.console) {
+                    console.log('YAA: Trying shop logo as fallback:', shopLogoUrl);
                 }
+                
+                img.setAttribute('data-fallback-attempted', 'shop-logo');
+                img.classList.add('yaa-img-loading');
+                img.classList.add('yaa-shop-logo-fallback');
+                img.src = shopLogoUrl;
+                return;
+            }
+        }
+        
+        // Step 4: All fallbacks failed, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || 
+            fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
+            fallbackAttempted === 'shop-logo') {
+            
+            if (window.console) {
+                var reason = 'Unknown';
+                if (fallbackAttempted === 'shop-logo') {
+                    reason = 'Shop logo also failed';
+                } else if (fallbackAttempted === 'proxy') {
+                    reason = 'Proxy failed, no shop logo available';
+                } else if (fallbackAttempted === 'thumbnail') {
+                    reason = 'Thumbnail failed, no proxy/shop logo available';
+                } else {
+                    reason = 'No fallbacks available';
+                }
+                console.warn('YAA: ' + reason + ', showing placeholder for:', originalSrc);
             }
             
             img.setAttribute('data-fallback-attempted', 'complete');
@@ -294,7 +314,7 @@ function initImageErrorHandling() {
     }
 
     /**
-     * NEU: Check if image proxy is enabled
+     * Check if image proxy is enabled
      * @returns {boolean}
      */
     function isProxyEnabled() {
@@ -306,7 +326,7 @@ function initImageErrorHandling() {
     }
 
     /**
-     * NEU: Generate proxy URL for an image
+     * Generate proxy URL for an image
      * @param {string} originalUrl - The original image URL
      * @returns {string|null} - Proxy URL or null if not available
      */
@@ -361,6 +381,7 @@ function initImageErrorHandling() {
         img.style.display = 'none';
         img.style.visibility = 'hidden';
         img.classList.remove('yaa-img-loading');
+        img.classList.remove('yaa-shop-logo-fallback');
         
         // Check if placeholder already exists
         if (wrapper.querySelector('.yaa-placeholder')) {
@@ -509,7 +530,7 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Manually trigger proxy fallback for an image
+     * Manually trigger proxy fallback for an image
      * @param {HTMLImageElement} img - The image element
      * @returns {boolean} True if proxy was attempted
      */
@@ -538,7 +559,32 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Generate proxy URL for external use
+     * NEU: Manually trigger shop logo fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if shop logo was attempted
+     */
+    window.YAA.tryShopLogo = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        var shopLogoUrl = img.getAttribute('data-shop-logo');
+        
+        if (shopLogoUrl && shopLogoUrl !== '') {
+            img.setAttribute('data-fallback-attempted', 'shop-logo');
+            img.classList.add('yaa-shop-logo-fallback');
+            img.src = shopLogoUrl;
+            return true;
+        }
+        
+        if (window.console) {
+            console.warn('YAA: No shop logo available for this image');
+        }
+        return false;
+    };
+
+    /**
+     * Generate proxy URL for external use
      * @param {string} imageUrl - Original image URL
      * @returns {string|null} Proxy URL or null
      */
@@ -547,7 +593,7 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Check if proxy is enabled
+     * Check if proxy is enabled
      * @returns {boolean}
      */
     window.YAA.isProxyEnabled = function() {
@@ -578,6 +624,7 @@ function initImageErrorHandling() {
             image: imageElement ? imageElement.src : '',
             originalImage: imageElement ? imageElement.getAttribute('data-original-src') : '',
             thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
+            shopLogo: imageElement ? imageElement.getAttribute('data-shop-logo') : '', // NEU
             proxyUrl: imageElement ? getProxyUrl(imageElement.getAttribute('data-original-src') || imageElement.src) : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
@@ -585,6 +632,7 @@ function initImageErrorHandling() {
             isPrime: item.querySelector('.yaa-prime-badge') !== null,
             hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
             imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false,
+            isShowingShopLogo: imageElement ? imageElement.classList.contains('yaa-shop-logo-fallback') : false, // NEU
             fallbackAttempted: imageElement ? imageElement.getAttribute('data-fallback-attempted') : null
         };
     };
@@ -635,11 +683,19 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Get count of images currently using proxy
+     * Get count of images currently using proxy
      * @returns {number}
      */
     window.YAA.getProxyImageCount = function() {
         return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length;
+    };
+
+    /**
+     * NEU: Get count of images showing shop logo
+     * @returns {number}
+     */
+    window.YAA.getShopLogoCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img.yaa-shop-logo-fallback').length;
     };
 
     /**
@@ -652,12 +708,18 @@ function initImageErrorHandling() {
         var broken = 0;
         var loadingThumbnail = 0;
         var loadingProxy = 0;
+        var showingShopLogo = 0; // NEU
         var hasThumbnail = 0;
         var hasProxy = 0;
+        var hasShopLogo = 0; // NEU
         
         images.forEach(function(img) {
             if (img.classList.contains('yaa-img-loaded')) {
                 loaded++;
+            }
+            
+            if (img.classList.contains('yaa-shop-logo-fallback')) {
+                showingShopLogo++;
             }
             
             var fallbackState = img.getAttribute('data-fallback-attempted');
@@ -673,6 +735,10 @@ function initImageErrorHandling() {
                 hasThumbnail++;
             }
             
+            if (img.getAttribute('data-shop-logo')) {
+                hasShopLogo++;
+            }
+            
             var originalSrc = img.getAttribute('data-original-src') || img.src;
             if (getProxyUrl(originalSrc)) {
                 hasProxy++;
@@ -685,8 +751,10 @@ function initImageErrorHandling() {
             broken: broken,
             loadingThumbnail: loadingThumbnail,
             loadingProxy: loadingProxy,
+            showingShopLogo: showingShopLogo, // NEU
             withThumbnailFallback: hasThumbnail,
             withProxyAvailable: hasProxy,
+            withShopLogoAvailable: hasShopLogo, // NEU
             proxyEnabled: isProxyEnabled()
         };
     };
