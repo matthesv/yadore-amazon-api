@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.11
+ * Version: 1.6.0
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,6 +22,11 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * License: GPL v2 or later
  * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
+ * 
+ * CHANGELOG 1.6.0:
+ * - Search Shortcode Komponente hinzugefügt
+ * - Shortcode 'yadore_search' zu Asset-Loading hinzugefügt
+ * - Dependency Injection für Search Shortcode korrigiert
  */
 
 declare(strict_types=1);
@@ -31,7 +36,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.11');
+define('YAA_VERSION', '1.6.0');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -47,6 +52,10 @@ add_action('plugins_loaded', 'yaa_load_textdomain');
 
 /**
  * Get plugin option with default
+ * 
+ * @param string $key Option key
+ * @param mixed $default Default value
+ * @return mixed Option value or default
  */
 function yaa_get_option(string $key, mixed $default = ''): mixed {
     $options = get_option('yaa_settings', []);
@@ -61,6 +70,9 @@ function yaa_get_cache_time(): int {
     return max(1, $hours) * 3600;
 }
 
+/**
+ * Get fallback cache time
+ */
 function yaa_get_fallback_time(): int {
     $hours = (int) yaa_get_option('fallback_duration', 24);
     return max(1, $hours) * 3600;
@@ -101,20 +113,30 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.5.4 - Mit Image Proxy Support
+ * Version 1.6.0 - Mit Search Shortcode Support
  */
 final class Yadore_Amazon_API_Plugin {
     
+    /**
+     * Singleton instance
+     */
     private static ?self $instance = null;
     
+    /**
+     * Plugin components
+     */
     public readonly YAA_Cache_Handler $cache;
     public readonly YAA_Yadore_API $yadore_api;
     public readonly YAA_Amazon_PAAPI $amazon_api;
     public readonly YAA_Custom_Products $custom_products;
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
-    public readonly YAA_Image_Proxy $image_proxy; // NEU
+    public readonly YAA_Image_Proxy $image_proxy;
+    public readonly YAA_Search_Shortcode $search_shortcode;
     
+    /**
+     * Get singleton instance
+     */
     public static function get_instance(): self {
         if (self::$instance === null) {
             self::$instance = new self();
@@ -122,11 +144,17 @@ final class Yadore_Amazon_API_Plugin {
         return self::$instance;
     }
     
+    /**
+     * Private constructor (Singleton)
+     */
     private function __construct() {
         $this->init_components();
         $this->register_hooks();
     }
     
+    /**
+     * Initialize all plugin components
+     */
     private function init_components(): void {
         // Core Components (werden durch Autoloader geladen)
         $this->cache           = new YAA_Cache_Handler();
@@ -140,13 +168,22 @@ final class Yadore_Amazon_API_Plugin {
             $this->custom_products
         );
         
-        // NEU: Image Proxy Component
+        // Image Proxy Component
         $this->image_proxy = new YAA_Image_Proxy();
+
+        // Search Shortcode Component (mit Dependency Injection)
+        $this->search_shortcode = new YAA_Search_Shortcode(
+            $this->yadore_api,
+            $this->amazon_api
+        );
         
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
     
+    /**
+     * Register plugin hooks
+     */
     private function register_hooks(): void {
         register_activation_hook(YAA_PLUGIN_FILE, [$this, 'activate']);
         register_deactivation_hook(YAA_PLUGIN_FILE, [$this, 'deactivate']);
@@ -155,6 +192,9 @@ final class Yadore_Amazon_API_Plugin {
         add_action('yaa_cache_refresh_event', [$this, 'preload_cache']);
     }
     
+    /**
+     * Plugin activation
+     */
     public function activate(): void {
         // Default settings
         $defaults = [
@@ -164,6 +204,7 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_market'          => 'de',
             'yadore_precision'       => 'fuzzy',
             'yadore_default_limit'   => 9,
+            'yadore_default_sort'    => 'rel_desc',
             
             // Amazon Settings
             'enable_amazon'          => 'yes',
@@ -187,8 +228,10 @@ final class Yadore_Amazon_API_Plugin {
             // Local Image Storage
             'enable_local_images'    => 'yes',
             'image_filename_format'  => 'seo',
+            'image_resize_enabled'   => 'yes',
+            'preferred_image_size'   => 'Large',
             
-            // NEU: Image Proxy Settings
+            // Image Proxy Settings
             'enable_image_proxy'     => 'yes',
             'image_proxy_cache'      => 24, // Stunden
             
@@ -220,6 +263,9 @@ final class Yadore_Amazon_API_Plugin {
             'color_amazon'           => '#ff9900',
             'color_custom'           => '#4CAF50',
             
+            // Search Shortcode Settings (NEU)
+            'yadore_featured_keywords' => '',
+            
             // Update Settings
             'github_token'           => '',
         ];
@@ -234,6 +280,15 @@ final class Yadore_Amazon_API_Plugin {
             wp_mkdir_p($admin_dir);
         }
         
+        // Bilder-Verzeichnis erstellen
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+        if (!is_dir($image_dir)) {
+            wp_mkdir_p($image_dir);
+            // Index-Datei für Sicherheit
+            file_put_contents($image_dir . '/index.php', '<?php // Silence is golden');
+        }
+        
         // Schedule cron
         if (!wp_next_scheduled('yaa_cache_refresh_event')) {
             wp_schedule_event(time(), 'twicedaily', 'yaa_cache_refresh_event');
@@ -242,11 +297,17 @@ final class Yadore_Amazon_API_Plugin {
         flush_rewrite_rules();
     }
     
+    /**
+     * Plugin deactivation
+     */
     public function deactivate(): void {
         wp_clear_scheduled_hook('yaa_cache_refresh_event');
         flush_rewrite_rules();
     }
     
+    /**
+     * Enqueue frontend assets when shortcodes are present
+     */
     public function enqueue_frontend_assets(): void {
         global $post;
         
@@ -254,6 +315,7 @@ final class Yadore_Amazon_API_Plugin {
             return;
         }
         
+        // Alle Shortcodes die Assets benötigen (inkl. yadore_search)
         $shortcodes = [
             'yaa_products', 
             'yadore_products', 
@@ -262,6 +324,7 @@ final class Yadore_Amazon_API_Plugin {
             'custom_products',
             'all_products',
             'fuzzy_products',
+            'yadore_search', // NEU: Search Shortcode hinzugefügt
         ];
         
         $has_shortcode = false;
@@ -278,6 +341,9 @@ final class Yadore_Amazon_API_Plugin {
         }
     }
     
+    /**
+     * Load frontend assets
+     */
     public function load_assets(): void {
         $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
 
@@ -310,7 +376,8 @@ final class Yadore_Amazon_API_Plugin {
             ";
             wp_add_inline_style('yaa-frontend-grid', $custom_css);
         } else {
-            wp_register_style('yaa-minimal-functional', false);
+            // Minimal CSS wenn Default-CSS deaktiviert
+            wp_register_style('yaa-minimal-functional', false, [], YAA_VERSION);
             wp_enqueue_style('yaa-minimal-functional');
             
             $minimal_css = "
@@ -337,6 +404,7 @@ final class Yadore_Amazon_API_Plugin {
             wp_add_inline_style('yaa-minimal-functional', $minimal_css);
         }
         
+        // Frontend JavaScript
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
@@ -345,7 +413,7 @@ final class Yadore_Amazon_API_Plugin {
             true
         );
         
-        // NEU: Proxy-URL ans Frontend übergeben
+        // Proxy-URL ans Frontend übergeben
         wp_localize_script('yaa-frontend-grid', 'yaaProxy', [
             'enabled'  => yaa_get_option('enable_image_proxy', 'yes') === 'yes',
             'endpoint' => admin_url('admin-ajax.php'),
@@ -353,14 +421,21 @@ final class Yadore_Amazon_API_Plugin {
         ]);
     }
     
+    /**
+     * Preload cache via cron
+     */
     public function preload_cache(): void {
         $cached_keywords = get_option('yaa_cached_keywords', []);
         
-        if (empty($cached_keywords)) {
+        if (empty($cached_keywords) || !is_array($cached_keywords)) {
             return;
         }
         
         foreach ($cached_keywords as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            
             $source = $entry['source'] ?? 'yadore';
             
             if ($source === 'amazon' && $this->amazon_api->is_configured()) {
@@ -377,6 +452,7 @@ final class Yadore_Amazon_API_Plugin {
                 ]);
             }
             
+            // Rate-Limiting: 1 Sekunde zwischen Requests
             sleep(1);
         }
     }
@@ -384,6 +460,8 @@ final class Yadore_Amazon_API_Plugin {
 
 /**
  * Initialize Plugin
+ * 
+ * @return Yadore_Amazon_API_Plugin Plugin instance
  */
 function yaa_init(): Yadore_Amazon_API_Plugin {
     return Yadore_Amazon_API_Plugin::get_instance();
@@ -391,7 +469,10 @@ function yaa_init(): Yadore_Amazon_API_Plugin {
 add_action('plugins_loaded', 'yaa_init', 10);
 
 /**
- * Plugin action links
+ * Plugin action links (Settings link in plugin list)
+ * 
+ * @param array<string, string> $links Existing links
+ * @return array<string, string> Modified links
  */
 function yaa_plugin_action_links(array $links): array {
     $settings_link = '<a href="' . admin_url('admin.php?page=yaa-settings') . '">' . 
@@ -1425,21 +1506,559 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
         border-right-color: var(--yaa-primary);
     }
 }
+/* =========================================
+ * SHOP LOGO FALLBACK STYLES
+ * Version 1.5.1 - Shop-Logo als Bild-Fallback
+ * ========================================= */
+
+/* Shop-Logo als Fallback-Bild */
+.yaa-image-wrapper img.yaa-shop-logo-fallback {
+    width: 60% !important;
+    height: 60% !important;
+    object-fit: contain !important;
+    opacity: 0.9;
+    filter: brightness(1) saturate(1) drop-shadow(0 2px 10px rgba(0, 0, 0, 0.3));
+    transition: all 0.3s ease;
+}
+
+/* Hover-Effekt für Shop-Logo */
+.yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
+    opacity: 1;
+    transform: scale(1.05);
+    filter: brightness(1.05) saturate(1.1) drop-shadow(0 4px 15px rgba(0, 0, 0, 0.4));
+}
+
+/* Hintergrund für Shop-Logo Container anpassen */
+.yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(40, 40, 45, 0.95) 0%, 
+        rgba(30, 30, 35, 0.98) 50%,
+        rgba(35, 35, 40, 0.95) 100%);
+}
+
+/* Yadore-spezifischer Hintergrund für Shop-Logo */
+.yaa-item.yaa-yadore .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(35, 25, 40, 0.95) 0%, 
+        rgba(25, 18, 30, 0.98) 50%,
+        rgba(30, 22, 35, 0.95) 100%);
+}
+
+/* Fallback für Browser ohne :has() Support */
+@supports not (selector(:has(*))) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        background: linear-gradient(145deg, 
+            rgba(40, 40, 45, 0.95) 0%, 
+            rgba(30, 30, 35, 0.98) 100%);
+        padding: 20%;
+        box-sizing: border-box;
+    }
+}
+
+/* Light Mode Support für Shop-Logo */
+.yaa-grid-container.yaa-theme-light .yaa-image-wrapper:has(img.yaa-shop-logo-fallback) {
+    background: linear-gradient(145deg, 
+        rgba(250, 250, 252, 0.98) 0%, 
+        rgba(240, 240, 245, 0.98) 50%,
+        rgba(245, 245, 248, 0.98) 100%);
+}
+
+.yaa-grid-container.yaa-theme-light .yaa-image-wrapper img.yaa-shop-logo-fallback {
+    filter: brightness(1) saturate(1) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.15));
+}
+
+/* Responsive Anpassungen für Shop-Logo */
+@media (max-width: 767px) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        width: 50% !important;
+        height: 50% !important;
+    }
+}
+
+@media (max-width: 479px) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        width: 45% !important;
+        height: 45% !important;
+    }
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+    .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        transition: none;
+    }
+    
+    .yaa-item:hover .yaa-image-wrapper img.yaa-shop-logo-fallback {
+        transform: none;
+    }
+}
+ 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\css\yaa-search.css 
+ 
+/**
+ * Yadore Interaktive Produktsuche - Styles
+ * Mit Initial-Produkten Support
+ * 
+ * @package Yadore_Amazon_API
+ * @since 1.6.0
+ */
+
+/* Container */
+.yadore-search-container {
+    --yadore-primary: #2563eb;
+    --yadore-primary-hover: #1d4ed8;
+    --yadore-text: #1f2937;
+    --yadore-text-muted: #6b7280;
+    --yadore-border: #e5e7eb;
+    --yadore-bg: #ffffff;
+    --yadore-bg-hover: #f9fafb;
+    --yadore-radius: 8px;
+    --yadore-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    --yadore-shadow-lg: 0 4px 6px -1px rgba(0,0,0,0.1);
+    
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+/* =====================
+   Suchformular
+   ===================== */
+.yadore-search-form {
+    margin-bottom: 1.5rem;
+}
+
+.yadore-search-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 600px;
+}
+
+.yadore-search-input {
+    flex: 1;
+    padding: 0.875rem 1rem;
+    font-size: 1rem;
+    border: 2px solid var(--yadore-border);
+    border-radius: var(--yadore-radius);
+    background: var(--yadore-bg);
+    color: var(--yadore-text);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.yadore-search-input:focus {
+    outline: none;
+    border-color: var(--yadore-primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.yadore-search-input::placeholder {
+    color: var(--yadore-text-muted);
+}
+
+.yadore-search-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--yadore-primary);
+    border: none;
+    border-radius: var(--yadore-radius);
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+    min-width: 120px;
+}
+
+.yadore-search-button:hover:not(:disabled) {
+    background: var(--yadore-primary-hover);
+}
+
+.yadore-search-button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.yadore-search-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.yadore-search-spinner {
+    display: inline-flex;
+}
+
+.yadore-spinner-icon {
+    width: 20px;
+    height: 20px;
+}
+
+/* =====================
+   Status-Meldungen
+   ===================== */
+.yadore-search-status {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--yadore-radius);
+    text-align: center;
+}
+
+.yadore-status-loading {
+    background: #eff6ff;
+    color: #1e40af;
+}
+
+.yadore-status-error {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.yadore-status-empty {
+    background: #fefce8;
+    color: #854d0e;
+}
+
+.yadore-status-info {
+    background: #f3f4f6;
+    color: var(--yadore-text-muted);
+}
+
+/* =====================
+   Initial-Produkte
+   ===================== */
+.yadore-initial-products {
+    margin-bottom: 2rem;
+}
+
+.yadore-initial-header {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--yadore-border);
+}
+
+.yadore-initial-title {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--yadore-text);
+}
+
+/* =====================
+   Such-Ergebnisse Header
+   ===================== */
+.yadore-search-results-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--yadore-border);
+}
+
+.yadore-search-results-info {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--yadore-text-muted);
+}
+
+.yadore-search-results-count {
+    font-weight: 600;
+    color: var(--yadore-text);
+}
+
+/* Reset-Button */
+.yadore-reset-button {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--yadore-primary);
+    background: transparent;
+    border: 1px solid var(--yadore-primary);
+    border-radius: var(--yadore-radius);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.yadore-reset-button:hover {
+    background: var(--yadore-primary);
+    color: #fff;
+}
+
+/* =====================
+   Produkt-Grid
+   ===================== */
+.yadore-search-results-grid {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.yadore-columns-2 { grid-template-columns: repeat(2, 1fr); }
+.yadore-columns-3 { grid-template-columns: repeat(3, 1fr); }
+.yadore-columns-4 { grid-template-columns: repeat(4, 1fr); }
+
+/* =====================
+   Produkt-Karte
+   ===================== */
+.yadore-product-card {
+    position: relative;
+    background: var(--yadore-bg);
+    border: 1px solid var(--yadore-border);
+    border-radius: var(--yadore-radius);
+    overflow: hidden;
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.yadore-product-card:hover {
+    box-shadow: var(--yadore-shadow-lg);
+    transform: translateY(-2px);
+}
+
+.yadore-product-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+}
+
+/* Source Badge */
+.yadore-product-source {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 2;
+}
+
+.yadore-source-yadore {
+    background: #10b981; /* Grün */
+}
+
+.yadore-source-amazon {
+    background: #f59e0b; /* Orange/Amazon */
+}
+
+/* Produkt-Bild */
+.yadore-product-image {
+    position: relative;
+    padding-top: 100%;
+    background: #f9fafb;
+    overflow: hidden;
+}
+
+.yadore-product-image img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 1rem;
+    transition: transform 0.3s;
+}
+
+.yadore-product-card:hover .yadore-product-image img {
+    transform: scale(1.05);
+}
+
+.yadore-product-image.yadore-no-image,
+.yadore-product-image.yadore-image-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #d1d5db;
+}
+
+.yadore-product-image.yadore-no-image svg,
+.yadore-product-image.yadore-image-error svg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 48px;
+    height: 48px;
+}
+
+.yadore-product-image.yadore-image-error img {
+    display: none;
+}
+
+/* Produkt-Inhalt */
+.yadore-product-content {
+    padding: 1rem;
+}
+
+.yadore-product-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--yadore-text);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.yadore-product-merchant {
+    font-size: 0.8rem;
+    color: var(--yadore-text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.yadore-product-price {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--yadore-primary);
+    margin-bottom: 0.75rem;
+}
+
+.yadore-product-cta {
+    display: inline-block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--yadore-primary);
+    transition: transform 0.2s;
+}
+
+.yadore-product-card:hover .yadore-product-cta {
+    transform: translateX(4px);
+}
+
+/* =====================
+   Animationen
+   ===================== */
+@keyframes yadore-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.yadore-search-results .yadore-product-card {
+    animation: yadore-fade-in 0.3s ease forwards;
+}
+
+.yadore-search-results .yadore-product-card:nth-child(1) { animation-delay: 0.05s; }
+.yadore-search-results .yadore-product-card:nth-child(2) { animation-delay: 0.1s; }
+.yadore-search-results .yadore-product-card:nth-child(3) { animation-delay: 0.15s; }
+.yadore-search-results .yadore-product-card:nth-child(4) { animation-delay: 0.2s; }
+.yadore-search-results .yadore-product-card:nth-child(5) { animation-delay: 0.25s; }
+.yadore-search-results .yadore-product-card:nth-child(6) { animation-delay: 0.3s; }
+
+/* =====================
+   Responsive
+   ===================== */
+@media (max-width: 768px) {
+    .yadore-search-input-wrapper {
+        flex-direction: column;
+    }
+    
+    .yadore-search-button {
+        width: 100%;
+    }
+    
+    .yadore-columns-3,
+    .yadore-columns-4 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .yadore-search-results-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .yadore-reset-button {
+        width: 100%;
+        text-align: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .yadore-columns-2,
+    .yadore-columns-3,
+    .yadore-columns-4 {
+        grid-template-columns: 1fr;
+    }
+    
+    .yadore-search-input {
+        padding: 0.75rem;
+    }
+    
+    .yadore-search-button {
+        padding: 0.75rem 1rem;
+    }
+    
+    .yadore-initial-title {
+        font-size: 1.1rem;
+    }
+}
+
+/* =====================
+   Dark Mode Support
+   ===================== */
+@media (prefers-color-scheme: dark) {
+    .yadore-search-container {
+        --yadore-text: #f3f4f6;
+        --yadore-text-muted: #9ca3af;
+        --yadore-border: #374151;
+        --yadore-bg: #1f2937;
+        --yadore-bg-hover: #374151;
+    }
+    
+    .yadore-product-image {
+        background: #374151;
+    }
+    
+    .yadore-status-loading {
+        background: #1e3a5f;
+        color: #93c5fd;
+    }
+    
+    .yadore-status-error {
+        background: #450a0a;
+        color: #fca5a5;
+    }
+    
+    .yadore-status-empty {
+        background: #422006;
+        color: #fcd34d;
+    }
+    
+    .yadore-status-info {
+        background: #374151;
+        color: #9ca3af;
+    }
+}
  
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\frontend-grid.js 
  
 /**
  * Yadore-Amazon-API Frontend JavaScript
- * Version 1.5.4 - Mit Image Proxy Support
+ * Version 1.5.1 - Mit Shop-Logo Fallback
  * PHP 8.3+ compatible
  * 
  * Features:
  * - Read More/Less Toggle
  * - Lazy Load Fallback
  * - Accessibility Enhancements
- * - Image 404 Error Handling with Thumbnail Fallback
- * - NEU: Server-seitiger Image Proxy als letzter Fallback
+ * - Image 404 Error Handling with extended Fallback Chain
+ * - Server-seitiger Image Proxy
+ * - NEU: Shop-Logo als Fallback vor Placeholder
  * - Public API
+ * 
+ * Fallback-Kette:
+ * 1. Original Image → Error
+ * 2. Thumbnail (data-thumbnail) → Error
+ * 3. Server-seitiger Proxy (data-proxy-src) → Error
+ * 4. Shop-Logo (data-shop-logo) → Error (NEU)
+ * 5. CSS Placeholder
  */
 
 (function() {
@@ -1459,7 +2078,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
      * Initialize read more/less toggle buttons
      */
     function initReadMoreButtons() {
-        const buttons = document.querySelectorAll('.yaa-read-more');
+        var buttons = document.querySelectorAll('.yaa-read-more');
         
         buttons.forEach(function(button) {
             button.addEventListener('click', handleReadMoreClick);
@@ -1474,9 +2093,9 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
     function handleReadMoreClick(event) {
         event.preventDefault();
         
-        const button = event.currentTarget;
-        const targetId = button.getAttribute('data-target');
-        const description = document.getElementById('desc-' + targetId);
+        var button = event.currentTarget;
+        var targetId = button.getAttribute('data-target');
+        var description = document.getElementById('desc-' + targetId);
         
         if (!description) {
             return;
@@ -1502,9 +2121,9 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
      * @param {HTMLElement} button
      */
     function toggleDescription(description, button) {
-        const isExpanded = description.classList.contains('expanded');
-        const expandText = button.getAttribute('data-expand-text') || 'mehr lesen';
-        const collapseText = button.getAttribute('data-collapse-text') || 'weniger';
+        var isExpanded = description.classList.contains('expanded');
+        var expandText = button.getAttribute('data-expand-text') || 'mehr lesen';
+        var collapseText = button.getAttribute('data-collapse-text') || 'weniger';
         
         if (isExpanded) {
             description.classList.remove('expanded');
@@ -1530,7 +2149,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
         }
 
         // Fallback for older browsers
-        const images = document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');
+        var images = document.querySelectorAll('.yaa-image-wrapper img[loading="lazy"]');
         
         if (images.length === 0) {
             return;
@@ -1538,10 +2157,10 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 
         // Use IntersectionObserver if available
         if ('IntersectionObserver' in window) {
-            const imageObserver = new IntersectionObserver(function(entries, observer) {
+            var imageObserver = new IntersectionObserver(function(entries, observer) {
                 entries.forEach(function(entry) {
                     if (entry.isIntersecting) {
-                        const image = entry.target;
+                        var image = entry.target;
                         if (image.dataset.src) {
                             image.src = image.dataset.src;
                             image.removeAttribute('data-src');
@@ -1562,103 +2181,92 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 
     /**
      * Initialize image error handling for 404/broken images
-     * NEU: Erweiterte Fallback-Kette mit Image Proxy
-     * 
-     * Fallback-Reihenfolge:
-     * 1. Original Image → Error
-     * 2. Thumbnail (data-thumbnail) → Error
-     * 3. Server-seitiger Proxy (yaaProxy.endpoint) → Error
-     * 4. CSS Placeholder
      */
-    /**
- * Initialize image error handling for 404/broken images
- */
-function initImageErrorHandling() {
-    var images = document.querySelectorAll('.yaa-image-wrapper img');
-    
-    images.forEach(function(img) {
-        // Mark image as not yet processed for fallback
-        if (!img.hasAttribute('data-fallback-attempted')) {
-            img.setAttribute('data-fallback-attempted', 'false');
-        }
+    function initImageErrorHandling() {
+        var images = document.querySelectorAll('.yaa-image-wrapper img');
         
-        // NEU: Prüfe auf leeres src mit vorhandener Alternative
-        var currentSrc = img.getAttribute('src') || '';
-        var proxySrc = img.getAttribute('data-proxy-src') || '';
-        var originalSrc = img.getAttribute('data-original-src') || '';
-        
-        // Wenn src leer ist aber Alternativen existieren, sofort laden
-        if (currentSrc === '' || currentSrc === window.location.href) {
-            if (proxySrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Empty src detected, using proxy:', proxySrc);
-                }
-                img.setAttribute('data-fallback-attempted', 'proxy');
-                img.src = proxySrc;
-                return;
-            } else if (originalSrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Empty src detected, using original:', originalSrc);
-                }
-                img.setAttribute('data-fallback-attempted', 'original');
-                img.src = originalSrc;
-                return;
+        images.forEach(function(img) {
+            // Mark image as not yet processed for fallback
+            if (!img.hasAttribute('data-fallback-attempted')) {
+                img.setAttribute('data-fallback-attempted', 'false');
             }
-        }
-        
-        // Handle images that are already broken (cached or immediate 404)
-        if (img.complete) {
-            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                attemptImageFallback(img);
-            } else {
-                // Image loaded successfully
+            
+            // Prüfe auf leeres src mit vorhandener Alternative
+            var currentSrc = img.getAttribute('src') || '';
+            var proxySrc = img.getAttribute('data-proxy-src') || '';
+            var originalSrc = img.getAttribute('data-original-src') || '';
+            
+            // Wenn src leer ist aber Alternativen existieren, sofort laden
+            if (currentSrc === '' || currentSrc === window.location.href) {
+                if (proxySrc !== '') {
+                    if (window.console) {
+                        console.log('YAA: Empty src detected, using proxy:', proxySrc);
+                    }
+                    img.setAttribute('data-fallback-attempted', 'proxy');
+                    img.src = proxySrc;
+                    return;
+                } else if (originalSrc !== '') {
+                    if (window.console) {
+                        console.log('YAA: Empty src detected, using original:', originalSrc);
+                    }
+                    img.setAttribute('data-fallback-attempted', 'original');
+                    img.src = originalSrc;
+                    return;
+                }
+            }
+            
+            // Handle images that are already broken (cached or immediate 404)
+            if (img.complete) {
+                if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+                    attemptImageFallback(img);
+                } else {
+                    // Image loaded successfully
+                    img.classList.add('yaa-img-loaded');
+                }
+            }
+            
+            // Handle future load events
+            img.addEventListener('load', function() {
                 img.classList.add('yaa-img-loaded');
-            }
-        }
-        
-        // Handle future load events
-        img.addEventListener('load', function() {
-            img.classList.add('yaa-img-loaded');
-            img.classList.remove('yaa-img-loading');
+                img.classList.remove('yaa-img-loading');
+            });
+            
+            // Handle future errors (async loading)
+            img.addEventListener('error', function() {
+                attemptImageFallback(img);
+            });
         });
-        
-        // Handle future errors (async loading)
-        img.addEventListener('error', function() {
-            attemptImageFallback(img);
-        });
-    });
-}
-
+    }
 
     /**
-     * NEU: Attempt image fallback chain
+     * Attempt image fallback chain
      * 
-     * Fallback-Reihenfolge:
+     * Erweiterte Fallback-Reihenfolge (Version 1.5.1):
      * 1. Original image (already failed)
-     * 2. Try thumbnail if available (data-thumbnail attribute)
-     * 3. Try server-side proxy (if enabled)
-     * 4. Fall back to CSS placeholder
+     * 2. Try thumbnail if available (data-thumbnail)
+     * 3. Try server-side proxy (data-proxy-src)
+     * 4. Try shop logo (data-shop-logo) - NEU
+     * 5. Fall back to CSS placeholder
      * 
      * @param {HTMLImageElement} img
      */
     function attemptImageFallback(img) {
-        const wrapper = img.closest('.yaa-image-wrapper');
+        var wrapper = img.closest('.yaa-image-wrapper');
         
         if (!wrapper) {
             return;
         }
         
-        // ========================================
         // Referrer-Policy setzen um Hotlink-Protection zu umgehen
-        // ========================================
         if (!img.hasAttribute('referrerpolicy')) {
             img.setAttribute('referrerpolicy', 'no-referrer');
         }
         
         // Get fallback state
-        const fallbackAttempted = img.getAttribute('data-fallback-attempted');
-        const thumbnailUrl = img.getAttribute('data-thumbnail');
-        const originalSrc = img.getAttribute('data-original-src') || img.src;
+        var fallbackAttempted = img.getAttribute('data-fallback-attempted');
+        var thumbnailUrl = img.getAttribute('data-thumbnail');
+        var originalSrc = img.getAttribute('data-original-src') || img.src;
+        var shopLogoUrl = img.getAttribute('data-shop-logo'); // NEU
         
         // Store original src on first attempt
         if (!img.hasAttribute('data-original-src')) {
@@ -1666,7 +2274,7 @@ function initImageErrorHandling() {
         }
         
         // ========================================
-        // FALLBACK CHAIN
+        // ERWEITERTE FALLBACK CHAIN
         // ========================================
         
         // Step 1: If we haven't tried thumbnail yet and it exists, try it
@@ -1680,42 +2288,65 @@ function initImageErrorHandling() {
             
             // Try loading the thumbnail
             img.src = thumbnailUrl;
-            
-            // Don't proceed to next fallback yet - wait for thumbnail load/error
             return;
         }
         
-        // Step 2: If thumbnail failed or doesn't exist, try proxy (NEU)
+        // Step 2: If thumbnail failed or doesn't exist, try proxy
         if (fallbackAttempted === 'thumbnail' || (fallbackAttempted === 'false' && !thumbnailUrl)) {
-            // Check if proxy is enabled
-            if (isProxyEnabled() && originalSrc && originalSrc !== '') {
-                if (window.console) {
-                    console.log('YAA: Trying server-side proxy for:', originalSrc);
-                }
+            // Check if proxy is enabled and we have a proxy URL
+            if (isProxyEnabled()) {
+                var proxyUrl = img.getAttribute('data-proxy-src') || getProxyUrl(originalSrc);
                 
-                img.setAttribute('data-fallback-attempted', 'proxy');
-                img.classList.add('yaa-img-loading');
-                
-                // Generate proxy URL
-                const proxyUrl = getProxyUrl(originalSrc);
-                
-                if (proxyUrl) {
+                if (proxyUrl && proxyUrl !== '') {
+                    if (window.console) {
+                        console.log('YAA: Trying server-side proxy for:', originalSrc);
+                    }
+                    
+                    img.setAttribute('data-fallback-attempted', 'proxy');
+                    img.classList.add('yaa-img-loading');
                     img.src = proxyUrl;
                     return;
                 }
             }
+            
+            // No proxy available, skip to shop logo
+            img.setAttribute('data-fallback-attempted', 'proxy-skipped');
         }
         
-        // Step 3: Proxy also failed or not available, show CSS placeholder
-        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || fallbackAttempted === 'proxy') {
-            if (window.console) {
-                if (fallbackAttempted === 'proxy') {
-                    console.warn('YAA: Proxy also failed, showing placeholder for:', originalSrc);
-                } else if (fallbackAttempted === 'thumbnail') {
-                    console.warn('YAA: Thumbnail failed, showing placeholder:', originalSrc);
-                } else {
-                    console.warn('YAA: Image failed (no fallbacks), showing placeholder:', originalSrc);
+        // Step 3: NEU - If proxy failed or not available, try shop logo
+        if (fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
+            (fallbackAttempted === 'false' && !thumbnailUrl && !isProxyEnabled())) {
+            
+            if (shopLogoUrl && shopLogoUrl !== '') {
+                if (window.console) {
+                    console.log('YAA: Trying shop logo as fallback:', shopLogoUrl);
                 }
+                
+                img.setAttribute('data-fallback-attempted', 'shop-logo');
+                img.classList.add('yaa-img-loading');
+                img.classList.add('yaa-shop-logo-fallback');
+                img.src = shopLogoUrl;
+                return;
+            }
+        }
+        
+        // Step 4: All fallbacks failed, show CSS placeholder
+        if (fallbackAttempted === 'false' || fallbackAttempted === 'thumbnail' || 
+            fallbackAttempted === 'proxy' || fallbackAttempted === 'proxy-skipped' || 
+            fallbackAttempted === 'shop-logo') {
+            
+            if (window.console) {
+                var reason = 'Unknown';
+                if (fallbackAttempted === 'shop-logo') {
+                    reason = 'Shop logo also failed';
+                } else if (fallbackAttempted === 'proxy') {
+                    reason = 'Proxy failed, no shop logo available';
+                } else if (fallbackAttempted === 'thumbnail') {
+                    reason = 'Thumbnail failed, no proxy/shop logo available';
+                } else {
+                    reason = 'No fallbacks available';
+                }
+                console.warn('YAA: ' + reason + ', showing placeholder for:', originalSrc);
             }
             
             img.setAttribute('data-fallback-attempted', 'complete');
@@ -1724,7 +2355,7 @@ function initImageErrorHandling() {
     }
 
     /**
-     * NEU: Check if image proxy is enabled
+     * Check if image proxy is enabled
      * @returns {boolean}
      */
     function isProxyEnabled() {
@@ -1736,7 +2367,7 @@ function initImageErrorHandling() {
     }
 
     /**
-     * NEU: Generate proxy URL for an image
+     * Generate proxy URL for an image
      * @param {string} originalUrl - The original image URL
      * @returns {string|null} - Proxy URL or null if not available
      */
@@ -1791,6 +2422,7 @@ function initImageErrorHandling() {
         img.style.display = 'none';
         img.style.visibility = 'hidden';
         img.classList.remove('yaa-img-loading');
+        img.classList.remove('yaa-shop-logo-fallback');
         
         // Check if placeholder already exists
         if (wrapper.querySelector('.yaa-placeholder')) {
@@ -1939,7 +2571,7 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Manually trigger proxy fallback for an image
+     * Manually trigger proxy fallback for an image
      * @param {HTMLImageElement} img - The image element
      * @returns {boolean} True if proxy was attempted
      */
@@ -1968,7 +2600,32 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Generate proxy URL for external use
+     * NEU: Manually trigger shop logo fallback for an image
+     * @param {HTMLImageElement} img - The image element
+     * @returns {boolean} True if shop logo was attempted
+     */
+    window.YAA.tryShopLogo = function(img) {
+        if (!img || img.tagName !== 'IMG') {
+            return false;
+        }
+        
+        var shopLogoUrl = img.getAttribute('data-shop-logo');
+        
+        if (shopLogoUrl && shopLogoUrl !== '') {
+            img.setAttribute('data-fallback-attempted', 'shop-logo');
+            img.classList.add('yaa-shop-logo-fallback');
+            img.src = shopLogoUrl;
+            return true;
+        }
+        
+        if (window.console) {
+            console.warn('YAA: No shop logo available for this image');
+        }
+        return false;
+    };
+
+    /**
+     * Generate proxy URL for external use
      * @param {string} imageUrl - Original image URL
      * @returns {string|null} Proxy URL or null
      */
@@ -1977,7 +2634,7 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Check if proxy is enabled
+     * Check if proxy is enabled
      * @returns {boolean}
      */
     window.YAA.isProxyEnabled = function() {
@@ -2008,6 +2665,7 @@ function initImageErrorHandling() {
             image: imageElement ? imageElement.src : '',
             originalImage: imageElement ? imageElement.getAttribute('data-original-src') : '',
             thumbnail: imageElement ? imageElement.getAttribute('data-thumbnail') : '',
+            shopLogo: imageElement ? imageElement.getAttribute('data-shop-logo') : '', // NEU
             proxyUrl: imageElement ? getProxyUrl(imageElement.getAttribute('data-original-src') || imageElement.src) : '',
             isAmazon: item.classList.contains('yaa-amazon'),
             isCustom: item.classList.contains('yaa-custom'),
@@ -2015,6 +2673,7 @@ function initImageErrorHandling() {
             isPrime: item.querySelector('.yaa-prime-badge') !== null,
             hasImageError: wrapper ? wrapper.classList.contains('yaa-image-error') : false,
             imageLoaded: imageElement ? imageElement.classList.contains('yaa-img-loaded') : false,
+            isShowingShopLogo: imageElement ? imageElement.classList.contains('yaa-shop-logo-fallback') : false, // NEU
             fallbackAttempted: imageElement ? imageElement.getAttribute('data-fallback-attempted') : null
         };
     };
@@ -2065,11 +2724,19 @@ function initImageErrorHandling() {
     };
 
     /**
-     * NEU: Get count of images currently using proxy
+     * Get count of images currently using proxy
      * @returns {number}
      */
     window.YAA.getProxyImageCount = function() {
         return document.querySelectorAll('.yaa-image-wrapper img[data-fallback-attempted="proxy"]').length;
+    };
+
+    /**
+     * NEU: Get count of images showing shop logo
+     * @returns {number}
+     */
+    window.YAA.getShopLogoCount = function() {
+        return document.querySelectorAll('.yaa-image-wrapper img.yaa-shop-logo-fallback').length;
     };
 
     /**
@@ -2082,12 +2749,18 @@ function initImageErrorHandling() {
         var broken = 0;
         var loadingThumbnail = 0;
         var loadingProxy = 0;
+        var showingShopLogo = 0; // NEU
         var hasThumbnail = 0;
         var hasProxy = 0;
+        var hasShopLogo = 0; // NEU
         
         images.forEach(function(img) {
             if (img.classList.contains('yaa-img-loaded')) {
                 loaded++;
+            }
+            
+            if (img.classList.contains('yaa-shop-logo-fallback')) {
+                showingShopLogo++;
             }
             
             var fallbackState = img.getAttribute('data-fallback-attempted');
@@ -2103,6 +2776,10 @@ function initImageErrorHandling() {
                 hasThumbnail++;
             }
             
+            if (img.getAttribute('data-shop-logo')) {
+                hasShopLogo++;
+            }
+            
             var originalSrc = img.getAttribute('data-original-src') || img.src;
             if (getProxyUrl(originalSrc)) {
                 hasProxy++;
@@ -2115,13 +2792,331 @@ function initImageErrorHandling() {
             broken: broken,
             loadingThumbnail: loadingThumbnail,
             loadingProxy: loadingProxy,
+            showingShopLogo: showingShopLogo, // NEU
             withThumbnailFallback: hasThumbnail,
             withProxyAvailable: hasProxy,
+            withShopLogoAvailable: hasShopLogo, // NEU
             proxyEnabled: isProxyEnabled()
         };
     };
 
 })();
+ 
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\assets\js\yaa-search.js 
+ 
+/**
+ * Yadore Interaktive Produktsuche
+ * Mit Initial-Produkten und Reset-Funktion
+ * 
+ * @package Yadore_Amazon_API
+ * @since 1.6.0
+ */
+
+(function($) {
+    'use strict';
+
+    class YadoreProductSearch {
+        constructor(container) {
+            this.$container = $(container);
+            this.$form = this.$container.find('.yadore-search-form');
+            this.$input = this.$container.find('.yadore-search-input');
+            this.$button = this.$container.find('.yadore-search-button');
+            this.$buttonText = this.$container.find('.yadore-search-button-text');
+            this.$spinner = this.$container.find('.yadore-search-spinner');
+            this.$status = this.$container.find('.yadore-search-status');
+            
+            // Initial-Produkte Container
+            this.$initialProducts = this.$container.find('.yadore-initial-products');
+            
+            // Such-Ergebnisse Container
+            this.$results = this.$container.find('.yadore-search-results');
+            this.$resultsGrid = this.$results.find('.yadore-search-results-grid');
+            this.$resultsCount = this.$container.find('.yadore-search-results-count');
+            this.$resultsQuery = this.$container.find('.yadore-search-results-query');
+            this.$resetButton = this.$container.find('.yadore-reset-button');
+
+            // Einstellungen aus data-Attributen
+            this.settings = {
+                network: this.$container.data('network') || '',
+                maxResults: this.$container.data('max-results') || 12,
+                columns: this.$container.data('columns') || 3,
+                minChars: this.$container.data('min-chars') || 3,
+                showPrice: this.$container.data('show-price') === 1,
+                showMerchant: this.$container.data('show-merchant') === 1,
+                newTab: this.$container.data('new-tab') === 1,
+                debounce: this.$container.data('debounce') || 500,
+                liveSearch: this.$container.data('live-search') === 1,
+                sort: this.$container.data('sort') || 'cpc_desc',
+                merchantFilter: this.$container.data('merchant-filter') || '',
+                showInitial: this.$container.data('show-initial') === 1,
+                showReset: this.$container.data('show-reset') === 1,
+                hasInitial: this.$container.data('has-initial') === 1,
+            };
+
+            this.debounceTimer = null;
+            this.currentRequest = null;
+            this.lastQuery = '';
+            this.isShowingResults = false;
+
+            this.init();
+        }
+
+        init() {
+            // Form Submit
+            this.$form.on('submit', (e) => {
+                e.preventDefault();
+                this.search();
+            });
+
+            // Live-Suche
+            if (this.settings.liveSearch) {
+                this.$input.on('input', () => {
+                    clearTimeout(this.debounceTimer);
+                    
+                    const query = this.$input.val().trim();
+                    
+                    // Bei leerem Input zurück zu Initial-Produkten
+                    if (query.length === 0 && this.isShowingResults) {
+                        this.resetToInitial();
+                        return;
+                    }
+                    
+                    this.debounceTimer = setTimeout(() => {
+                        this.search();
+                    }, this.settings.debounce);
+                });
+            }
+
+            // Enter-Taste
+            this.$input.on('keypress', (e) => {
+                if (e.which === 13) {
+                    e.preventDefault();
+                    clearTimeout(this.debounceTimer);
+                    this.search();
+                }
+            });
+
+            // Reset-Button
+            this.$resetButton.on('click', () => {
+                this.resetToInitial();
+            });
+
+            // ESC-Taste zum Zurücksetzen
+            this.$input.on('keydown', (e) => {
+                if (e.which === 27 && this.isShowingResults) { // ESC
+                    this.resetToInitial();
+                }
+            });
+        }
+
+        search() {
+            const query = this.$input.val().trim();
+
+            // Validierung
+            if (query.length < this.settings.minChars) {
+                if (query.length > 0) {
+                    this.showStatus(
+                        yadoreSearch.i18n.min_chars.replace('%d', this.settings.minChars),
+                        'info'
+                    );
+                } else if (this.isShowingResults) {
+                    this.resetToInitial();
+                }
+                return;
+            }
+
+            // Gleiche Suche nicht wiederholen
+            if (query === this.lastQuery && this.isShowingResults) {
+                return;
+            }
+            this.lastQuery = query;
+
+            // Vorherige Anfrage abbrechen
+            if (this.currentRequest) {
+                this.currentRequest.abort();
+            }
+
+            this.setLoading(true);
+            this.showStatus(yadoreSearch.i18n.searching, 'loading');
+
+            this.currentRequest = $.ajax({
+                url: yadoreSearch.ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'yadore_product_search',
+                    nonce: yadoreSearch.nonce,
+                    query: query,
+                    network: this.settings.network,
+                    max_results: this.settings.maxResults,
+                    sort: this.settings.sort,
+                    merchant_filter: this.settings.merchantFilter,
+                    show_price: this.settings.showPrice ? '1' : '0',
+                    show_merchant: this.settings.showMerchant ? '1' : '0',
+                    new_tab: this.settings.newTab ? '1' : '0',
+                },
+                success: (response) => {
+                    this.setLoading(false);
+                    
+                    if (response.success && response.data.products.length > 0) {
+                        this.renderResults(response.data);
+                    } else {
+                        this.showStatus(yadoreSearch.i18n.no_results, 'empty');
+                        // Initial-Produkte ausblenden, leere Ergebnisse zeigen
+                        this.$initialProducts.slideUp(200);
+                        this.$results.hide();
+                        this.isShowingResults = true;
+                    }
+                },
+                error: (xhr, status) => {
+                    this.setLoading(false);
+                    
+                    if (status !== 'abort') {
+                        this.showStatus(yadoreSearch.i18n.error, 'error');
+                    }
+                }
+            });
+        }
+
+        setLoading(isLoading) {
+            this.$button.prop('disabled', isLoading);
+            this.$buttonText.toggle(!isLoading);
+            this.$spinner.toggle(isLoading);
+            this.$container.toggleClass('yadore-loading', isLoading);
+        }
+
+        showStatus(message, type) {
+            this.$status
+                .removeClass('yadore-status-loading yadore-status-error yadore-status-empty yadore-status-info')
+                .addClass('yadore-status-' + type)
+                .html(message)
+                .show();
+        }
+
+        renderResults(data) {
+            this.$status.hide();
+            this.isShowingResults = true;
+            
+            // Initial-Produkte ausblenden
+            this.$initialProducts.slideUp(200);
+            
+            // Header aktualisieren
+            this.$resultsCount.text(data.total + ' Ergebnis' + (data.total !== 1 ? 'se' : ''));
+            this.$resultsQuery.text(yadoreSearch.i18n.results_for + ' "' + data.query + '"');
+
+            // Grid leeren und neu befüllen
+            this.$resultsGrid.empty();
+
+            data.products.forEach((product) => {
+                this.$resultsGrid.append(this.createProductCard(product));
+            });
+
+            // Reset-Button nur anzeigen wenn Initial-Produkte vorhanden
+            if (this.settings.hasInitial && this.settings.showReset) {
+                this.$resetButton.show();
+            }
+
+            this.$results.slideDown(300);
+
+            // Scroll zu Ergebnissen
+            const containerTop = this.$container.offset().top;
+            if (containerTop < $(window).scrollTop() || containerTop > $(window).scrollTop() + $(window).height()) {
+                $('html, body').animate({
+                    scrollTop: containerTop - 20
+                }, 300);
+            }
+        }
+
+        resetToInitial() {
+            this.lastQuery = '';
+            this.isShowingResults = false;
+            this.$input.val('');
+            this.$status.hide();
+            
+            // Such-Ergebnisse ausblenden
+            this.$results.slideUp(200, () => {
+                this.$resultsGrid.empty();
+            });
+            
+            // Initial-Produkte wieder einblenden
+            if (this.settings.hasInitial) {
+                this.$initialProducts.slideDown(300);
+            }
+
+            // Focus zurück auf Input
+            this.$input.focus();
+        }
+
+        createProductCard(product) {
+            const target = product.new_tab ? ' target="_blank" rel="noopener noreferrer"' : '';
+            
+            let imageHtml = '';
+            if (product.image) {
+                imageHtml = `
+                    <div class="yadore-product-image">
+                        <img src="${this.escapeHtml(product.image)}" 
+                             alt="${this.escapeHtml(product.title)}" 
+                             loading="lazy"
+                             onerror="this.parentElement.classList.add('yadore-image-error')">
+                    </div>
+                `;
+            } else {
+                imageHtml = `
+                    <div class="yadore-product-image yadore-no-image">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                        </svg>
+                    </div>
+                `;
+            }
+
+            let merchantHtml = '';
+            if (product.merchant) {
+                merchantHtml = `<div class="yadore-product-merchant">${this.escapeHtml(product.merchant)}</div>`;
+            }
+
+            let priceHtml = '';
+            if (product.price) {
+                priceHtml = `<div class="yadore-product-price">${this.escapeHtml(product.price)}</div>`;
+            }
+
+            // Source Badge
+            let sourceBadge = '';
+            if (product.source) {
+                sourceBadge = `<span class="yadore-product-source yadore-source-${this.escapeHtml(product.source)}"></span>`;
+            }
+
+            return `
+                <div class="yadore-product-card" data-product-id="${this.escapeHtml(product.id)}">
+                    <a href="${this.escapeHtml(product.url)}"${target} class="yadore-product-link">
+                        ${sourceBadge}
+                        ${imageHtml}
+                        <div class="yadore-product-content">
+                            <h4 class="yadore-product-title">${this.escapeHtml(product.title)}</h4>
+                            ${merchantHtml}
+                            ${priceHtml}
+                            <span class="yadore-product-cta">${yadoreSearch.i18n.view_offer} →</span>
+                        </div>
+                    </a>
+                </div>
+            `;
+        }
+
+        escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    }
+
+    // Initialisierung
+    $(document).ready(function() {
+        $('.yadore-search-container').each(function() {
+            new YadoreProductSearch(this);
+        });
+    });
+
+})(jQuery);
  
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\docs\openapi.yaml 
  
@@ -5324,6 +6319,15 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
 /**
  * Cache Handler - Redis detection and caching logic
  * PHP 8.3+ compatible
+ * 
+ * @package Yadore_Amazon_API
+ * @since 1.6.0
+ * 
+ * KORRIGIERT:
+ * - Robustes ping() Handling für alle PHP-Redis Versionen
+ * - Zusätzliche Exception-Behandlung für auth() und select()
+ * - Sichere Typ-Prüfung für ping() Rückgabewerte
+ * - Timeout-Handling verbessert
  */
 
 declare(strict_types=1);
@@ -5338,6 +6342,16 @@ final class YAA_Cache_Handler {
     private ?\Redis $redis_client = null;
     private bool $using_object_cache = false;
     private ?object $predis_client = null;
+    
+    /**
+     * Redis Ping Timeout in Sekunden
+     */
+    private const REDIS_TIMEOUT = 2.0;
+    
+    /**
+     * Redis Read Timeout in Sekunden
+     */
+    private const REDIS_READ_TIMEOUT = 2.0;
     
     public function __construct() {
         $this->detect_redis();
@@ -5389,60 +6403,169 @@ final class YAA_Cache_Handler {
             try {
                 $redis = new \Redis();
                 
-                // PHP 8.3+ compatible connection
-                $connected = @$redis->connect($host, $port, 2.0);
+                // PHP 8.3+ compatible connection mit Timeout
+                $connected = @$redis->connect(
+                    $host, 
+                    $port, 
+                    self::REDIS_TIMEOUT,
+                    null,
+                    0,
+                    self::REDIS_READ_TIMEOUT
+                );
                 
-                if ($connected) {
-                    if ($password !== '') {
-                        $redis->auth($password);
-                    }
-                    if ($database > 0) {
-                        $redis->select($database);
-                    }
-                    
-                    // Test connection
-                    $pong = $redis->ping();
-                    if ($pong === true || $pong === '+PONG' || $pong === 'PONG') {
-                        $this->redis_client = $redis;
-                        $this->redis_available = true;
-                        return;
+                if (!$connected) {
+                    throw new \RedisException('Connection failed');
+                }
+                
+                // Authentifizierung (kann Exception werfen)
+                if ($password !== '') {
+                    $auth_result = $redis->auth($password);
+                    if ($auth_result !== true) {
+                        throw new \RedisException('Authentication failed');
                     }
                 }
-            } catch (\RedisException|\Exception $e) {
-                error_log('YAA Redis Error: ' . $e->getMessage());
+                
+                // Datenbank auswählen (kann Exception werfen)
+                if ($database > 0) {
+                    $select_result = $redis->select($database);
+                    if ($select_result !== true) {
+                        throw new \RedisException('Database selection failed');
+                    }
+                }
+                
+                // Test connection mit robustem ping() Handling
+                if ($this->verify_redis_connection($redis)) {
+                    $this->redis_client = $redis;
+                    $this->redis_available = true;
+                    return;
+                }
+                
+                // Verbindung fehlgeschlagen - aufräumen
+                $this->safe_redis_close($redis);
+                
+            } catch (\RedisException $e) {
+                error_log('YAA Redis Error (RedisException): ' . $e->getMessage());
+            } catch (\Exception $e) {
+                error_log('YAA Redis Error (Exception): ' . $e->getMessage());
+            } catch (\Throwable $e) {
+                // PHP 8.x kann auch Error werfen
+                error_log('YAA Redis Error (Throwable): ' . $e->getMessage());
             }
         }
         
         // Try Predis (if available)
         if (!$this->redis_available && class_exists('Predis\Client')) {
-            try {
-                $config = [
-                    'scheme' => 'tcp',
-                    'host'   => $host,
-                    'port'   => $port,
-                ];
-                
-                if ($password !== '') {
-                    $config['password'] = $password;
+            $this->try_predis_connection($host, $port, $password, $database);
+        }
+    }
+    
+    /**
+     * Verify Redis connection with robust ping handling
+     * 
+     * Handles verschiedene Rückgabetypen von ping():
+     * - PHP-Redis 4.x: string "+PONG" oder "PONG"
+     * - PHP-Redis 5.x: string "+PONG", "PONG" oder bool true
+     * - PHP-Redis 6.x: bool true oder Redis (bei Pipelining)
+     * 
+     * @param \Redis $redis Redis instance
+     * @return bool True wenn Verbindung verifiziert
+     */
+    private function verify_redis_connection(\Redis $redis): bool {
+        try {
+            // Suppress warnings für den Fall dass ping() fehlschlägt
+            $pong = @$redis->ping();
+            
+            // Typ-sichere Prüfung aller möglichen Rückgabewerte
+            if ($pong === true) {
+                return true;
+            }
+            
+            if (is_string($pong)) {
+                $pong_upper = strtoupper(trim($pong, '+ '));
+                if ($pong_upper === 'PONG') {
+                    return true;
                 }
-                if ($database > 0) {
-                    $config['database'] = $database;
-                }
-                
-                /** @var \Predis\Client $predis */
-                $predis = new \Predis\Client($config);
-                $predis->ping();
-                
+            }
+            
+            // PHP-Redis 6.x kann bei bestimmten Konfigurationen 
+            // das Redis-Objekt selbst zurückgeben (Fluent Interface)
+            if ($pong instanceof \Redis) {
+                return true;
+            }
+            
+            // Fallback: Wenn wir hier ankommen, war ping() nicht erfolgreich
+            error_log('YAA Redis: Unexpected ping response type: ' . gettype($pong));
+            return false;
+            
+        } catch (\RedisException $e) {
+            error_log('YAA Redis ping() Exception: ' . $e->getMessage());
+            return false;
+        } catch (\Throwable $e) {
+            error_log('YAA Redis ping() Error: ' . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Safely close Redis connection
+     * 
+     * @param \Redis $redis Redis instance
+     */
+    private function safe_redis_close(\Redis $redis): void {
+        try {
+            @$redis->close();
+        } catch (\Throwable $e) {
+            // Ignore close errors
+        }
+    }
+    
+    /**
+     * Try Predis connection
+     * 
+     * @param string $host Redis host
+     * @param int $port Redis port
+     * @param string $password Redis password
+     * @param int $database Redis database
+     */
+    private function try_predis_connection(string $host, int $port, string $password, int $database): void {
+        try {
+            $config = [
+                'scheme'  => 'tcp',
+                'host'    => $host,
+                'port'    => $port,
+                'timeout' => self::REDIS_TIMEOUT,
+            ];
+            
+            if ($password !== '') {
+                $config['password'] = $password;
+            }
+            if ($database > 0) {
+                $config['database'] = $database;
+            }
+            
+            /** @var \Predis\Client $predis */
+            $predis = new \Predis\Client($config);
+            
+            // Predis ping() wirft Exception bei Fehlern
+            $pong = $predis->ping();
+            
+            // Predis gibt "PONG" als String zurück
+            if ($pong === 'PONG' || $pong === true) {
                 $this->predis_client = $predis;
                 $this->redis_available = true;
-            } catch (\Exception $e) {
-                error_log('YAA Predis Error: ' . $e->getMessage());
             }
+            
+        } catch (\Exception $e) {
+            error_log('YAA Predis Error: ' . $e->getMessage());
         }
     }
     
     /**
      * Get Redis configuration value
+     * 
+     * @param string $key Configuration key
+     * @param mixed $default Default value
+     * @return mixed Configuration value
      */
     private function get_redis_config(string $key, mixed $default): mixed {
         // Constants take priority
@@ -5469,6 +6592,9 @@ final class YAA_Cache_Handler {
     
     /**
      * Get cached data
+     * 
+     * @param string $key Cache key
+     * @return mixed Cached data or false
      */
     public function get(string $key): mixed {
         $prefixed_key = 'yaa_' . $key;
@@ -5481,11 +6607,14 @@ final class YAA_Cache_Handler {
                 }
             } elseif ($this->redis_client instanceof \Redis) {
                 try {
-                    $data = $this->redis_client->get($prefixed_key);
+                    $data = @$this->redis_client->get($prefixed_key);
                     if ($data !== false && $data !== null) {
                         return maybe_unserialize($data);
                     }
-                } catch (\RedisException|\Exception $e) {
+                } catch (\RedisException $e) {
+                    error_log('YAA Redis GET Error (RedisException): ' . $e->getMessage());
+                    $this->handle_connection_loss();
+                } catch (\Throwable $e) {
                     error_log('YAA Redis GET Error: ' . $e->getMessage());
                 }
             } elseif ($this->predis_client !== null) {
@@ -5505,6 +6634,11 @@ final class YAA_Cache_Handler {
     
     /**
      * Set cached data
+     * 
+     * @param string $key Cache key
+     * @param mixed $data Data to cache
+     * @param int|null $expiration Expiration in seconds
+     * @return bool Success
      */
     public function set(string $key, mixed $data, ?int $expiration = null): bool {
         $expiration ??= yaa_get_cache_time();
@@ -5516,8 +6650,11 @@ final class YAA_Cache_Handler {
             } elseif ($this->redis_client instanceof \Redis) {
                 try {
                     $serialized = maybe_serialize($data);
-                    $this->redis_client->setex($prefixed_key, $expiration, $serialized);
-                } catch (\RedisException|\Exception $e) {
+                    @$this->redis_client->setex($prefixed_key, $expiration, $serialized);
+                } catch (\RedisException $e) {
+                    error_log('YAA Redis SET Error (RedisException): ' . $e->getMessage());
+                    $this->handle_connection_loss();
+                } catch (\Throwable $e) {
                     error_log('YAA Redis SET Error: ' . $e->getMessage());
                 }
             } elseif ($this->predis_client !== null) {
@@ -5535,6 +6672,8 @@ final class YAA_Cache_Handler {
     
     /**
      * Delete cached data
+     * 
+     * @param string $key Cache key
      */
     public function delete(string $key): void {
         $prefixed_key = 'yaa_' . $key;
@@ -5544,8 +6683,11 @@ final class YAA_Cache_Handler {
                 wp_cache_delete($prefixed_key, 'yaa');
             } elseif ($this->redis_client instanceof \Redis) {
                 try {
-                    $this->redis_client->del($prefixed_key);
-                } catch (\RedisException|\Exception $e) {
+                    @$this->redis_client->del($prefixed_key);
+                } catch (\RedisException $e) {
+                    error_log('YAA Redis DEL Error (RedisException): ' . $e->getMessage());
+                    $this->handle_connection_loss();
+                } catch (\Throwable $e) {
                     error_log('YAA Redis DEL Error: ' . $e->getMessage());
                 }
             } elseif ($this->predis_client !== null) {
@@ -5561,7 +6703,20 @@ final class YAA_Cache_Handler {
     }
     
     /**
+     * Handle Redis connection loss
+     * 
+     * Bei Verbindungsverlust: Fallback auf Transients
+     */
+    private function handle_connection_loss(): void {
+        $this->redis_available = false;
+        $this->redis_client = null;
+        error_log('YAA: Redis connection lost, falling back to transients');
+    }
+    
+    /**
      * Clear all YAA cache entries
+     * 
+     * @return bool Success
      */
     public function clear_all(): bool {
         global $wpdb;
@@ -5570,17 +6725,19 @@ final class YAA_Cache_Handler {
         if ($this->redis_available && !$this->using_object_cache) {
             try {
                 if ($this->redis_client instanceof \Redis) {
-                    $keys = $this->redis_client->keys('yaa_*');
-                    if (!empty($keys)) {
-                        $this->redis_client->del($keys);
+                    $keys = @$this->redis_client->keys('yaa_*');
+                    if (!empty($keys) && is_array($keys)) {
+                        @$this->redis_client->del($keys);
                     }
                 } elseif ($this->predis_client !== null) {
                     $keys = $this->predis_client->keys('yaa_*');
-                    if (!empty($keys)) {
+                    if (!empty($keys) && is_array($keys)) {
                         $this->predis_client->del($keys);
                     }
                 }
-            } catch (\Exception $e) {
+            } catch (\RedisException $e) {
+                error_log('YAA Redis CLEAR Error (RedisException): ' . $e->getMessage());
+            } catch (\Throwable $e) {
                 error_log('YAA Redis CLEAR Error: ' . $e->getMessage());
             }
         }
@@ -5590,9 +6747,19 @@ final class YAA_Cache_Handler {
             wp_cache_flush_group('yaa');
         }
         
-        // Clear transients
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_yaa_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_yaa_%'");
+        // Clear transients (escaped query)
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+                '_transient_yaa_%'
+            )
+        );
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+                '_transient_timeout_yaa_%'
+            )
+        );
         
         return true;
     }
@@ -5600,7 +6767,7 @@ final class YAA_Cache_Handler {
     /**
      * Get detailed cache status
      * 
-     * @return array<string, mixed>
+     * @return array<string, mixed> Cache status
      */
     public function get_status(): array {
         $status = [
@@ -5608,7 +6775,13 @@ final class YAA_Cache_Handler {
             'using_object_cache' => $this->using_object_cache,
             'cache_backend'      => 'WordPress Transients',
             'redis_info'         => null,
+            'php_redis_version'  => null,
         ];
+        
+        // PHP Redis Extension Version
+        if (extension_loaded('redis')) {
+            $status['php_redis_version'] = phpversion('redis') ?: 'Unknown';
+        }
         
         if ($this->redis_available) {
             $status['cache_backend'] = $this->using_object_cache 
@@ -5617,14 +6790,19 @@ final class YAA_Cache_Handler {
             
             if ($this->redis_client instanceof \Redis) {
                 try {
-                    $info = $this->redis_client->info();
-                    $status['redis_info'] = [
-                        'version'           => $info['redis_version'] ?? 'Unknown',
-                        'used_memory'       => $info['used_memory_human'] ?? 'Unknown',
-                        'connected_clients' => $info['connected_clients'] ?? 'Unknown',
-                    ];
-                } catch (\Exception $e) {
-                    // Ignore
+                    $info = @$this->redis_client->info();
+                    if (is_array($info)) {
+                        $status['redis_info'] = [
+                            'version'           => $info['redis_version'] ?? 'Unknown',
+                            'used_memory'       => $info['used_memory_human'] ?? 'Unknown',
+                            'connected_clients' => $info['connected_clients'] ?? 'Unknown',
+                            'uptime_days'       => isset($info['uptime_in_days']) 
+                                ? (int) $info['uptime_in_days'] 
+                                : null,
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    $status['redis_info'] = ['error' => $e->getMessage()];
                 }
             }
         }
@@ -5635,9 +6813,14 @@ final class YAA_Cache_Handler {
     /**
      * Test Redis connection with custom settings
      * 
-     * @return array{success: bool, message: string}
+     * @param string $host Redis host
+     * @param int $port Redis port
+     * @param string $password Redis password
+     * @param int $database Redis database
+     * @return array{success: bool, message: string, details?: array<string, mixed>}
      */
     public function test_connection(string $host, int $port, string $password = '', int $database = 0): array {
+        // Check extension
         if (!extension_loaded('redis') || !class_exists('Redis')) {
             return [
                 'success' => false,
@@ -5645,49 +6828,170 @@ final class YAA_Cache_Handler {
             ];
         }
         
+        $redis = null;
+        
         try {
             $redis = new \Redis();
             
-            $connected = @$redis->connect($host, $port, 2.0);
+            // Connection mit Timeout
+            $connected = @$redis->connect(
+                $host, 
+                $port, 
+                self::REDIS_TIMEOUT,
+                null,
+                0,
+                self::REDIS_READ_TIMEOUT
+            );
             
             if (!$connected) {
                 return [
                     'success' => false,
-                    'message' => __('Verbindung zu Redis fehlgeschlagen.', 'yadore-amazon-api'),
+                    'message' => sprintf(
+                        __('Verbindung zu Redis fehlgeschlagen (%s:%d).', 'yadore-amazon-api'),
+                        $host,
+                        $port
+                    ),
                 ];
             }
             
+            // Authentication
             if ($password !== '') {
-                $auth_result = $redis->auth($password);
-                if (!$auth_result) {
+                try {
+                    $auth_result = @$redis->auth($password);
+                    if ($auth_result !== true) {
+                        $this->safe_redis_close($redis);
+                        return [
+                            'success' => false,
+                            'message' => __('Redis-Authentifizierung fehlgeschlagen.', 'yadore-amazon-api'),
+                        ];
+                    }
+                } catch (\RedisException $e) {
+                    $this->safe_redis_close($redis);
                     return [
                         'success' => false,
-                        'message' => __('Redis-Authentifizierung fehlgeschlagen.', 'yadore-amazon-api'),
+                        'message' => __('Redis-Authentifizierung fehlgeschlagen: ', 'yadore-amazon-api') . $e->getMessage(),
                     ];
                 }
             }
             
+            // Database selection
             if ($database > 0) {
-                $redis->select($database);
+                try {
+                    $select_result = @$redis->select($database);
+                    if ($select_result !== true) {
+                        $this->safe_redis_close($redis);
+                        return [
+                            'success' => false,
+                            'message' => sprintf(
+                                __('Redis-Datenbank %d konnte nicht ausgewählt werden.', 'yadore-amazon-api'),
+                                $database
+                            ),
+                        ];
+                    }
+                } catch (\RedisException $e) {
+                    $this->safe_redis_close($redis);
+                    return [
+                        'success' => false,
+                        'message' => __('Redis-Datenbank Auswahl fehlgeschlagen: ', 'yadore-amazon-api') . $e->getMessage(),
+                    ];
+                }
             }
             
-            $pong = $redis->ping();
-            $redis->close();
+            // Ping Test mit robustem Handling
+            if (!$this->verify_redis_connection($redis)) {
+                $this->safe_redis_close($redis);
+                return [
+                    'success' => false,
+                    'message' => __('Redis-Ping fehlgeschlagen.', 'yadore-amazon-api'),
+                ];
+            }
             
-            $success = $pong === true || $pong === '+PONG' || $pong === 'PONG';
+            // Hole Server-Info für Details
+            $details = [];
+            try {
+                $info = @$redis->info();
+                if (is_array($info)) {
+                    $details = [
+                        'redis_version' => $info['redis_version'] ?? 'Unknown',
+                        'os'            => $info['os'] ?? 'Unknown',
+                        'used_memory'   => $info['used_memory_human'] ?? 'Unknown',
+                    ];
+                }
+            } catch (\Throwable $e) {
+                // Info ist optional, ignoriere Fehler
+            }
+            
+            $this->safe_redis_close($redis);
             
             return [
-                'success' => $success,
-                'message' => $success 
-                    ? __('Redis-Verbindung erfolgreich!', 'yadore-amazon-api')
-                    : __('Redis-Ping fehlgeschlagen.', 'yadore-amazon-api'),
+                'success' => true,
+                'message' => __('Redis-Verbindung erfolgreich!', 'yadore-amazon-api'),
+                'details' => $details,
             ];
-        } catch (\RedisException|\Exception $e) {
+            
+        } catch (\RedisException $e) {
+            if ($redis instanceof \Redis) {
+                $this->safe_redis_close($redis);
+            }
+            return [
+                'success' => false,
+                'message' => 'RedisException: ' . $e->getMessage(),
+            ];
+        } catch (\Throwable $e) {
+            if ($redis instanceof \Redis) {
+                $this->safe_redis_close($redis);
+            }
             return [
                 'success' => false,
                 'message' => 'Fehler: ' . $e->getMessage(),
             ];
         }
+    }
+    
+    /**
+     * Check if Redis connection is still alive
+     * 
+     * @return bool True if connected
+     */
+    public function is_connected(): bool {
+        if (!$this->redis_available) {
+            return false;
+        }
+        
+        if ($this->using_object_cache) {
+            return true; // Object cache handles this
+        }
+        
+        if ($this->redis_client instanceof \Redis) {
+            return $this->verify_redis_connection($this->redis_client);
+        }
+        
+        if ($this->predis_client !== null) {
+            try {
+                $pong = $this->predis_client->ping();
+                return $pong === 'PONG' || $pong === true;
+            } catch (\Exception $e) {
+                return false;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Reconnect to Redis if connection was lost
+     * 
+     * @return bool Success
+     */
+    public function reconnect(): bool {
+        $this->redis_available = false;
+        $this->redis_client = null;
+        $this->predis_client = null;
+        $this->using_object_cache = false;
+        
+        $this->detect_redis();
+        
+        return $this->redis_available;
     }
 }
  
@@ -8723,13 +10027,697 @@ final class YAA_Merchant_Filter {
     }
 }
  
+Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-search-shortcode.php 
+ 
+<?php
+/**
+ * Interaktive Produktsuche für Besucher
+ * Mit Initial-Produkten vor der Suche
+ * 
+ * @package Yadore_Amazon_API
+ * @since 1.6.0
+ * 
+ * KORRIGIERT:
+ * - Klassenreferenzen zu YAA_* geändert
+ * - Constructor auf public geändert (für Dependency Injection)
+ * - YAA_URL zu YAA_PLUGIN_URL korrigiert
+ * - Singleton-Initialisierung am Ende entfernt (wird in Hauptdatei instanziiert)
+ */
+
+declare(strict_types=1);
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class YAA_Search_Shortcode {
+
+    /**
+     * Yadore API instance
+     */
+    private YAA_Yadore_API $yadore_api;
+
+    /**
+     * Amazon PA-API instance
+     */
+    private YAA_Amazon_PAAPI $amazon_api;
+
+    /**
+     * Shortcode wurde bereits gerendert (für Asset-Loading)
+     */
+    private static bool $shortcode_rendered = false;
+
+    /**
+     * Standard-Einstellungen
+     * 
+     * @var array<string, mixed>
+     */
+    private array $defaults = [
+        // Suchformular
+        'placeholder'       => 'Produkt suchen...',
+        'button_text'       => 'Suchen',
+        'min_chars'         => 3,
+        'debounce'          => 500,
+        'live_search'       => true,
+        
+        // Initial-Produkte
+        'show_initial'      => true,
+        'initial_keyword'   => '',
+        'initial_keywords'  => '',
+        'initial_count'     => 6,
+        'initial_title'     => 'Empfohlene Produkte',
+        'initial_source'    => 'yadore',
+        
+        // Anzeige-Optionen
+        'network'           => '',
+        'max_results'       => 12,
+        'columns'           => 3,
+        'show_price'        => true,
+        'show_merchant'     => true,
+        'new_tab'           => true,
+        'sort'              => 'cpc_desc',
+        'merchant_filter'   => '',
+        
+        // UI-Optionen
+        'show_reset'        => true,
+        'hide_form'         => false,
+    ];
+
+    /**
+     * Constructor - akzeptiert Dependency Injection
+     * 
+     * @param YAA_Yadore_API $yadore_api Yadore API instance
+     * @param YAA_Amazon_PAAPI $amazon_api Amazon API instance
+     */
+    public function __construct(YAA_Yadore_API $yadore_api, YAA_Amazon_PAAPI $amazon_api) {
+        $this->yadore_api = $yadore_api;
+        $this->amazon_api = $amazon_api;
+        
+        add_shortcode('yadore_search', [$this, 'render_shortcode']);
+        add_action('wp_ajax_yadore_product_search', [$this, 'ajax_search']);
+        add_action('wp_ajax_nopriv_yadore_product_search', [$this, 'ajax_search']);
+        add_action('wp_enqueue_scripts', [$this, 'register_assets']);
+    }
+
+    /**
+     * Assets registrieren
+     */
+    public function register_assets(): void {
+        wp_register_style(
+            'yadore-search',
+            YAA_PLUGIN_URL . 'assets/css/yaa-search.css',
+            [],
+            YAA_VERSION
+        );
+
+        wp_register_script(
+            'yadore-search',
+            YAA_PLUGIN_URL . 'assets/js/yaa-search.js',
+            ['jquery'],
+            YAA_VERSION,
+            true
+        );
+
+        wp_localize_script('yadore-search', 'yadoreSearch', [
+            'ajaxurl'   => admin_url('admin-ajax.php'),
+            'nonce'     => wp_create_nonce('yadore_search_nonce'),
+            'i18n'      => [
+                'searching'      => __('Suche läuft...', 'yadore-amazon-api'),
+                'no_results'     => __('Keine Produkte gefunden.', 'yadore-amazon-api'),
+                'error'          => __('Fehler bei der Suche. Bitte erneut versuchen.', 'yadore-amazon-api'),
+                'min_chars'      => __('Bitte mindestens %d Zeichen eingeben.', 'yadore-amazon-api'),
+                'view_offer'     => __('Zum Angebot', 'yadore-amazon-api'),
+                'reset'          => __('← Zurück zu Empfehlungen', 'yadore-amazon-api'),
+                'results_for'    => __('Ergebnisse für', 'yadore-amazon-api'),
+            ],
+        ]);
+    }
+
+    /**
+     * Shortcode rendern
+     * 
+     * @param array<string, mixed>|string $atts Shortcode-Attribute
+     * @return string HTML-Output
+     */
+    public function render_shortcode(array|string $atts = []): string {
+        $atts = shortcode_atts($this->defaults, $atts, 'yadore_search');
+
+        // Booleans normalisieren
+        $atts['show_initial'] = filter_var($atts['show_initial'], FILTER_VALIDATE_BOOLEAN);
+        $atts['live_search'] = filter_var($atts['live_search'], FILTER_VALIDATE_BOOLEAN);
+        $atts['show_price'] = filter_var($atts['show_price'], FILTER_VALIDATE_BOOLEAN);
+        $atts['show_merchant'] = filter_var($atts['show_merchant'], FILTER_VALIDATE_BOOLEAN);
+        $atts['new_tab'] = filter_var($atts['new_tab'], FILTER_VALIDATE_BOOLEAN);
+        $atts['show_reset'] = filter_var($atts['show_reset'], FILTER_VALIDATE_BOOLEAN);
+        $atts['hide_form'] = filter_var($atts['hide_form'], FILTER_VALIDATE_BOOLEAN);
+
+        // Assets nur einmal laden
+        if (!self::$shortcode_rendered) {
+            wp_enqueue_style('yadore-search');
+            wp_enqueue_script('yadore-search');
+            self::$shortcode_rendered = true;
+        }
+
+        // Unique ID für mehrere Instanzen auf einer Seite
+        $instance_id = 'yadore-search-' . wp_unique_id();
+
+        // Initial-Produkte laden (serverseitig)
+        $initial_products = [];
+        $initial_html = '';
+        
+        if ($atts['show_initial']) {
+            $initial_products = $this->get_initial_products($atts);
+            $initial_html = $this->render_product_grid($initial_products, $atts);
+        }
+
+        // Data-Attribute für JS
+        $data_attrs = [
+            'data-network'         => esc_attr((string) $atts['network']),
+            'data-max-results'     => (int) $atts['max_results'],
+            'data-columns'         => (int) $atts['columns'],
+            'data-min-chars'       => (int) $atts['min_chars'],
+            'data-show-price'      => $atts['show_price'] ? '1' : '0',
+            'data-show-merchant'   => $atts['show_merchant'] ? '1' : '0',
+            'data-new-tab'         => $atts['new_tab'] ? '1' : '0',
+            'data-debounce'        => (int) $atts['debounce'],
+            'data-live-search'     => $atts['live_search'] ? '1' : '0',
+            'data-sort'            => esc_attr((string) $atts['sort']),
+            'data-merchant-filter' => esc_attr((string) $atts['merchant_filter']),
+            'data-show-initial'    => $atts['show_initial'] ? '1' : '0',
+            'data-show-reset'      => $atts['show_reset'] ? '1' : '0',
+            'data-has-initial'     => !empty($initial_products) ? '1' : '0',
+        ];
+
+        $data_string = '';
+        foreach ($data_attrs as $key => $value) {
+            $data_string .= sprintf(' %s="%s"', $key, $value);
+        }
+
+        ob_start();
+        ?>
+        <div id="<?php echo esc_attr($instance_id); ?>" class="yadore-search-container"<?php echo $data_string; ?>>
+            
+            <?php if (!$atts['hide_form']): ?>
+            <!-- Suchformular -->
+            <form class="yadore-search-form" autocomplete="off">
+                <div class="yadore-search-input-wrapper">
+                    <input 
+                        type="text" 
+                        class="yadore-search-input" 
+                        placeholder="<?php echo esc_attr((string) $atts['placeholder']); ?>"
+                        aria-label="<?php echo esc_attr((string) $atts['placeholder']); ?>"
+                    >
+                    <button type="submit" class="yadore-search-button">
+                        <span class="yadore-search-button-text"><?php echo esc_html((string) $atts['button_text']); ?></span>
+                        <span class="yadore-search-spinner" style="display: none;">
+                            <svg class="yadore-spinner-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-dasharray="31.4 31.4">
+                                    <animateTransform attributeName="transform" type="rotate" dur="1s" from="0 12 12" to="360 12 12" repeatCount="indefinite"/>
+                                </circle>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </form>
+            <?php endif; ?>
+
+            <!-- Status-Meldungen -->
+            <div class="yadore-search-status" style="display: none;"></div>
+
+            <!-- Initial-Produkte (Server-gerendert) -->
+            <?php if ($atts['show_initial'] && !empty($initial_products)): ?>
+            <div class="yadore-initial-products">
+                <div class="yadore-initial-header">
+                    <h3 class="yadore-initial-title"><?php echo esc_html((string) $atts['initial_title']); ?></h3>
+                </div>
+                <div class="yadore-search-results-grid yadore-columns-<?php echo (int) $atts['columns']; ?>">
+                    <?php echo $initial_html; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Such-Ergebnisse (wird via JS befüllt) -->
+            <div class="yadore-search-results" style="display: none;">
+                <div class="yadore-search-results-header">
+                    <?php if ($atts['show_reset']): ?>
+                    <button type="button" class="yadore-reset-button">
+                        <?php echo esc_html__('← Zurück zu Empfehlungen', 'yadore-amazon-api'); ?>
+                    </button>
+                    <?php endif; ?>
+                    <div class="yadore-search-results-info">
+                        <span class="yadore-search-results-count"></span>
+                        <span class="yadore-search-results-query"></span>
+                    </div>
+                </div>
+                <div class="yadore-search-results-grid yadore-columns-<?php echo (int) $atts['columns']; ?>"></div>
+            </div>
+
+        </div>
+        <?php
+        return ob_get_clean() ?: '';
+    }
+
+    /**
+     * Initial-Produkte laden
+     * 
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array<int, array<string, mixed>> Produkte
+     */
+    private function get_initial_products(array $atts): array {
+        $products = [];
+        $count = (int) $atts['initial_count'];
+        $source = (string) $atts['initial_source'];
+        
+        // Keywords verarbeiten
+        $keywords = [];
+        if (!empty($atts['initial_keywords'])) {
+            $keywords = array_map('trim', explode(',', (string) $atts['initial_keywords']));
+            $keywords = array_filter($keywords);
+        } elseif (!empty($atts['initial_keyword'])) {
+            $keywords = [trim((string) $atts['initial_keyword'])];
+        }
+
+        // Wenn keine Keywords, versuche Featured/Trending zu laden
+        if (empty($keywords)) {
+            $keywords = $this->get_default_keywords();
+        }
+
+        // Produkte von Yadore laden
+        if (in_array($source, ['yadore', 'both'], true)) {
+            $yadore_products = $this->fetch_yadore_products($keywords, $count, $atts);
+            $products = array_merge($products, $yadore_products);
+        }
+
+        // Produkte von Amazon laden
+        if (in_array($source, ['amazon', 'both'], true)) {
+            $remaining = $count - count($products);
+            if ($remaining > 0) {
+                $amazon_products = $this->fetch_amazon_products($keywords, $remaining, $atts);
+                $products = array_merge($products, $amazon_products);
+            }
+        }
+
+        // Auf gewünschte Anzahl begrenzen
+        return array_slice($products, 0, $count);
+    }
+
+    /**
+     * Default-Keywords für Initial-Produkte
+     * 
+     * @return array<string> Keywords
+     */
+    private function get_default_keywords(): array {
+        // Option 1: Aus Plugin-Einstellungen
+        $saved_keywords = get_option('yadore_featured_keywords', '');
+        if (!empty($saved_keywords) && is_string($saved_keywords)) {
+            return array_map('trim', explode(',', $saved_keywords));
+        }
+
+        // Option 2: Hardcoded Fallbacks (anpassbar)
+        return ['Bestseller', 'Angebote', 'Beliebt'];
+    }
+
+    /**
+     * Produkte von Yadore API laden
+     * 
+     * @param array<string> $keywords Suchbegriffe
+     * @param int $count Anzahl
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array<int, array<string, mixed>> Produkte
+     */
+    private function fetch_yadore_products(array $keywords, int $count, array $atts): array {
+        if (!$this->yadore_api->is_configured()) {
+            return [];
+        }
+
+        $products = [];
+        $per_keyword = max(1, (int) ceil($count / count($keywords)));
+
+        foreach ($keywords as $keyword) {
+            if (count($products) >= $count) {
+                break;
+            }
+
+            $api_params = [
+                'keyword' => $keyword,
+                'limit'   => $per_keyword,
+                'sort'    => (string) $atts['sort'],
+            ];
+
+            if (!empty($atts['network'])) {
+                $api_params['network'] = (string) $atts['network'];
+            }
+
+            if (!empty($atts['merchant_filter'])) {
+                $api_params['merchant_whitelist'] = (string) $atts['merchant_filter'];
+            }
+
+            $results = $this->yadore_api->fetch($api_params);
+
+            if (!is_wp_error($results) && !empty($results)) {
+                foreach ($results as $offer) {
+                    $products[] = $this->format_yadore_product($offer, $atts);
+                    if (count($products) >= $count) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $products;
+    }
+
+    /**
+     * Produkte von Amazon PA-API laden
+     * 
+     * @param array<string> $keywords Suchbegriffe
+     * @param int $count Anzahl
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array<int, array<string, mixed>> Produkte
+     */
+    private function fetch_amazon_products(array $keywords, int $count, array $atts): array {
+        if (!$this->amazon_api->is_configured()) {
+            return [];
+        }
+
+        $products = [];
+        $per_keyword = max(1, (int) ceil($count / count($keywords)));
+
+        foreach ($keywords as $keyword) {
+            if (count($products) >= $count) {
+                break;
+            }
+
+            $results = $this->amazon_api->search_items(
+                $keyword,
+                'All',
+                min($per_keyword, 10) // Amazon max 10 pro Request
+            );
+
+            if (!is_wp_error($results) && !empty($results)) {
+                foreach ($results as $item) {
+                    $products[] = $this->format_amazon_product($item, $atts);
+                    if (count($products) >= $count) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $products;
+    }
+
+    /**
+     * Yadore-Produkt formatieren
+     * 
+     * @param array<string, mixed> $offer API-Offer
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array<string, mixed> Formatiertes Produkt
+     */
+    private function format_yadore_product(array $offer, array $atts): array {
+        // Bild verarbeiten
+        $image_url = $offer['image']['url'] ?? '';
+        
+        // Lokale Bildverarbeitung wenn aktiviert
+        if (!empty($image_url) && yaa_get_option('enable_local_images', 'yes') === 'yes') {
+            $image_url = YAA_Image_Handler::process(
+                $image_url,
+                $offer['id'] ?? uniqid('ydr_'),
+                $offer['title'] ?? 'product',
+                'yadore'
+            );
+        }
+
+        // Fallback auf Shop-Logo
+        if (empty($image_url) && !empty($offer['merchant']['logo'])) {
+            $image_url = $offer['merchant']['logo'];
+        }
+
+        // Preis formatieren
+        $price_display = '';
+        if ($atts['show_price'] && !empty($offer['price']['amount'])) {
+            $currency = $offer['price']['currency'] ?? 'EUR';
+            $amount = (float) $offer['price']['amount'];
+            $price_display = number_format($amount, 2, ',', '.') . ' ' . $currency;
+        }
+
+        return [
+            'id'            => $offer['id'] ?? uniqid(),
+            'title'         => $offer['title'] ?? '',
+            'description'   => $this->truncate_text($offer['description'] ?? '', 120),
+            'price'         => $price_display,
+            'price_raw'     => $offer['price']['amount'] ?? 0,
+            'image'         => $image_url,
+            'url'           => $offer['url'] ?? '#',
+            'merchant'      => $atts['show_merchant'] ? ($offer['merchant']['name'] ?? '') : '',
+            'merchant_logo' => $offer['merchant']['logo'] ?? '',
+            'new_tab'       => (bool) $atts['new_tab'],
+            'source'        => 'yadore',
+        ];
+    }
+
+    /**
+     * Amazon-Produkt formatieren
+     * 
+     * @param array<string, mixed> $item Amazon-Item
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return array<string, mixed> Formatiertes Produkt
+     */
+    private function format_amazon_product(array $item, array $atts): array {
+        $image_url = $item['image']['url'] ?? '';
+        
+        // Lokale Bildverarbeitung wenn aktiviert
+        if (!empty($image_url) && yaa_get_option('enable_local_images', 'yes') === 'yes') {
+            $image_url = YAA_Image_Handler::process(
+                $image_url,
+                $item['asin'] ?? $item['id'] ?? uniqid('amz_'),
+                $item['title'] ?? 'product',
+                'amazon'
+            );
+        }
+
+        $price_display = '';
+        if ($atts['show_price'] && !empty($item['price']['display'])) {
+            $price_display = $item['price']['display'];
+        } elseif ($atts['show_price'] && !empty($item['price']['amount'])) {
+            $currency = $item['price']['currency'] ?? 'EUR';
+            $amount = (float) $item['price']['amount'];
+            $price_display = number_format($amount, 2, ',', '.') . ' ' . $currency;
+        }
+
+        return [
+            'id'            => $item['asin'] ?? $item['id'] ?? uniqid(),
+            'title'         => $item['title'] ?? '',
+            'description'   => $this->truncate_text($item['description'] ?? '', 120),
+            'price'         => $price_display,
+            'price_raw'     => $item['price']['amount'] ?? 0,
+            'image'         => $image_url,
+            'url'           => $item['url'] ?? '#',
+            'merchant'      => $atts['show_merchant'] ? 'Amazon' : '',
+            'merchant_logo' => '',
+            'new_tab'       => (bool) $atts['new_tab'],
+            'source'        => 'amazon',
+        ];
+    }
+
+    /**
+     * Produkt-Grid HTML rendern (für Initial-Produkte)
+     * 
+     * @param array<int, array<string, mixed>> $products Produkte
+     * @param array<string, mixed> $atts Shortcode-Attribute
+     * @return string HTML
+     */
+    private function render_product_grid(array $products, array $atts): string {
+        if (empty($products)) {
+            return '';
+        }
+
+        $html = '';
+        foreach ($products as $product) {
+            $html .= $this->render_product_card($product);
+        }
+        return $html;
+    }
+
+    /**
+     * Einzelne Produkt-Karte rendern
+     * 
+     * @param array<string, mixed> $product Produkt-Daten
+     * @return string HTML
+     */
+    private function render_product_card(array $product): string {
+        $target = !empty($product['new_tab']) ? ' target="_blank" rel="noopener noreferrer"' : '';
+        
+        // Bild HTML
+        if (!empty($product['image'])) {
+            $image_html = sprintf(
+                '<div class="yadore-product-image">
+                    <img src="%s" alt="%s" loading="lazy" onerror="this.parentElement.classList.add(\'yadore-image-error\')">
+                </div>',
+                esc_url($product['image']),
+                esc_attr($product['title'] ?? '')
+            );
+        } else {
+            $image_html = '<div class="yadore-product-image yadore-no-image">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                </svg>
+            </div>';
+        }
+
+        // Händler HTML
+        $merchant_html = '';
+        if (!empty($product['merchant'])) {
+            $merchant_html = sprintf(
+                '<div class="yadore-product-merchant">%s</div>',
+                esc_html($product['merchant'])
+            );
+        }
+
+        // Preis HTML
+        $price_html = '';
+        if (!empty($product['price'])) {
+            $price_html = sprintf(
+                '<div class="yadore-product-price">%s</div>',
+                esc_html($product['price'])
+            );
+        }
+
+        // Source Badge (optional)
+        $source_badge = '';
+        if (!empty($product['source'])) {
+            $source_class = 'yadore-source-' . esc_attr($product['source']);
+            $source_badge = sprintf(
+                '<span class="yadore-product-source %s"></span>',
+                $source_class
+            );
+        }
+
+        return sprintf(
+            '<div class="yadore-product-card" data-product-id="%s">
+                <a href="%s"%s class="yadore-product-link">
+                    %s
+                    %s
+                    <div class="yadore-product-content">
+                        <h4 class="yadore-product-title">%s</h4>
+                        %s
+                        %s
+                        <span class="yadore-product-cta">%s →</span>
+                    </div>
+                </a>
+            </div>',
+            esc_attr($product['id'] ?? ''),
+            esc_url($product['url'] ?? '#'),
+            $target,
+            $source_badge,
+            $image_html,
+            esc_html($product['title'] ?? ''),
+            $merchant_html,
+            $price_html,
+            esc_html__('Zum Angebot', 'yadore-amazon-api')
+        );
+    }
+
+    /**
+     * AJAX-Handler für Produktsuche
+     */
+    public function ajax_search(): void {
+        // Nonce prüfen
+        if (!check_ajax_referer('yadore_search_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => __('Sicherheitsprüfung fehlgeschlagen.', 'yadore-amazon-api')], 403);
+        }
+
+        // Parameter validieren
+        $query = isset($_POST['query']) ? sanitize_text_field(wp_unslash($_POST['query'])) : '';
+        $network = isset($_POST['network']) ? sanitize_text_field(wp_unslash($_POST['network'])) : '';
+        $max_results = isset($_POST['max_results']) ? (int) $_POST['max_results'] : 12;
+        $sort = isset($_POST['sort']) ? sanitize_text_field(wp_unslash($_POST['sort'])) : 'cpc_desc';
+        $merchant_filter = isset($_POST['merchant_filter']) ? sanitize_text_field(wp_unslash($_POST['merchant_filter'])) : '';
+        $show_price = isset($_POST['show_price']) && $_POST['show_price'] === '1';
+        $show_merchant = isset($_POST['show_merchant']) && $_POST['show_merchant'] === '1';
+        $new_tab = isset($_POST['new_tab']) && $_POST['new_tab'] === '1';
+
+        if (empty($query) || strlen($query) < 2) {
+            wp_send_json_error(['message' => __('Suchbegriff zu kurz.', 'yadore-amazon-api')], 400);
+        }
+
+        // Rate-Limiting
+        $rate_limit_key = 'yadore_search_' . md5($_SERVER['REMOTE_ADDR'] ?? '');
+        $rate_count = get_transient($rate_limit_key);
+        
+        if ($rate_count !== false && (int) $rate_count > 30) {
+            wp_send_json_error(['message' => __('Zu viele Anfragen. Bitte warten.', 'yadore-amazon-api')], 429);
+        }
+        
+        set_transient($rate_limit_key, ($rate_count ? (int) $rate_count + 1 : 1), 60);
+
+        // Yadore API aufrufen
+        $api_params = [
+            'keyword' => $query,
+            'limit'   => min($max_results, 50),
+            'sort'    => $sort,
+        ];
+
+        if (!empty($network)) {
+            $api_params['network'] = $network;
+        }
+
+        if (!empty($merchant_filter)) {
+            $api_params['merchant_whitelist'] = $merchant_filter;
+        }
+
+        $results = $this->yadore_api->fetch($api_params);
+
+        if (is_wp_error($results)) {
+            wp_send_json_error([
+                'message' => $results->get_error_message(),
+            ], 500);
+        }
+
+        // Ergebnisse aufbereiten
+        $atts = [
+            'show_price'    => $show_price,
+            'show_merchant' => $show_merchant,
+            'new_tab'       => $new_tab,
+        ];
+
+        $products = [];
+        if (!empty($results)) {
+            foreach ($results as $offer) {
+                $products[] = $this->format_yadore_product($offer, $atts);
+            }
+        }
+
+        wp_send_json_success([
+            'products' => $products,
+            'total'    => count($products),
+            'query'    => $query,
+        ]);
+    }
+
+    /**
+     * Text kürzen
+     * 
+     * @param string $text Text
+     * @param int $length Max Länge
+     * @return string Gekürzter Text
+     */
+    private function truncate_text(string $text, int $length = 120): string {
+        $text = wp_strip_all_tags($text);
+        if (strlen($text) <= $length) {
+            return $text;
+        }
+        return substr($text, 0, $length) . '...';
+    }
+}
+ 
 Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-amazon-api\includes\class-shortcode-renderer.php 
  
 <?php
 /**
  * Shortcode Renderer - Vollständige Version mit allen Features
  * PHP 8.3+ compatible
- * Version: 1.5.0
+ * Version: 1.5.1
  * 
  * Features:
  * - Yadore, Amazon, Custom Products Shortcodes
@@ -8740,7 +10728,8 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * - Merchant Filter (Whitelist/Blacklist) für Yadore
  * - hide_no_image Option zum Ausfiltern
  * - Multi-Keyword Support
- * - NEU: Sortierung nach Preis/CPC
+ * - Sortierung nach Preis/CPC
+ * - NEU: Shop-Logo als Bild-Fallback
  */
 
 declare(strict_types=1);
@@ -8885,7 +10874,7 @@ final class YAA_Shortcode_Renderer {
             'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'columns'            => '',
             'class'              => '',
             'local_images'       => '',
@@ -8896,8 +10885,8 @@ final class YAA_Shortcode_Renderer {
             // Merchant Filter
             'merchant_whitelist' => '',
             'merchant_blacklist' => '',
-            'merchants'          => '',  // Alias für whitelist
-            'exclude_merchants'  => '',  // Alias für blacklist
+            'merchants'          => '',
+            'exclude_merchants'  => '',
         ], $atts, 'yadore_products');
         
         if (!$this->yadore_api->is_configured()) {
@@ -8930,7 +10919,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $total_limit,
                 'market'             => (string) $atts['market'],
                 'precision'          => (string) $atts['precision'],
-                'sort'               => (string) $atts['sort'], // NEU
+                'sort'               => (string) $atts['sort'],
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -9105,7 +11094,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'shuffle'            => 'yes',
             'columns'            => '',
             'class'              => '',
@@ -9171,7 +11160,7 @@ final class YAA_Shortcode_Renderer {
                     'keyword'            => $keyword,
                     'limit'              => $yadore_limit,
                     'market'             => (string) $atts['market'],
-                    'sort'               => (string) $atts['sort'], // NEU
+                    'sort'               => (string) $atts['sort'],
                     'merchant_whitelist' => $merchant_whitelist,
                     'merchant_blacklist' => $merchant_blacklist,
                 ]);
@@ -9225,7 +11214,7 @@ final class YAA_Shortcode_Renderer {
             'custom_fuzzy'       => 'no',
             'market'             => (string) yaa_get_option('yadore_market', 'de'),
             'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
-            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'), // NEU
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
             'priority'           => 'custom,yadore,amazon',
             'shuffle'            => 'no',
             'columns'            => '',
@@ -9295,7 +11284,7 @@ final class YAA_Shortcode_Renderer {
                                 'keyword'            => $keyword,
                                 'limit'              => $remaining,
                                 'market'             => (string) $atts['market'],
-                                'sort'               => (string) $atts['sort'], // NEU
+                                'sort'               => (string) $atts['sort'],
                                 'merchant_whitelist' => $merchant_whitelist,
                                 'merchant_blacklist' => $merchant_blacklist,
                             ]);
@@ -9486,7 +11475,7 @@ final class YAA_Shortcode_Renderer {
                 'limit'              => $limit_for_this,
                 'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
                 'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
-                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')), // NEU
+                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')),
                 'merchant_whitelist' => $merchant_whitelist,
                 'merchant_blacklist' => $merchant_blacklist,
             ]);
@@ -9568,9 +11557,16 @@ final class YAA_Shortcode_Renderer {
         return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
     }
     
-        /**
+    /**
      * Render the product grid
-     * NEU in 1.5.1: data-thumbnail Attribut für Fallback-Kette
+     * Version 1.5.1: Mit Shop-Logo als Fallback in der Bilderkette
+     * 
+     * Fallback-Kette:
+     * 1. Original/Lokales Bild
+     * 2. Thumbnail (data-thumbnail)
+     * 3. Proxy (data-proxy-src)
+     * 4. Shop-Logo (data-shop-logo) - NEU
+     * 5. CSS Placeholder
      * 
      * @param array<int, array<string, mixed>> $items
      * @param array<string, mixed> $atts
@@ -9613,24 +11609,24 @@ final class YAA_Shortcode_Renderer {
                 $url = $item['url'] ?? '#';
                 $title = $item['title'] ?? '';
                 
-                // === BILD-VERARBEITUNG MIT THUMBNAIL-FALLBACK ===
+                // === BILD-VERARBEITUNG MIT ERWEITERTER FALLBACK-KETTE ===
                 
                 // Haupt-Bild URL
                 $raw_image_url = $item['image']['url'] ?? '';
                 
-                // Thumbnail URL für Fallback (NEU)
+                // Thumbnail URL für Fallback
                 $thumbnail_url = '';
-                
-                // Yadore: Thumbnail aus API-Response
                 if ($source === 'yadore') {
                     $thumbnail_url = $item['image']['thumbnail_url'] ?? '';
                 }
-                
-                // Amazon: Medium-Bild als Thumbnail-Fallback
-                // Die Amazon API liefert verschiedene Größen - wir nutzen bereits die beste verfügbare
-                // Aber wir können das Small-Bild als Fallback speichern falls vorhanden
                 if ($source === 'amazon' && isset($item['image']['medium_url'])) {
                     $thumbnail_url = $item['image']['medium_url'];
+                }
+                
+                // NEU: Shop-Logo als Fallback (aus Yadore API)
+                $shop_logo_url = '';
+                if (isset($item['merchant']['logo']) && !empty($item['merchant']['logo'])) {
+                    $shop_logo_url = $item['merchant']['logo'];
                 }
                 
                 // Unique ID für Bild-Verarbeitung
@@ -9692,64 +11688,79 @@ final class YAA_Shortcode_Renderer {
                         <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
                     <?php endif; ?>
                     
-                <div class="yaa-image-wrapper">
-                    <?php 
-                    // Proxy-URL generieren falls Proxy aktiviert
-                    $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
-                    $proxy_url = '';
-                    
-                    if ($proxy_enabled && $raw_image_url !== '') {
-                        $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
-                            'action' => 'yaa_proxy_image',
-                            'url'    => $raw_image_url,
-                        ]);
-                    }
-                    
-                    // Finale Bild-URL bestimmen:
-                    // 1. Lokales/verarbeitetes Bild wenn verfügbar
-                    // 2. Proxy-URL als Fallback
-                    // 3. Original-URL als letzter Fallback
-                    $final_src = $image_url;
-                    
-                    // Fix: esc_url() filtert data: URLs - also prüfen ob leer
-                    if ($final_src === '' || str_starts_with($final_src, 'data:')) {
-                        // Proxy als primäre Quelle verwenden
-                        $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
-                    }
-                    ?>
-                    
-                    <?php if ($final_src !== ''): ?>
-                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                            <img src="<?php echo esc_url($final_src); ?>" 
-                                alt="<?php echo esc_attr($title); ?>" 
-                                loading="lazy"
-                                decoding="async"
-                                referrerpolicy="no-referrer"
-                                data-fallback-attempted="false"
-                                <?php if ($processed_thumbnail_url !== ''): ?>
-                                data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                    <div class="yaa-image-wrapper">
+                        <?php 
+                        // Proxy-URL generieren falls Proxy aktiviert
+                        $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
+                        $proxy_url = '';
+                        
+                        if ($proxy_enabled && $raw_image_url !== '') {
+                            $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
+                                'action' => 'yaa_proxy_image',
+                                'url'    => $raw_image_url,
+                            ]);
+                        }
+                        
+                        // Finale Bild-URL bestimmen:
+                        // 1. Lokales/verarbeitetes Bild wenn verfügbar
+                        // 2. Proxy-URL als Fallback
+                        // 3. Original-URL als letzter Fallback
+                        $final_src = $image_url;
+                        
+                        // Fix: esc_url() filtert data: URLs - also prüfen ob leer
+                        if ($final_src === '' || str_starts_with($final_src, 'data:')) {
+                            // Proxy als primäre Quelle verwenden
+                            $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
+                        }
+                        ?>
+                        
+                        <?php if ($final_src !== ''): ?>
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <img src="<?php echo esc_url($final_src); ?>" 
+                                    alt="<?php echo esc_attr($title); ?>" 
+                                    loading="lazy"
+                                    decoding="async"
+                                    referrerpolicy="no-referrer"
+                                    data-fallback-attempted="false"
+                                    <?php if ($processed_thumbnail_url !== ''): ?>
+                                    data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
+                                    data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
+                                    data-proxy-src="<?php echo esc_url($proxy_url); ?>"
+                                    <?php endif; ?>
+                                    <?php // NEU: Shop-Logo als Fallback ?>
+                                    <?php if ($shop_logo_url !== ''): ?>
+                                    data-shop-logo="<?php echo esc_url($shop_logo_url); ?>"
+                                    <?php endif; ?>
+                                    data-source="<?php echo esc_attr($source); ?>"
+                                    data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                            </a>
+                        <?php else: ?>
+                            <!-- Kein Bild verfügbar - Shop-Logo als erste Option, dann Placeholder -->
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <?php if ($shop_logo_url !== ''): ?>
+                                    <img src="<?php echo esc_url($shop_logo_url); ?>" 
+                                        alt="<?php echo esc_attr($merchant_name); ?>" 
+                                        loading="lazy"
+                                        decoding="async"
+                                        referrerpolicy="no-referrer"
+                                        class="yaa-shop-logo-fallback"
+                                        data-fallback-attempted="shop-logo"
+                                        data-source="<?php echo esc_attr($source); ?>"
+                                        data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                                <?php else: ?>
+                                    <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
+                                        aria-hidden="true" 
+                                        role="img" 
+                                        aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
+                                    </div>
                                 <?php endif; ?>
-                                <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
-                                data-original-src="<?php echo esc_url($raw_image_url); ?>"
-                                <?php endif; ?>
-                                <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
-                                data-proxy-src="<?php echo esc_url($proxy_url); ?>"
-                                <?php endif; ?>
-                                data-source="<?php echo esc_attr($source); ?>">
-                        </a>
-                    <?php else: ?>
-                        <!-- Kein Bild verfügbar -->
-                        <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
-                            <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
-                                aria-hidden="true" 
-                                role="img" 
-                                aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
-                            </div>
-                        </a>
-                    <?php endif; ?>
-                </div>
-
-
+                            </a>
+                        <?php endif; ?>
+                    </div>
 
                     <div class="yaa-content">
                         <h3 class="yaa-title">
@@ -9811,7 +11822,6 @@ final class YAA_Shortcode_Renderer {
         return ob_get_clean() ?: '';
     }
 
-    
     /**
      * Render error message
      */

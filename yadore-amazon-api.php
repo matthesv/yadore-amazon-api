@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.5.12
+ * Version: 1.6.1
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -13,6 +13,11 @@
  * License: GPL v2 or later
  * GitHub Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Primary Branch: main
+ * 
+ * CHANGELOG 1.6.1:
+ * - Search Shortcode Komponente hinzugefügt
+ * - Shortcode 'yadore_search' zu Asset-Loading hinzugefügt
+ * - Dependency Injection für Search Shortcode korrigiert
  */
 
 declare(strict_types=1);
@@ -22,7 +27,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.5.12');
+define('YAA_VERSION', '1.6.1');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -38,6 +43,10 @@ add_action('plugins_loaded', 'yaa_load_textdomain');
 
 /**
  * Get plugin option with default
+ * 
+ * @param string $key Option key
+ * @param mixed $default Default value
+ * @return mixed Option value or default
  */
 function yaa_get_option(string $key, mixed $default = ''): mixed {
     $options = get_option('yaa_settings', []);
@@ -52,6 +61,9 @@ function yaa_get_cache_time(): int {
     return max(1, $hours) * 3600;
 }
 
+/**
+ * Get fallback cache time
+ */
 function yaa_get_fallback_time(): int {
     $hours = (int) yaa_get_option('fallback_duration', 24);
     return max(1, $hours) * 3600;
@@ -92,20 +104,30 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.5.4 - Mit Image Proxy Support
+ * Version 1.6.0 - Mit Search Shortcode Support
  */
 final class Yadore_Amazon_API_Plugin {
     
+    /**
+     * Singleton instance
+     */
     private static ?self $instance = null;
     
+    /**
+     * Plugin components
+     */
     public readonly YAA_Cache_Handler $cache;
     public readonly YAA_Yadore_API $yadore_api;
     public readonly YAA_Amazon_PAAPI $amazon_api;
     public readonly YAA_Custom_Products $custom_products;
     public readonly YAA_Shortcode_Renderer $shortcode;
     public readonly YAA_Admin $admin;
-    public readonly YAA_Image_Proxy $image_proxy; // NEU
+    public readonly YAA_Image_Proxy $image_proxy;
+    public readonly YAA_Search_Shortcode $search_shortcode;
     
+    /**
+     * Get singleton instance
+     */
     public static function get_instance(): self {
         if (self::$instance === null) {
             self::$instance = new self();
@@ -113,11 +135,17 @@ final class Yadore_Amazon_API_Plugin {
         return self::$instance;
     }
     
+    /**
+     * Private constructor (Singleton)
+     */
     private function __construct() {
         $this->init_components();
         $this->register_hooks();
     }
     
+    /**
+     * Initialize all plugin components
+     */
     private function init_components(): void {
         // Core Components (werden durch Autoloader geladen)
         $this->cache           = new YAA_Cache_Handler();
@@ -131,13 +159,22 @@ final class Yadore_Amazon_API_Plugin {
             $this->custom_products
         );
         
-        // NEU: Image Proxy Component
+        // Image Proxy Component
         $this->image_proxy = new YAA_Image_Proxy();
+
+        // Search Shortcode Component (mit Dependency Injection)
+        $this->search_shortcode = new YAA_Search_Shortcode(
+            $this->yadore_api,
+            $this->amazon_api
+        );
         
         // Admin Component (koordiniert alle Admin-Submodule)
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
     
+    /**
+     * Register plugin hooks
+     */
     private function register_hooks(): void {
         register_activation_hook(YAA_PLUGIN_FILE, [$this, 'activate']);
         register_deactivation_hook(YAA_PLUGIN_FILE, [$this, 'deactivate']);
@@ -146,6 +183,9 @@ final class Yadore_Amazon_API_Plugin {
         add_action('yaa_cache_refresh_event', [$this, 'preload_cache']);
     }
     
+    /**
+     * Plugin activation
+     */
     public function activate(): void {
         // Default settings
         $defaults = [
@@ -155,6 +195,7 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_market'          => 'de',
             'yadore_precision'       => 'fuzzy',
             'yadore_default_limit'   => 9,
+            'yadore_default_sort'    => 'rel_desc',
             
             // Amazon Settings
             'enable_amazon'          => 'yes',
@@ -178,8 +219,10 @@ final class Yadore_Amazon_API_Plugin {
             // Local Image Storage
             'enable_local_images'    => 'yes',
             'image_filename_format'  => 'seo',
+            'image_resize_enabled'   => 'yes',
+            'preferred_image_size'   => 'Large',
             
-            // NEU: Image Proxy Settings
+            // Image Proxy Settings
             'enable_image_proxy'     => 'yes',
             'image_proxy_cache'      => 24, // Stunden
             
@@ -211,6 +254,9 @@ final class Yadore_Amazon_API_Plugin {
             'color_amazon'           => '#ff9900',
             'color_custom'           => '#4CAF50',
             
+            // Search Shortcode Settings (NEU)
+            'yadore_featured_keywords' => '',
+            
             // Update Settings
             'github_token'           => '',
         ];
@@ -225,6 +271,15 @@ final class Yadore_Amazon_API_Plugin {
             wp_mkdir_p($admin_dir);
         }
         
+        // Bilder-Verzeichnis erstellen
+        $upload_dir = wp_upload_dir();
+        $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
+        if (!is_dir($image_dir)) {
+            wp_mkdir_p($image_dir);
+            // Index-Datei für Sicherheit
+            file_put_contents($image_dir . '/index.php', '<?php // Silence is golden');
+        }
+        
         // Schedule cron
         if (!wp_next_scheduled('yaa_cache_refresh_event')) {
             wp_schedule_event(time(), 'twicedaily', 'yaa_cache_refresh_event');
@@ -233,11 +288,17 @@ final class Yadore_Amazon_API_Plugin {
         flush_rewrite_rules();
     }
     
+    /**
+     * Plugin deactivation
+     */
     public function deactivate(): void {
         wp_clear_scheduled_hook('yaa_cache_refresh_event');
         flush_rewrite_rules();
     }
     
+    /**
+     * Enqueue frontend assets when shortcodes are present
+     */
     public function enqueue_frontend_assets(): void {
         global $post;
         
@@ -245,6 +306,7 @@ final class Yadore_Amazon_API_Plugin {
             return;
         }
         
+        // Alle Shortcodes die Assets benötigen (inkl. yadore_search)
         $shortcodes = [
             'yaa_products', 
             'yadore_products', 
@@ -253,6 +315,7 @@ final class Yadore_Amazon_API_Plugin {
             'custom_products',
             'all_products',
             'fuzzy_products',
+            'yadore_search', // NEU: Search Shortcode hinzugefügt
         ];
         
         $has_shortcode = false;
@@ -269,6 +332,9 @@ final class Yadore_Amazon_API_Plugin {
         }
     }
     
+    /**
+     * Load frontend assets
+     */
     public function load_assets(): void {
         $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
 
@@ -301,7 +367,8 @@ final class Yadore_Amazon_API_Plugin {
             ";
             wp_add_inline_style('yaa-frontend-grid', $custom_css);
         } else {
-            wp_register_style('yaa-minimal-functional', false);
+            // Minimal CSS wenn Default-CSS deaktiviert
+            wp_register_style('yaa-minimal-functional', false, [], YAA_VERSION);
             wp_enqueue_style('yaa-minimal-functional');
             
             $minimal_css = "
@@ -328,6 +395,7 @@ final class Yadore_Amazon_API_Plugin {
             wp_add_inline_style('yaa-minimal-functional', $minimal_css);
         }
         
+        // Frontend JavaScript
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
@@ -336,7 +404,7 @@ final class Yadore_Amazon_API_Plugin {
             true
         );
         
-        // NEU: Proxy-URL ans Frontend übergeben
+        // Proxy-URL ans Frontend übergeben
         wp_localize_script('yaa-frontend-grid', 'yaaProxy', [
             'enabled'  => yaa_get_option('enable_image_proxy', 'yes') === 'yes',
             'endpoint' => admin_url('admin-ajax.php'),
@@ -344,14 +412,21 @@ final class Yadore_Amazon_API_Plugin {
         ]);
     }
     
+    /**
+     * Preload cache via cron
+     */
     public function preload_cache(): void {
         $cached_keywords = get_option('yaa_cached_keywords', []);
         
-        if (empty($cached_keywords)) {
+        if (empty($cached_keywords) || !is_array($cached_keywords)) {
             return;
         }
         
         foreach ($cached_keywords as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            
             $source = $entry['source'] ?? 'yadore';
             
             if ($source === 'amazon' && $this->amazon_api->is_configured()) {
@@ -368,6 +443,7 @@ final class Yadore_Amazon_API_Plugin {
                 ]);
             }
             
+            // Rate-Limiting: 1 Sekunde zwischen Requests
             sleep(1);
         }
     }
@@ -375,6 +451,8 @@ final class Yadore_Amazon_API_Plugin {
 
 /**
  * Initialize Plugin
+ * 
+ * @return Yadore_Amazon_API_Plugin Plugin instance
  */
 function yaa_init(): Yadore_Amazon_API_Plugin {
     return Yadore_Amazon_API_Plugin::get_instance();
@@ -382,7 +460,10 @@ function yaa_init(): Yadore_Amazon_API_Plugin {
 add_action('plugins_loaded', 'yaa_init', 10);
 
 /**
- * Plugin action links
+ * Plugin action links (Settings link in plugin list)
+ * 
+ * @param array<string, string> $links Existing links
+ * @return array<string, string> Modified links
  */
 function yaa_plugin_action_links(array $links): array {
     $settings_link = '<a href="' . admin_url('admin.php?page=yaa-settings') . '">' . 
