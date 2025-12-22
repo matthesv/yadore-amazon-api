@@ -1,15 +1,20 @@
 <?php
 /**
- * Search Shortcode Handler - UNIFIED VERSION
- *
- * @package Yadore_Amazon_API
- * @since 1.0.0
- * @version 1.8.2
+ * Shortcode Renderer - Vollständige Version mit allen Features
+ * PHP 8.3+ compatible
+ * Version: 1.5.1
  * 
- * CHANGES in 1.8.2:
- * - Removed pagination (load more button)
- * - Fixed price extraction for Yadore API format
- * - Uses native browser clear button
+ * Features:
+ * - Yadore, Amazon, Custom Products Shortcodes
+ * - Fuzzy-Suche für eigene Produkte
+ * - Automatisches Einmischen eigener Produkte
+ * - Lokale Bilderspeicherung mit SEO-Dateinamen
+ * - Bildgrößen-Auswahl
+ * - Merchant Filter (Whitelist/Blacklist) für Yadore
+ * - hide_no_image Option zum Ausfiltern
+ * - Multi-Keyword Support
+ * - Sortierung nach Preis/CPC
+ * - NEU: Shop-Logo als Bild-Fallback
  */
 
 declare(strict_types=1);
@@ -18,1186 +23,1103 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-/**
- * Class YAA_Search_Shortcode
- */
-final class YAA_Search_Shortcode {
-
-    private static ?self $instance = null;
-    private ?YAA_Yadore_API $yadore_api;
-    private ?YAA_Amazon_PAAPI $amazon_api;
-    private ?YAA_Image_Handler $image_handler = null;
-    private ?YAA_Cache_Handler $cache_handler = null;
-
-    private const SORT_OPTIONS = [
-        'relevance'   => 'Relevanz',
-        'price_asc'   => 'Preis aufsteigend',
-        'price_desc'  => 'Preis absteigend',
-        'title_asc'   => 'Name A-Z',
-        'title_desc'  => 'Name Z-A',
-        'rating_desc' => 'Beste Bewertung',
-        'newest'      => 'Neueste zuerst',
-    ];
-
-    private const SORT_MAP_TO_API = [
-        'relevance'   => 'rel_desc',
-        'price_asc'   => 'price_asc',
-        'price_desc'  => 'price_desc',
-        'title_asc'   => 'title_asc',
-        'title_desc'  => 'title_desc',
-        'rating_desc' => 'rating_desc',
-        'newest'      => 'newest',
-    ];
-
-    private const VALID_LAYOUTS = ['grid', 'list', 'compact', 'table'];
-
-    private const DEFAULT_ATTS = [
-        'placeholder'        => 'Produkt suchen...',
-        'button_text'        => 'Suchen',
-        'show_filters'       => 'true',
-        'show_source_filter' => 'false',
-        'default_sort'       => 'relevance',
-        'sort'               => '',
-        'products_per_page'  => 12,
-        'max_products'       => 100,
-        'layout'             => 'grid',
-        'columns'            => 4,
-        'columns_tablet'     => 3,
-        'columns_mobile'     => 1,
-        'show_price'         => 'true',
-        'show_rating'        => 'true',
-        'show_prime'         => 'true',
-        'show_availability'  => 'true',
-        'show_description'   => 'false',
-        'show_merchant'      => 'true',
-        'description_length' => 150,
-        'target'             => '_blank',
-        'nofollow'           => 'true',
-        'sponsored'          => 'true',
-        'class'              => '',
-        'id'                 => '',
-        'api_source'         => '',
-        'category'           => '',
-        'min_price'          => '',
-        'max_price'          => '',
-        'prime_only'         => 'false',
-        'min_rating'         => '',
-        'button_style'       => 'primary',
-        'image_size'         => 'medium',
-        'lazy_load'          => 'true',
-        'analytics'          => 'true',
-        'cache_duration'     => '',
-        'live_search'        => 'true',
-        'min_chars'          => 3,
-        'debounce'           => 500,
-        'initial_keywords'   => '',
-        'initial_count'      => 6,
-        'show_reset'         => 'true',
-    ];
-
-    private int $instance_id = 0;
-
-    public function __construct(?YAA_Yadore_API $yadore_api = null, ?YAA_Amazon_PAAPI $amazon_api = null) {
+final class YAA_Shortcode_Renderer {
+    
+    private YAA_Yadore_API $yadore_api;
+    private YAA_Amazon_PAAPI $amazon_api;
+    private YAA_Cache_Handler $cache;
+    private YAA_Custom_Products $custom_products;
+    
+    /** @var bool Ob Bilder lokal gespeichert werden sollen */
+    private bool $use_local_images;
+    
+    /** @var bool Ob Fuzzy-Suche global aktiviert ist */
+    private bool $fuzzy_enabled;
+    
+    public function __construct(
+        YAA_Yadore_API $yadore_api, 
+        YAA_Amazon_PAAPI $amazon_api, 
+        YAA_Cache_Handler $cache,
+        YAA_Custom_Products $custom_products
+    ) {
         $this->yadore_api = $yadore_api;
         $this->amazon_api = $amazon_api;
+        $this->cache = $cache;
+        $this->custom_products = $custom_products;
         
-        if (self::$instance === null) {
-            self::$instance = $this;
+        $this->use_local_images = (yaa_get_option('enable_local_images', 'yes') === 'yes');
+        $this->fuzzy_enabled = (yaa_get_option('enable_fuzzy_search', 'yes') === 'yes');
+        
+        // Register shortcodes
+        add_shortcode('yaa_products', [$this, 'render_combined']);
+        add_shortcode('yadore_products', [$this, 'render_yadore']);
+        add_shortcode('amazon_products', [$this, 'render_amazon']);
+        add_shortcode('combined_products', [$this, 'render_combined']);
+        add_shortcode('custom_products', [$this, 'render_custom']);
+        add_shortcode('all_products', [$this, 'render_all_sources']);
+        add_shortcode('fuzzy_products', [$this, 'render_fuzzy']);
+    }
+    
+    /**
+     * Render fuzzy search results from custom products
+     */
+    public function render_fuzzy(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'       => '',
+            'keywords'      => '',
+            'limit'         => 10,
+            'threshold'     => '',
+            'columns'       => '',
+            'class'         => '',
+            'local_images'  => '',
+            'hide_no_image' => 'no',
+            'show_score'    => 'no',
+        ], $atts, 'fuzzy_products');
+        
+        $keywords = [];
+        
+        if (!empty($atts['keywords'])) {
+            $keywords = array_map('trim', explode(',', (string) $atts['keywords']));
+            $keywords = array_filter($keywords);
+        } elseif (!empty($atts['keyword'])) {
+            $keywords = [trim((string) $atts['keyword'])];
         }
         
-        $this->init_hooks();
-    }
-
-    public static function get_instance(?YAA_Yadore_API $yadore_api = null, ?YAA_Amazon_PAAPI $amazon_api = null): self {
-        if (self::$instance === null) {
-            self::$instance = new self($yadore_api, $amazon_api);
+        if (empty($keywords)) {
+            return $this->render_error(__('Bitte keyword oder keywords angeben.', 'yadore-amazon-api'));
         }
-        return self::$instance;
-    }
-
-    private function init_hooks(): void {
-        add_shortcode('yaa_search', [$this, 'render_shortcode']);
-        add_shortcode('yaa_product_search', [$this, 'render_shortcode']);
-        add_shortcode('yadore_search', [$this, 'render_shortcode']);
         
-        add_action('wp_ajax_yaa_product_search', [$this, 'ajax_search']);
-        add_action('wp_ajax_nopriv_yaa_product_search', [$this, 'ajax_search']);
-        add_action('wp_ajax_yaa_search_suggestions', [$this, 'ajax_suggestions']);
-        add_action('wp_ajax_nopriv_yaa_search_suggestions', [$this, 'ajax_suggestions']);
-        add_action('wp_ajax_yaa_track_click', [$this, 'ajax_track_click']);
-        add_action('wp_ajax_nopriv_yaa_track_click', [$this, 'ajax_track_click']);
+        $total_limit = (int) $atts['limit'];
+        $threshold = (string) $atts['threshold'] !== '' ? (int) $atts['threshold'] : null;
         
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
-        add_action('rest_api_init', [$this, 'register_rest_routes']);
-    }
-
-    public function register_rest_routes(): void {
-        register_rest_route('yaa/v1', '/search', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'rest_search'],
-            'permission_callback' => '__return_true',
-            'args'                => [
-                'keyword'  => ['required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field'],
-                'page'     => ['default' => 1, 'type' => 'integer', 'sanitize_callback' => 'absint'],
-                'per_page' => ['default' => 12, 'type' => 'integer', 'sanitize_callback' => 'absint'],
-                'sort'     => ['default' => 'relevance', 'type' => 'string', 'sanitize_callback' => 'sanitize_key'],
-            ],
-        ]);
-    }
-
-    public function rest_search(\WP_REST_Request $request): \WP_REST_Response {
-        $keyword = $request->get_param('keyword');
-        $page = $request->get_param('page');
-        $per_page = min($request->get_param('per_page'), 50);
-        $sort = $this->validate_sort($request->get_param('sort'));
-
-        $results = $this->perform_search($keyword, $page, $per_page, $sort, '');
-
-        if (is_wp_error($results)) {
-            return new \WP_REST_Response(['error' => $results->get_error_message()], 500);
-        }
-
-        return new \WP_REST_Response($results, 200);
-    }
-
-    public function enqueue_assets(): void {
-        if (!$this->should_load_assets()) {
-            return;
-        }
-
-        wp_enqueue_style(
-            'yaa-search-style',
-            YAA_PLUGIN_URL . 'assets/css/yaa-search.css',
-            [],
-            YAA_VERSION
-        );
+        $all_items = [];
         
-        wp_add_inline_style('yaa-search-style', $this->get_native_clear_button_css());
-
-        wp_enqueue_script(
-            'yaa-search-script',
-            YAA_PLUGIN_URL . 'assets/js/yaa-search.js',
-            ['jquery'],
-            YAA_VERSION,
-            true
-        );
-
-        wp_localize_script('yaa-search-script', 'yadoreSearch', $this->get_js_config());
-    }
-
-    private function get_native_clear_button_css(): string {
-        return '
-            .yaa-search-wrapper .yaa-input::-webkit-search-cancel-button,
-            .yaa-search-wrapper .yadore-input::-webkit-search-cancel-button,
-            .yadore-search-container .yaa-input::-webkit-search-cancel-button,
-            .yadore-search-container .yadore-input::-webkit-search-cancel-button {
-                -webkit-appearance: none;
-                appearance: none;
-                height: 20px;
-                width: 20px;
-                cursor: pointer;
-                background: url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%236b7280\'%3E%3Cpath d=\'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z\'/%3E%3C/svg%3E") center center no-repeat;
-                background-size: 16px 16px;
-                opacity: 0.6;
-                transition: opacity 0.2s ease;
-                margin-left: 8px;
+        if (count($keywords) === 1) {
+            $all_items = $this->custom_products->search_products_fuzzy(
+                $keywords[0],
+                $total_limit,
+                $threshold
+            );
+        } else {
+            $per_keyword = (int) ceil($total_limit / count($keywords));
+            $collected = [];
+            
+            foreach ($keywords as $keyword) {
+                $results = $this->custom_products->search_products_fuzzy(
+                    $keyword,
+                    $per_keyword,
+                    $threshold
+                );
+                
+                foreach ($results as $item) {
+                    $pid = $item['post_id'] ?? 0;
+                    if (!isset($collected[$pid])) {
+                        $collected[$pid] = $item;
+                    } else {
+                        if (($item['_fuzzy_score'] ?? 0) > ($collected[$pid]['_fuzzy_score'] ?? 0)) {
+                            $collected[$pid] = $item;
+                        }
+                    }
+                }
             }
             
-            .yaa-search-wrapper .yaa-input::-webkit-search-cancel-button:hover,
-            .yaa-search-wrapper .yadore-input::-webkit-search-cancel-button:hover,
-            .yadore-search-container .yaa-input::-webkit-search-cancel-button:hover,
-            .yadore-search-container .yadore-input::-webkit-search-cancel-button:hover {
-                opacity: 1;
+            $all_items = array_values($collected);
+            usort($all_items, fn($a, $b) => ($b['_fuzzy_score'] ?? 0) <=> ($a['_fuzzy_score'] ?? 0));
+            $all_items = array_slice($all_items, 0, $total_limit);
+        }
+        
+        $all_items = $this->filter_items_without_image($all_items, $atts);
+        
+        if (empty($all_items)) {
+            return $this->render_empty();
+        }
+        
+        if ((string) $atts['show_score'] === 'yes') {
+            foreach ($all_items as &$item) {
+                $score = $item['_fuzzy_score'] ?? 0;
+                $item['description'] = sprintf(
+                    '[Score: %.1f%%] %s',
+                    $score,
+                    $item['description'] ?? ''
+                );
+            }
+            unset($item);
+        }
+        
+        return $this->render_grid($all_items, $atts);
+    }
+    
+    /**
+     * Render Yadore products - Mit Merchant Filter und Sortierung
+     */
+    public function render_yadore(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'            => '',
+            'keywords'           => '',
+            'limit'              => (int) yaa_get_option('yadore_default_limit', 9),
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'precision'          => (string) yaa_get_option('yadore_precision', 'fuzzy'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            'mix_custom'         => '',
+            'custom_position'    => 'start',
+            'custom_limit'       => 2,
+            // Merchant Filter
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',
+            'exclude_merchants'  => '',
+        ], $atts, 'yadore_products');
+        
+        if (!$this->yadore_api->is_configured()) {
+            return $this->render_error(__('Yadore API nicht konfiguriert.', 'yadore-amazon-api'));
+        }
+        
+        $keywords = [];
+        
+        if (!empty($atts['keywords'])) {
+            $keywords = array_map('trim', explode(',', (string) $atts['keywords']));
+            $keywords = array_filter($keywords);
+        } elseif (!empty($atts['keyword'])) {
+            $keywords = [trim((string) $atts['keyword'])];
+        }
+        
+        if (empty($keywords)) {
+            return $this->render_error(__('Bitte keyword oder keywords angeben.', 'yadore-amazon-api'));
+        }
+        
+        $total_limit = (int) $atts['limit'];
+        $items = [];
+        
+        // Merchant Filter ermitteln (Shortcode hat Vorrang)
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
+        
+        if (count($keywords) === 1) {
+            $result = $this->yadore_api->fetch([
+                'keyword'            => $keywords[0],
+                'limit'              => $total_limit,
+                'market'             => (string) $atts['market'],
+                'precision'          => (string) $atts['precision'],
+                'sort'               => (string) $atts['sort'],
+                'merchant_whitelist' => $merchant_whitelist,
+                'merchant_blacklist' => $merchant_blacklist,
+            ]);
+            
+            if (!is_wp_error($result)) {
+                $items = $result;
+            }
+        } else {
+            $items = $this->fetch_multi_keywords_with_filter(
+                $keywords, 
+                $total_limit, 
+                $atts, 
+                $merchant_whitelist, 
+                $merchant_blacklist
+            );
+        }
+        
+        // Fuzzy Custom Products einmischen
+        $items = $this->maybe_mix_fuzzy_products($items, $keywords, $atts);
+        
+        // Produkte ohne Bild ausfiltern
+        $items = $this->filter_items_without_image($items, $atts);
+        
+        if (empty($items)) {
+            return $this->render_empty();
+        }
+        
+        return $this->render_grid($items, $atts);
+    }
+    
+    /**
+     * Render Amazon products - Mit optionalem Fuzzy-Mixing
+     */
+    public function render_amazon(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'         => '',
+            'category'        => (string) yaa_get_option('amazon_default_category', 'All'),
+            'limit'           => 10,
+            'min_price'       => '',
+            'max_price'       => '',
+            'brand'           => '',
+            'sort'            => '',
+            'asins'           => '',
+            'columns'         => '',
+            'class'           => '',
+            'local_images'    => '',
+            'hide_no_image'   => 'no',
+            'mix_custom'      => '',
+            'custom_position' => 'start',
+            'custom_limit'    => 2,
+        ], $atts, 'amazon_products');
+        
+        if (!$this->amazon_api->is_configured()) {
+            return $this->render_error(__('Amazon PA-API nicht konfiguriert.', 'yadore-amazon-api'));
+        }
+        
+        $asins = trim((string) $atts['asins']);
+        if ($asins !== '') {
+            $asin_array = array_map('trim', explode(',', $asins));
+            $items = $this->amazon_api->get_items($asin_array);
+        } else {
+            $keyword = trim((string) $atts['keyword']);
+            if ($keyword === '') {
+                return $this->render_error(__('Bitte keyword oder asins angeben.', 'yadore-amazon-api'));
             }
             
-            .yaa-search-wrapper .yaa-input,
-            .yaa-search-wrapper .yadore-input,
-            .yadore-search-container .yaa-input,
-            .yadore-search-container .yadore-input {
-                padding-right: 12px;
+            $additional = [];
+            if ((string) $atts['min_price'] !== '') {
+                $additional['min_price'] = (float) $atts['min_price'];
             }
-        ';
+            if ((string) $atts['max_price'] !== '') {
+                $additional['max_price'] = (float) $atts['max_price'];
+            }
+            if ((string) $atts['brand'] !== '') {
+                $additional['brand'] = (string) $atts['brand'];
+            }
+            if ((string) $atts['sort'] !== '') {
+                $additional['sort_by'] = (string) $atts['sort'];
+            }
+            
+            $items = $this->amazon_api->search_items(
+                $keyword,
+                (string) $atts['category'],
+                (int) $atts['limit'],
+                $additional
+            );
+        }
+        
+        if (is_wp_error($items)) {
+            return $this->render_error($items->get_error_message());
+        }
+        
+        // Fuzzy Custom Products einmischen
+        $keyword = trim((string) $atts['keyword']);
+        if ($keyword !== '') {
+            $items = $this->maybe_mix_fuzzy_products($items, [$keyword], $atts);
+        }
+        
+        // Produkte ohne Bild ausfiltern
+        $items = $this->filter_items_without_image($items, $atts);
+        
+        if (empty($items)) {
+            return $this->render_empty();
+        }
+        
+        return $this->render_grid($items, $atts);
     }
-
-    private function get_js_config(): array {
-        return [
-            'ajaxurl'           => admin_url('admin-ajax.php'),
-            'restUrl'           => rest_url('yaa/v1/'),
-            'nonce'             => wp_create_nonce('yaa_search_nonce'),
-            'restNonce'         => wp_create_nonce('wp_rest'),
-            'i18n'              => $this->get_i18n_strings(),
-            'sortOptions'       => self::SORT_OPTIONS,
-            'defaultSort'       => $this->get_default_sort(),
-            'debounceDelay'     => (int)yaa_get_option('search_debounce', 300),
-            'minChars'          => (int)yaa_get_option('search_min_chars', 3),
-            'enableSuggestions' => (bool)yaa_get_option('search_suggestions', true),
-            'enableAnalytics'   => (bool)yaa_get_option('search_analytics', true),
-            'animationSpeed'    => 200,
-            'lazyLoadOffset'    => 100,
-            'imageLoadError'    => YAA_PLUGIN_URL . 'assets/images/placeholder.svg',
-            'debug'             => defined('WP_DEBUG') && WP_DEBUG,
-            'buttonText'        => yaa_get_option('button_text_yadore', 'Zum Angebot'),
-            'useNativeClearButton' => true,
-        ];
+    
+    /**
+     * Render custom products
+     */
+    public function render_custom(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'ids'           => '',
+            'category'      => '',
+            'keyword'       => '',
+            'limit'         => 10,
+            'columns'       => '',
+            'class'         => '',
+            'local_images'  => '',
+            'hide_no_image' => 'no',
+            'fuzzy'         => '',
+            'threshold'     => '',
+        ], $atts, 'custom_products');
+        
+        $items = [];
+        
+        if (!empty($atts['ids'])) {
+            $ids = array_map('intval', explode(',', (string) $atts['ids']));
+            $ids = array_filter($ids);
+            $items = $this->custom_products->get_products_by_ids($ids);
+        }
+        elseif (!empty($atts['keyword']) && ($atts['fuzzy'] === 'yes' || $this->fuzzy_enabled)) {
+            $threshold = (string) $atts['threshold'] !== '' ? (int) $atts['threshold'] : null;
+            $items = $this->custom_products->search_products_fuzzy(
+                (string) $atts['keyword'],
+                (int) $atts['limit'],
+                $threshold
+            );
+        }
+        elseif (!empty($atts['category'])) {
+            $items = $this->custom_products->get_products_by_category(
+                (string) $atts['category'],
+                (int) $atts['limit']
+            );
+        }
+        else {
+            $items = $this->custom_products->get_all_products((int) $atts['limit']);
+        }
+        
+        $items = $this->filter_items_without_image($items, $atts);
+        
+        if (empty($items)) {
+            return $this->render_empty();
+        }
+        
+        return $this->render_grid($items, $atts);
     }
-
-    private function get_i18n_strings(): array {
-        return [
-            'searching'        => __('Suche läuft...', 'yadore-amazon-api'),
-            'no_results'       => __('Keine Produkte gefunden.', 'yadore-amazon-api'),
-            'error'            => __('Fehler bei der Suche. Bitte versuchen Sie es erneut.', 'yadore-amazon-api'),
-            'networkError'     => __('Netzwerkfehler. Bitte prüfen Sie Ihre Verbindung.', 'yadore-amazon-api'),
-            'loading'          => __('Laden...', 'yadore-amazon-api'),
-            'sortBy'           => __('Sortieren nach:', 'yadore-amazon-api'),
-            'filterBy'         => __('Filtern nach:', 'yadore-amazon-api'),
-            'results_for'      => __('Ergebnisse für', 'yadore-amazon-api'),
-            'one_result'       => __('1 Ergebnis', 'yadore-amazon-api'),
-            'multiple_results' => __('%d Ergebnisse', 'yadore-amazon-api'),
-            'min_chars'        => __('Bitte mindestens %d Zeichen eingeben', 'yadore-amazon-api'),
-            'primeOnly'        => __('Nur Prime', 'yadore-amazon-api'),
-            'allProducts'      => __('Alle Produkte', 'yadore-amazon-api'),
-            'view_offer'       => __('Zum Angebot', 'yadore-amazon-api'),
-            'reset'            => __('← Zurück zu Empfehlungen', 'yadore-amazon-api'),
-            'sponsored'        => __('Anzeige', 'yadore-amazon-api'),
-            'try_different'    => __('Versuchen Sie es mit einem anderen Suchbegriff.', 'yadore-amazon-api'),
-            'products'         => __('Produkte', 'yadore-amazon-api'),
-            'offline'          => __('Keine Internetverbindung', 'yadore-amazon-api'),
-            'retrying'         => __('Verbindungsfehler. Neuer Versuch in {s} Sekunden...', 'yadore-amazon-api'),
-            'no_image'         => __('Kein Bild', 'yadore-amazon-api'),
-        ];
-    }
-
-    private function should_load_assets(): bool {
-        global $post;
-
-        if (is_singular() && $post instanceof WP_Post) {
-            if (has_shortcode($post->post_content, 'yaa_search') ||
-                has_shortcode($post->post_content, 'yaa_product_search') ||
-                has_shortcode($post->post_content, 'yadore_search')) {
-                return true;
+    
+    /**
+     * Render combined products (Yadore + Amazon + Custom)
+     */
+    public function render_combined(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'            => '',
+            'keywords'           => '',
+            'yadore_limit'       => 6,
+            'amazon_limit'       => 4,
+            'custom_ids'         => '',
+            'custom_category'    => '',
+            'custom_limit'       => 0,
+            'custom_fuzzy'       => 'no',
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
+            'shuffle'            => 'yes',
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            // Merchant Filter für Yadore
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',
+            'exclude_merchants'  => '',
+        ], $atts, 'combined_products');
+        
+        $combined = [];
+        $yadore_limit = (int) $atts['yadore_limit'];
+        $amazon_limit = (int) $atts['amazon_limit'];
+        $custom_limit = (int) $atts['custom_limit'];
+        
+        $keyword = trim((string) $atts['keyword']);
+        $keywords_string = trim((string) $atts['keywords']);
+        
+        // Merchant Filter
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
+        
+        // 1. Eigene Produkte laden
+        if (!empty($atts['custom_ids'])) {
+            $ids = array_map('intval', explode(',', (string) $atts['custom_ids']));
+            $ids = array_filter($ids);
+            $custom_items = $this->custom_products->get_products_by_ids($ids);
+            $combined = array_merge($combined, $custom_items);
+        } elseif (!empty($atts['custom_category'])) {
+            $custom_items = $this->custom_products->get_products_by_category(
+                (string) $atts['custom_category'],
+                $custom_limit > 0 ? $custom_limit : 5
+            );
+            $combined = array_merge($combined, $custom_items);
+        } elseif ($atts['custom_fuzzy'] === 'yes' && ($keyword !== '' || $keywords_string !== '')) {
+            $search_term = $keyword !== '' ? $keyword : explode(',', $keywords_string)[0];
+            $custom_items = $this->custom_products->search_products_fuzzy(
+                trim($search_term),
+                $custom_limit > 0 ? $custom_limit : 3
+            );
+            $combined = array_merge($combined, $custom_items);
+        } elseif ($custom_limit > 0) {
+            $custom_items = $this->custom_products->get_all_products($custom_limit);
+            $combined = array_merge($combined, $custom_items);
+        }
+        
+        // 2. Yadore Produkte laden
+        if ($this->yadore_api->is_configured() && $yadore_limit > 0 && ($keyword !== '' || $keywords_string !== '')) {
+            if ($keywords_string !== '') {
+                $keywords = array_map('trim', explode(',', $keywords_string));
+                $keywords = array_filter($keywords);
+                $yadore_items = $this->fetch_multi_keywords_with_filter(
+                    $keywords, 
+                    $yadore_limit, 
+                    ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
+                    $merchant_whitelist,
+                    $merchant_blacklist
+                );
+            } else {
+                $yadore_items = $this->yadore_api->fetch([
+                    'keyword'            => $keyword,
+                    'limit'              => $yadore_limit,
+                    'market'             => (string) $atts['market'],
+                    'sort'               => (string) $atts['sort'],
+                    'merchant_whitelist' => $merchant_whitelist,
+                    'merchant_blacklist' => $merchant_blacklist,
+                ]);
+                
+                if (is_wp_error($yadore_items)) {
+                    $yadore_items = [];
+                }
+            }
+            
+            if (!empty($yadore_items)) {
+                $combined = array_merge($combined, $yadore_items);
             }
         }
-
-        if (yaa_get_option('load_assets_globally', 'no') === 'yes') {
-            return true;
+        
+        // 3. Amazon Produkte laden
+        if ($this->amazon_api->is_configured() && $amazon_limit > 0 && $keyword !== '') {
+            $amazon_items = $this->amazon_api->search_items(
+                $keyword,
+                (string) $atts['category'],
+                $amazon_limit
+            );
+            
+            if (!is_wp_error($amazon_items) && !empty($amazon_items)) {
+                $combined = array_merge($combined, $amazon_items);
+            }
         }
-
-        return false;
+        
+        $combined = $this->filter_items_without_image($combined, $atts);
+        
+        if (empty($combined)) {
+            return $this->render_empty();
+        }
+        
+        if ((string) $atts['shuffle'] === 'yes') {
+            shuffle($combined);
+        }
+        
+        return $this->render_grid($combined, $atts);
     }
-
-    private function get_default_sort(): string {
-        $saved_sort = yaa_get_option('search_default_sort', '');
+    
+    /**
+     * Render all sources combined
+     */
+    public function render_all_sources(array|string $atts = []): string {
+        $atts = shortcode_atts([
+            'keyword'            => '',
+            'keywords'           => '',
+            'total_limit'        => 12,
+            'custom_ids'         => '',
+            'custom_category'    => '',
+            'custom_fuzzy'       => 'no',
+            'market'             => (string) yaa_get_option('yadore_market', 'de'),
+            'category'           => (string) yaa_get_option('amazon_default_category', 'All'),
+            'sort'               => (string) yaa_get_option('yadore_default_sort', 'rel_desc'),
+            'priority'           => 'custom,yadore,amazon',
+            'shuffle'            => 'no',
+            'columns'            => '',
+            'class'              => '',
+            'local_images'       => '',
+            'hide_no_image'      => 'no',
+            // Merchant Filter
+            'merchant_whitelist' => '',
+            'merchant_blacklist' => '',
+            'merchants'          => '',
+            'exclude_merchants'  => '',
+        ], $atts, 'all_products');
         
-        if ($saved_sort === '' || $saved_sort === 'rel_desc') {
-            return 'relevance';
+        $total_limit = (int) $atts['total_limit'];
+        $combined = [];
+        $remaining = $total_limit;
+        
+        $priorities = array_map('trim', explode(',', (string) $atts['priority']));
+        
+        // Merchant Filter
+        $merchant_whitelist = $atts['merchant_whitelist'] ?: $atts['merchants'];
+        $merchant_blacklist = $atts['merchant_blacklist'] ?: $atts['exclude_merchants'];
+        
+        foreach ($priorities as $source) {
+            if ($remaining <= 0) {
+                break;
+            }
+            
+            $items = [];
+            
+            switch ($source) {
+                case 'custom':
+                    if (!empty($atts['custom_ids'])) {
+                        $ids = array_map('intval', explode(',', (string) $atts['custom_ids']));
+                        $items = $this->custom_products->get_products_by_ids($ids);
+                    } elseif (!empty($atts['custom_category'])) {
+                        $items = $this->custom_products->get_products_by_category(
+                            (string) $atts['custom_category'],
+                            $remaining
+                        );
+                    } elseif ($atts['custom_fuzzy'] === 'yes') {
+                        $keyword = trim((string) $atts['keyword']);
+                        if ($keyword !== '') {
+                            $items = $this->custom_products->search_products_fuzzy($keyword, $remaining);
+                        }
+                    } else {
+                        $items = $this->custom_products->get_all_products($remaining);
+                    }
+                    break;
+                    
+                case 'yadore':
+                    if ($this->yadore_api->is_configured()) {
+                        $keyword = trim((string) $atts['keyword']);
+                        $keywords_string = trim((string) $atts['keywords']);
+                        
+                        if ($keywords_string !== '') {
+                            $keywords = array_map('trim', explode(',', $keywords_string));
+                            $items = $this->fetch_multi_keywords_with_filter(
+                                $keywords, 
+                                $remaining, 
+                                ['market' => (string) $atts['market'], 'precision' => (string) yaa_get_option('yadore_precision', 'fuzzy'), 'sort' => (string) $atts['sort']],
+                                $merchant_whitelist,
+                                $merchant_blacklist
+                            );
+                        } elseif ($keyword !== '') {
+                            $result = $this->yadore_api->fetch([
+                                'keyword'            => $keyword,
+                                'limit'              => $remaining,
+                                'market'             => (string) $atts['market'],
+                                'sort'               => (string) $atts['sort'],
+                                'merchant_whitelist' => $merchant_whitelist,
+                                'merchant_blacklist' => $merchant_blacklist,
+                            ]);
+                            if (!is_wp_error($result)) {
+                                $items = $result;
+                            }
+                        }
+                    }
+                    break;
+                    
+                case 'amazon':
+                    if ($this->amazon_api->is_configured()) {
+                        $keyword = trim((string) $atts['keyword']);
+                        if ($keyword !== '') {
+                            $result = $this->amazon_api->search_items(
+                                $keyword,
+                                (string) $atts['category'],
+                                min($remaining, 10)
+                            );
+                            if (!is_wp_error($result)) {
+                                $items = $result;
+                            }
+                        }
+                    }
+                    break;
+            }
+            
+            if (!empty($items)) {
+                $to_add = array_slice($items, 0, $remaining);
+                $combined = array_merge($combined, $to_add);
+                $remaining -= count($to_add);
+            }
         }
         
-        return array_key_exists($saved_sort, self::SORT_OPTIONS) ? $saved_sort : 'relevance';
+        $combined = $this->filter_items_without_image($combined, $atts);
+        
+        if (empty($combined)) {
+            return $this->render_empty();
+        }
+        
+        if ((string) $atts['shuffle'] === 'yes') {
+            shuffle($combined);
+        }
+        
+        return $this->render_grid($combined, $atts);
     }
-
-    private function validate_sort(string $sort): string {
-        $sort = sanitize_key($sort);
+    
+    /**
+     * Produkte ohne Bild ausfiltern
+     * 
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string, mixed> $atts
+     * @return array<int, array<string, mixed>>
+     */
+    private function filter_items_without_image(array $items, array $atts): array {
+        $hide_no_image = ($atts['hide_no_image'] ?? 'no') === 'yes';
         
-        if ($sort === 'rel_desc') {
-            return 'relevance';
+        if (!$hide_no_image) {
+            return $items;
         }
         
-        return array_key_exists($sort, self::SORT_OPTIONS) ? $sort : $this->get_default_sort();
+        $filtered = array_filter($items, function($item) {
+            $image_url = $item['image']['url'] ?? '';
+            return !empty($image_url);
+        });
+        
+        return array_values($filtered);
     }
-
-    private function map_sort_to_api(string $frontend_sort): string {
-        return self::SORT_MAP_TO_API[$frontend_sort] ?? 'rel_desc';
+    
+    /**
+     * Optionales Einmischen von Fuzzy-Produkten
+     * 
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string> $keywords
+     * @param array<string, mixed> $atts
+     * @return array<int, array<string, mixed>>
+     */
+    private function maybe_mix_fuzzy_products(array $items, array $keywords, array $atts): array {
+        $mix_custom = $atts['mix_custom'] ?? '';
+        
+        $should_mix = ($mix_custom === 'yes') || 
+                      ($mix_custom === '' && $this->fuzzy_enabled && yaa_get_option('fuzzy_auto_mix', 'no') === 'yes');
+        
+        if (!$should_mix || empty($keywords)) {
+            return $items;
+        }
+        
+        $custom_limit = (int) ($atts['custom_limit'] ?? 2);
+        $position = $atts['custom_position'] ?? 'start';
+        
+        $fuzzy_items = [];
+        $per_keyword = (int) ceil($custom_limit / count($keywords));
+        
+        foreach ($keywords as $keyword) {
+            $results = $this->custom_products->search_products_fuzzy($keyword, $per_keyword);
+            $fuzzy_items = array_merge($fuzzy_items, $results);
+        }
+        
+        $unique_fuzzy = [];
+        $seen_ids = [];
+        foreach ($fuzzy_items as $item) {
+            $pid = $item['post_id'] ?? 0;
+            if (!in_array($pid, $seen_ids, true)) {
+                $unique_fuzzy[] = $item;
+                $seen_ids[] = $pid;
+            }
+        }
+        
+        $unique_fuzzy = array_slice($unique_fuzzy, 0, $custom_limit);
+        
+        if (empty($unique_fuzzy)) {
+            return $items;
+        }
+        
+        switch ($position) {
+            case 'start':
+                $items = array_merge($unique_fuzzy, $items);
+                break;
+            case 'end':
+                $items = array_merge($items, $unique_fuzzy);
+                break;
+            case 'shuffle':
+                $items = array_merge($items, $unique_fuzzy);
+                shuffle($items);
+                break;
+            case 'alternate':
+                $result = [];
+                $fuzzy_index = 0;
+                $interval = max(1, (int) floor(count($items) / (count($unique_fuzzy) + 1)));
+                
+                foreach ($items as $i => $item) {
+                    if ($fuzzy_index < count($unique_fuzzy) && $i > 0 && $i % $interval === 0) {
+                        $result[] = $unique_fuzzy[$fuzzy_index];
+                        $fuzzy_index++;
+                    }
+                    $result[] = $item;
+                }
+                
+                while ($fuzzy_index < count($unique_fuzzy)) {
+                    $result[] = $unique_fuzzy[$fuzzy_index];
+                    $fuzzy_index++;
+                }
+                
+                $items = $result;
+                break;
+        }
+        
+        return $items;
     }
-
-    private function validate_layout(string $layout): string {
-        return in_array($layout, self::VALID_LAYOUTS, true) ? $layout : 'grid';
+    
+    /**
+     * Fetch products for multiple keywords with merchant filter
+     * 
+     * @param array<string> $keywords
+     * @param int $total_limit
+     * @param array<string, mixed> $atts
+     * @param string $merchant_whitelist
+     * @param string $merchant_blacklist
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetch_multi_keywords_with_filter(
+        array $keywords, 
+        int $total_limit, 
+        array $atts,
+        string $merchant_whitelist = '',
+        string $merchant_blacklist = ''
+    ): array {
+        $keyword_count = count($keywords);
+        $base_per_keyword = (int) floor($total_limit / $keyword_count);
+        $remainder = $total_limit % $keyword_count;
+        
+        $all_items = [];
+        $items_per_keyword = [];
+        
+        foreach ($keywords as $index => $keyword) {
+            $limit_for_this = $base_per_keyword;
+            
+            if ($index < $remainder) {
+                $limit_for_this++;
+            }
+            
+            if ($limit_for_this <= 0) {
+                continue;
+            }
+            
+            $result = $this->yadore_api->fetch([
+                'keyword'            => $keyword,
+                'limit'              => $limit_for_this,
+                'market'             => (string) ($atts['market'] ?? yaa_get_option('yadore_market', 'de')),
+                'precision'          => (string) ($atts['precision'] ?? yaa_get_option('yadore_precision', 'fuzzy')),
+                'sort'               => (string) ($atts['sort'] ?? yaa_get_option('yadore_default_sort', 'rel_desc')),
+                'merchant_whitelist' => $merchant_whitelist,
+                'merchant_blacklist' => $merchant_blacklist,
+            ]);
+            
+            if (!is_wp_error($result) && !empty($result)) {
+                $items_per_keyword[$keyword] = $result;
+            }
+            
+            if ($index < $keyword_count - 1) {
+                usleep(200000);
+            }
+        }
+        
+        $collected = 0;
+        
+        foreach ($items_per_keyword as $keyword => $items) {
+            $remaining_slots = $total_limit - $collected;
+            $to_add = min(count($items), $remaining_slots);
+            
+            for ($i = 0; $i < $to_add; $i++) {
+                $all_items[] = $items[$i];
+                $collected++;
+            }
+            
+            if ($collected >= $total_limit) {
+                break;
+            }
+        }
+        
+        return $all_items;
     }
-
-    public function render_shortcode(array $atts = [], ?string $content = null, string $tag = ''): string {
-        $this->instance_id++;
-        
-        $atts = shortcode_atts(self::DEFAULT_ATTS, $atts, $tag ?: 'yaa_search');
-        
-        if (!empty($atts['sort'])) {
-            $atts['default_sort'] = $atts['sort'];
+    
+    /**
+     * Process image URL - Mit SEO-Dateinamen Support
+     * 
+     * @param string $remote_url Remote image URL
+     * @param string $unique_id Unique identifier (ASIN, EAN, post_id)
+     * @param string $source Source (amazon, yadore, custom)
+     * @param string $product_name Product name for SEO filename
+     * @param array<string, mixed> $atts Shortcode attributes
+     * @return string Local or remote URL
+     */
+    private function process_image_url(
+        string $remote_url, 
+        string $unique_id, 
+        string $source, 
+        string $product_name = '',
+        array $atts = []
+    ): string {
+        if ($remote_url === '') {
+            return '';
         }
         
-        $atts = $this->sanitize_attributes($atts);
+        $local_images_override = $atts['local_images'] ?? '';
         
-        if (empty($atts['id'])) {
-            $atts['id'] = 'yaa-search-' . $this->instance_id;
-        }
-
-        if (!$this->is_any_api_configured()) {
-            return $this->render_no_api_message();
-        }
-
-        $initial_products = [];
-        $has_initial = false;
+        $use_local = $this->use_local_images;
         
-        if (!empty($atts['initial_keywords'])) {
-            $initial_products = $this->fetch_initial_products($atts);
-            $has_initial = !empty($initial_products);
+        if ($local_images_override === 'yes') {
+            $use_local = true;
+        } elseif ($local_images_override === 'no') {
+            $use_local = false;
         }
-
+        
+        // Eigene Produkte: Lokale Bilder nicht erneut herunterladen
+        if ($source === 'custom') {
+            $upload_dir = wp_upload_dir();
+            $site_url = get_site_url();
+            
+            if (str_starts_with($remote_url, $upload_dir['baseurl']) || str_starts_with($remote_url, $site_url)) {
+                return $remote_url;
+            }
+        }
+        
+        if (!$use_local) {
+            return $remote_url;
+        }
+        
+        // Nutze den Image Handler mit SEO-Dateinamen
+        return YAA_Image_Handler::process($remote_url, $unique_id, $product_name, $source);
+    }
+    
+    /**
+     * Render the product grid
+     * Version 1.5.1: Mit Shop-Logo als Fallback in der Bilderkette
+     * 
+     * Fallback-Kette:
+     * 1. Original/Lokales Bild
+     * 2. Thumbnail (data-thumbnail)
+     * 3. Proxy (data-proxy-src)
+     * 4. Shop-Logo (data-shop-logo) - NEU
+     * 5. CSS Placeholder
+     * 
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string, mixed> $atts
+     */
+    private function render_grid(array $items, array $atts): string {
+        $widget_id = 'yaa-' . uniqid();
+        $extra_class = isset($atts['class']) && (string) $atts['class'] !== '' 
+            ? ' ' . esc_attr((string) $atts['class']) 
+            : '';
+        
+        $style = '';
+        if (isset($atts['columns']) && (string) $atts['columns'] !== '') {
+            $cols = (int) $atts['columns'];
+            if ($cols >= 1 && $cols <= 6) {
+                $style = ' style="--yaa-columns-desktop: ' . $cols . ';"';
+            }
+        }
+        
+        // Settings
+        $show_prime = yaa_get_option('show_prime_badge', 'yes') === 'yes';
+        $show_merchant = yaa_get_option('show_merchant', 'yes') === 'yes';
+        $show_description = yaa_get_option('show_description', 'yes') === 'yes';
+        $show_custom_badge = yaa_get_option('show_custom_badge', 'yes') === 'yes';
+        $custom_badge_text = (string) yaa_get_option('custom_badge_text', 'Empfohlen');
+        $button_yadore = (string) yaa_get_option('button_text_yadore', 'Zum Angebot');
+        $button_amazon = (string) yaa_get_option('button_text_amazon', 'Bei Amazon kaufen');
+        $button_custom = (string) yaa_get_option('button_text_custom', 'Zum Angebot');
+        
+        // Ensure assets are loaded
+        $plugin = yaa_init();
+        $plugin->load_assets();
+        
         ob_start();
-        $this->render_search_container($atts, $initial_products, $has_initial);
+        ?>
+        <div class="yaa-grid-container<?php echo $extra_class; ?>" id="<?php echo esc_attr($widget_id); ?>"<?php echo $style; ?>>
+            <?php foreach ($items as $index => $item): 
+                $source = $item['source'] ?? 'yadore';
+                $is_amazon = $source === 'amazon';
+                $is_custom = $source === 'custom';
+                $url = $item['url'] ?? '#';
+                $title = $item['title'] ?? '';
+                
+                // === BILD-VERARBEITUNG MIT ERWEITERTER FALLBACK-KETTE ===
+                
+                // Haupt-Bild URL
+                $raw_image_url = $item['image']['url'] ?? '';
+                
+                // Thumbnail URL für Fallback
+                $thumbnail_url = '';
+                if ($source === 'yadore') {
+                    $thumbnail_url = $item['image']['thumbnail_url'] ?? '';
+                }
+                if ($source === 'amazon' && isset($item['image']['medium_url'])) {
+                    $thumbnail_url = $item['image']['medium_url'];
+                }
+                
+                // NEU: Shop-Logo als Fallback (aus Yadore API)
+                $shop_logo_url = '';
+                if (isset($item['merchant']['logo']) && !empty($item['merchant']['logo'])) {
+                    $shop_logo_url = $item['merchant']['logo'];
+                }
+                
+                // Unique ID für Bild-Verarbeitung
+                $image_unique_id = match($source) {
+                    'amazon' => $item['asin'] ?? $item['id'] ?? uniqid('amz_'),
+                    'custom' => (string) ($item['post_id'] ?? $item['id'] ?? uniqid('cst_')),
+                    'yadore' => $item['id'] ?? uniqid('ydr_'),
+                    default  => $item['id'] ?? uniqid('img_'),
+                };
+                
+                // Produktname für SEO-Dateinamen übergeben
+                $image_url = $this->process_image_url(
+                    $raw_image_url, 
+                    $image_unique_id, 
+                    $source, 
+                    $title,
+                    $atts
+                );
+                
+                // Auch Thumbnail lokal speichern wenn aktiviert (aber nur wenn unterschiedlich)
+                $processed_thumbnail_url = '';
+                if ($thumbnail_url !== '' && $thumbnail_url !== $raw_image_url) {
+                    $processed_thumbnail_url = $this->process_image_url(
+                        $thumbnail_url,
+                        $image_unique_id . '_thumb',
+                        $source,
+                        $title . ' Thumbnail',
+                        $atts
+                    );
+                }
+                
+                $description = $item['description'] ?? '';
+                $price_amount = $item['price']['amount'] ?? '';
+                $price_currency = $item['price']['currency'] ?? 'EUR';
+                $price_display = $item['price']['display'] ?? '';
+                $merchant_name = $item['merchant']['name'] ?? '';
+                $is_prime = !empty($item['is_prime']);
+                
+                $custom_button = $item['button_text'] ?? '';
+                if ($custom_button !== '') {
+                    $button_text = $custom_button;
+                } elseif ($is_amazon) {
+                    $button_text = $button_amazon;
+                } elseif ($is_custom) {
+                    $button_text = $button_custom;
+                } else {
+                    $button_text = $button_yadore;
+                }
+                
+                $source_class = 'yaa-' . $source;
+            ?>
+                <div class="yaa-item <?php echo esc_attr($source_class); ?>">
+                    
+                    <?php if ($show_prime && $is_prime): ?>
+                        <span class="yaa-prime-badge">Prime</span>
+                    <?php endif; ?>
+                    
+                    <?php if ($is_custom && $show_custom_badge): ?>
+                        <span class="yaa-custom-badge"><?php echo esc_html($custom_badge_text); ?></span>
+                    <?php endif; ?>
+                    
+                    <div class="yaa-image-wrapper">
+                        <?php 
+                        // Proxy-URL generieren falls Proxy aktiviert
+                        $proxy_enabled = yaa_get_option('enable_image_proxy', 'yes') === 'yes';
+                        $proxy_url = '';
+                        
+                        if ($proxy_enabled && $raw_image_url !== '') {
+                            $proxy_url = admin_url('admin-ajax.php') . '?' . http_build_query([
+                                'action' => 'yaa_proxy_image',
+                                'url'    => $raw_image_url,
+                            ]);
+                        }
+                        
+                        // Finale Bild-URL bestimmen:
+                        // 1. Lokales/verarbeitetes Bild wenn verfügbar
+                        // 2. Proxy-URL als Fallback
+                        // 3. Original-URL als letzter Fallback
+                        $final_src = $image_url;
+                        
+                        // Fix: esc_url() filtert data: URLs - also prüfen ob leer
+                        if ($final_src === '' || str_starts_with($final_src, 'data:')) {
+                            // Proxy als primäre Quelle verwenden
+                            $final_src = $proxy_url !== '' ? $proxy_url : $raw_image_url;
+                        }
+                        ?>
+                        
+                        <?php if ($final_src !== ''): ?>
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <img src="<?php echo esc_url($final_src); ?>" 
+                                    alt="<?php echo esc_attr($title); ?>" 
+                                    loading="lazy"
+                                    decoding="async"
+                                    referrerpolicy="no-referrer"
+                                    data-fallback-attempted="false"
+                                    <?php if ($processed_thumbnail_url !== ''): ?>
+                                    data-thumbnail="<?php echo esc_url($processed_thumbnail_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($raw_image_url !== '' && $raw_image_url !== $final_src): ?>
+                                    data-original-src="<?php echo esc_url($raw_image_url); ?>"
+                                    <?php endif; ?>
+                                    <?php if ($proxy_url !== '' && $proxy_url !== $final_src): ?>
+                                    data-proxy-src="<?php echo esc_url($proxy_url); ?>"
+                                    <?php endif; ?>
+                                    <?php // NEU: Shop-Logo als Fallback ?>
+                                    <?php if ($shop_logo_url !== ''): ?>
+                                    data-shop-logo="<?php echo esc_url($shop_logo_url); ?>"
+                                    <?php endif; ?>
+                                    data-source="<?php echo esc_attr($source); ?>"
+                                    data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                            </a>
+                        <?php else: ?>
+                            <!-- Kein Bild verfügbar - Shop-Logo als erste Option, dann Placeholder -->
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <?php if ($shop_logo_url !== ''): ?>
+                                    <img src="<?php echo esc_url($shop_logo_url); ?>" 
+                                        alt="<?php echo esc_attr($merchant_name); ?>" 
+                                        loading="lazy"
+                                        decoding="async"
+                                        referrerpolicy="no-referrer"
+                                        class="yaa-shop-logo-fallback"
+                                        data-fallback-attempted="shop-logo"
+                                        data-source="<?php echo esc_attr($source); ?>"
+                                        data-merchant="<?php echo esc_attr($merchant_name); ?>">
+                                <?php else: ?>
+                                    <div class="yaa-placeholder yaa-placeholder-<?php echo esc_attr($source); ?>" 
+                                        aria-hidden="true" 
+                                        role="img" 
+                                        aria-label="<?php esc_attr_e('Bild nicht verfügbar', 'yadore-amazon-api'); ?>">
+                                    </div>
+                                <?php endif; ?>
+                            </a>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="yaa-content">
+                        <h3 class="yaa-title">
+                            <a href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <?php echo esc_html($title); ?>
+                            </a>
+                        </h3>
+
+                        <?php if ($show_description && $description !== ''): ?>
+                            <div class="yaa-description-wrapper">
+                                <div class="yaa-description" id="desc-<?php echo esc_attr($widget_id . '-' . $index); ?>">
+                                    <?php echo esc_html($description); ?>
+                                </div>
+                                <button type="button" class="yaa-read-more" 
+                                        data-target="<?php echo esc_attr($widget_id . '-' . $index); ?>"
+                                        data-expand-text="<?php esc_attr_e('mehr lesen', 'yadore-amazon-api'); ?>"
+                                        data-collapse-text="<?php esc_attr_e('weniger', 'yadore-amazon-api'); ?>"
+                                        aria-expanded="false"
+                                        role="button"
+                                        tabindex="0">
+                                    <?php esc_html_e('mehr lesen', 'yadore-amazon-api'); ?>
+                                </button>
+                            </div>
+                        <?php elseif ($show_description): ?>
+                            <div class="yaa-no-description"><?php esc_html_e('Keine Beschreibung verfügbar', 'yadore-amazon-api'); ?></div>
+                        <?php endif; ?>
+
+                        <div class="yaa-meta">
+                            <?php if ($price_amount !== '' || $price_display !== ''): ?>
+                                <span class="yaa-price">
+                                    <?php 
+                                    if ($price_display !== '') {
+                                        echo esc_html($price_display);
+                                    } else {
+                                        echo esc_html(number_format((float) $price_amount, 2, ',', '.') . ' ' . $price_currency);
+                                    }
+                                    ?>
+                                </span>
+                            <?php endif; ?>
+                            
+                            <?php if ($show_merchant && $merchant_name !== ''): ?>
+                                <div class="yaa-merchant">
+                                    <?php echo esc_html($merchant_name); ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="yaa-button-wrapper">
+                            <a class="yaa-button" href="<?php echo esc_url($url); ?>" target="_blank" rel="nofollow sponsored noopener">
+                                <?php echo esc_html($button_text); ?>
+                            </a>
+                        </div>
+                    </div>
+
+                </div>
+            <?php endforeach; ?>
+        </div>
+        <?php
         return ob_get_clean() ?: '';
     }
 
-    private function sanitize_attributes(array $atts): array {
-        return [
-            'placeholder'        => sanitize_text_field($atts['placeholder']),
-            'button_text'        => sanitize_text_field($atts['button_text']),
-            'show_filters'       => $this->to_bool($atts['show_filters']),
-            'show_source_filter' => $this->to_bool($atts['show_source_filter']),
-            'default_sort'       => $this->validate_sort($atts['default_sort']),
-            'products_per_page'  => min(max(absint($atts['products_per_page']), 1), 50),
-            'max_products'       => min(max(absint($atts['max_products']), 1), 200),
-            'layout'             => $this->validate_layout($atts['layout']),
-            'columns'            => min(max(absint($atts['columns']), 1), 6),
-            'columns_tablet'     => min(max(absint($atts['columns_tablet']), 1), 4),
-            'columns_mobile'     => min(max(absint($atts['columns_mobile']), 1), 2),
-            'show_price'         => $this->to_bool($atts['show_price']),
-            'show_rating'        => $this->to_bool($atts['show_rating']),
-            'show_prime'         => $this->to_bool($atts['show_prime']),
-            'show_availability'  => $this->to_bool($atts['show_availability']),
-            'show_description'   => $this->to_bool($atts['show_description']),
-            'show_merchant'      => $this->to_bool($atts['show_merchant']),
-            'description_length' => min(max(absint($atts['description_length']), 50), 500),
-            'target'             => in_array($atts['target'], ['_blank', '_self', '_parent', '_top'], true) 
-                                    ? $atts['target'] : '_blank',
-            'nofollow'           => $this->to_bool($atts['nofollow']),
-            'sponsored'          => $this->to_bool($atts['sponsored']),
-            'class'              => sanitize_html_class($atts['class']),
-            'id'                 => sanitize_html_class($atts['id']),
-            'api_source'         => sanitize_key($atts['api_source']),
-            'category'           => sanitize_text_field($atts['category']),
-            'min_price'          => $this->sanitize_price($atts['min_price']),
-            'max_price'          => $this->sanitize_price($atts['max_price']),
-            'prime_only'         => $this->to_bool($atts['prime_only']),
-            'min_rating'         => $this->sanitize_rating($atts['min_rating']),
-            'button_style'       => in_array($atts['button_style'], ['primary', 'secondary', 'outline', 'text'], true)
-                                    ? $atts['button_style'] : 'primary',
-            'image_size'         => in_array($atts['image_size'], ['small', 'medium', 'large'], true)
-                                    ? $atts['image_size'] : 'medium',
-            'lazy_load'          => $this->to_bool($atts['lazy_load']),
-            'analytics'          => $this->to_bool($atts['analytics']),
-            'live_search'        => $this->to_bool($atts['live_search']),
-            'min_chars'          => min(max(absint($atts['min_chars']), 1), 10),
-            'debounce'           => min(max(absint($atts['debounce']), 100), 2000),
-            'cache_duration'     => $this->sanitize_cache_duration($atts['cache_duration']),
-            'initial_keywords'   => sanitize_text_field($atts['initial_keywords']),
-            'initial_count'      => min(max(absint($atts['initial_count']), 1), 24),
-            'show_reset'         => $this->to_bool($atts['show_reset']),
-        ];
-    }
-
-    private function to_bool($value): bool {
-        if (is_bool($value)) {
-            return $value;
-        }
-        if (is_string($value)) {
-            return in_array(strtolower($value), ['true', '1', 'yes', 'on'], true);
-        }
-        return (bool) $value;
-    }
-
-    private function sanitize_price(string $price): string {
-        if (empty($price)) {
-            return '';
-        }
-        $price = preg_replace('/[^\d.,]/', '', $price);
-        return $price !== null ? $price : '';
-    }
-
-    private function sanitize_rating(string $rating): string {
-        if (empty($rating)) {
-            return '';
-        }
-        $rating_float = (float)$rating;
-        return ($rating_float >= 1 && $rating_float <= 5) ? (string)$rating_float : '';
-    }
-
-    private function sanitize_cache_duration(string $duration): int {
-        if (empty($duration)) {
-            return 0;
-        }
-        return min(absint($duration), 86400 * 7);
-    }
-
-    private function is_any_api_configured(): bool {
-        if ($this->yadore_api !== null && $this->yadore_api->is_configured()) {
-            return true;
-        }
-        if ($this->amazon_api !== null && $this->amazon_api->is_configured()) {
-            return true;
-        }
-        return false;
-    }
-
-    private function render_no_api_message(): string {
-        if (current_user_can('manage_options')) {
-            return sprintf(
-                '<div class="yaa-notice yaa-notice-warning">%s <a href="%s">%s</a></div>',
-                esc_html__('Keine API konfiguriert.', 'yadore-amazon-api'),
-                esc_url(admin_url('admin.php?page=yaa-settings')),
-                esc_html__('Jetzt konfigurieren', 'yadore-amazon-api')
-            );
-        }
-        return '';
-    }
-
-    private function fetch_initial_products(array $atts): array {
-        $keyword = trim($atts['initial_keywords']);
-        $limit = (int) $atts['initial_count'];
-        $sort = $atts['default_sort'];
-        
-        if ($keyword === '' || $limit <= 0) {
-            return [];
-        }
-        
-        $api_sort = $this->map_sort_to_api($sort);
-        $api_source = $atts['api_source'];
-        
-        if (($api_source === '' || $api_source === 'yadore') && 
-            $this->yadore_api !== null && $this->yadore_api->is_configured()) {
-            
-            $result = $this->yadore_api->fetch([
-                'keyword' => $keyword,
-                'limit'   => $limit,
-                'sort'    => $api_sort,
-                'market'  => yaa_get_option('yadore_market', 'de'),
-            ]);
-            
-            if (!is_wp_error($result) && !empty($result)) {
-                return $this->normalize_products($result, 'yadore');
-            }
-        }
-        
-        if (($api_source === '' || $api_source === 'amazon') && 
-            $this->amazon_api !== null && $this->amazon_api->is_configured()) {
-            
-            $category = !empty($atts['category']) ? $atts['category'] : 'All';
-            $result = $this->amazon_api->search_items($keyword, $category, min($limit, 10));
-            
-            if (!is_wp_error($result) && !empty($result)) {
-                return $this->normalize_products($result, 'amazon');
-            }
-        }
-        
-        return [];
-    }
-
     /**
-     * Normalize products - handles multiple API formats
-     * FIX: Improved price extraction for Yadore API
+     * Render error message
      */
-    private function normalize_products(array $products, string $source): array {
-        $normalized = [];
-        
-        foreach ($products as $product) {
-            $price_data = $this->extract_price_data($product);
-            
-            $normalized[] = [
-                'id'              => $product['id'] ?? $product['asin'] ?? $product['offerId'] ?? uniqid('prod_'),
-                'asin'            => $product['asin'] ?? '',
-                'title'           => $product['title'] ?? $product['name'] ?? '',
-                'description'     => $product['description'] ?? '',
-                'url'             => $product['url'] ?? $product['clickUrl'] ?? $product['deeplink'] ?? '#',
-                'image_url'       => $product['image']['url'] ?? $product['image_url'] ?? $product['imageUrl'] ?? '',
-                'price'           => $price_data['display'],
-                'price_amount'    => $price_data['amount'],
-                'price_old'       => $this->extract_old_price($product),
-                'currency'        => $price_data['currency'],
-                'discount_percent'=> $product['discount_percent'] ?? $product['discountPercent'] ?? null,
-                'merchant'        => $product['merchant']['name'] ?? (is_string($product['merchant'] ?? null) ? $product['merchant'] : '') ?? $product['merchantName'] ?? '',
-                'source'          => $source,
-                'is_prime'        => !empty($product['is_prime']) || !empty($product['isPrime']),
-                'rating'          => $product['rating'] ?? $product['reviewRating'] ?? null,
-                'reviews_count'   => $product['reviews_count'] ?? $product['reviewCount'] ?? null,
-                'availability'    => $product['availability'] ?? $product['availabilityMessage'] ?? null,
-                'availability_status' => $product['availability_status'] ?? 'unknown',
-                'sponsored'       => $product['sponsored'] ?? false,
-            ];
-        }
-        
-        return $normalized;
+    private function render_error(string $message): string {
+        return '<div class="yaa-message yaa-error"><span class="yaa-icon">⚠️</span><p>' . 
+               esc_html($message) . '</p></div>';
     }
-
+    
     /**
-     * Extract price data from product - handles multiple API formats
+     * Render empty state
      */
-    private function extract_price_data(array $product): array {
-        // Method 1: price.display exists (Amazon format)
-        if (!empty($product['price']['display'])) {
-            return [
-                'display'  => $product['price']['display'],
-                'amount'   => $product['price']['amount'] ?? '',
-                'currency' => $product['price']['currency'] ?? 'EUR',
-            ];
-        }
-        
-        // Method 2: price.amount exists (Yadore format)
-        if (!empty($product['price']['amount'])) {
-            $amount = $product['price']['amount'];
-            $currency = $product['price']['currency'] ?? 'EUR';
-            return [
-                'display'  => $this->format_price_display($amount, $currency),
-                'amount'   => $amount,
-                'currency' => $currency,
-            ];
-        }
-        
-        // Method 3: price is a string directly
-        if (is_string($product['price'] ?? null) && !empty($product['price'])) {
-            return [
-                'display'  => $product['price'],
-                'amount'   => preg_replace('/[^\d,.]/', '', $product['price']) ?? '',
-                'currency' => 'EUR',
-            ];
-        }
-        
-        // Method 4: displayPrice field
-        if (!empty($product['displayPrice'])) {
-            return [
-                'display'  => $product['displayPrice'],
-                'amount'   => preg_replace('/[^\d,.]/', '', $product['displayPrice']) ?? '',
-                'currency' => $product['currency'] ?? 'EUR',
-            ];
-        }
-        
-        // Method 5: price_amount flat field
-        if (!empty($product['price_amount']) || !empty($product['priceAmount'])) {
-            $amount = $product['price_amount'] ?? $product['priceAmount'];
-            $currency = $product['currency'] ?? 'EUR';
-            return [
-                'display'  => $this->format_price_display($amount, $currency),
-                'amount'   => $amount,
-                'currency' => $currency,
-            ];
-        }
-        
-        // Method 6: currentPrice object
-        if (!empty($product['currentPrice']['amount'])) {
-            $amount = $product['currentPrice']['amount'];
-            $currency = $product['currentPrice']['currency'] ?? 'EUR';
-            return [
-                'display'  => $this->format_price_display($amount, $currency),
-                'amount'   => $amount,
-                'currency' => $currency,
-            ];
-        }
-        
-        return ['display' => '', 'amount' => '', 'currency' => 'EUR'];
-    }
-
-    /**
-     * Format price amount for display
-     */
-    private function format_price_display(string|float|int $amount, string $currency = 'EUR'): string {
-        if (empty($amount) || $amount === '0' || $amount === 0) {
-            return '';
-        }
-        
-        $amount_str = (string) $amount;
-        
-        // European format (29,99)
-        if (preg_match('/^\d+,\d{2}$/', $amount_str)) {
-            $amount_float = (float) str_replace(',', '.', $amount_str);
-        }
-        // Mixed format (1,234.56)
-        elseif (str_contains($amount_str, ',') && str_contains($amount_str, '.')) {
-            $amount_float = (float) str_replace(',', '', $amount_str);
-        }
-        else {
-            $amount_float = (float) $amount_str;
-        }
-        
-        if ($amount_float <= 0) {
-            return '';
-        }
-        
-        $symbols = [
-            'EUR' => '€',
-            'USD' => '$',
-            'GBP' => '£',
-            'CHF' => 'CHF',
-            'PLN' => 'zł',
-        ];
-        
-        $symbol = $symbols[strtoupper($currency)] ?? $currency;
-        
-        return number_format($amount_float, 2, ',', '.') . ' ' . $symbol;
-    }
-
-    /**
-     * Extract old/original price from product
-     */
-    private function extract_old_price(array $product): string {
-        $old_price = $product['price_old'] 
-                     ?? $product['originalPrice']['amount'] 
-                     ?? $product['originalPrice']['display']
-                     ?? $product['listPrice']['amount']
-                     ?? $product['wasPrice']
-                     ?? '';
-        
-        if (empty($old_price)) {
-            return '';
-        }
-        
-        if (is_numeric($old_price)) {
-            $currency = $product['price']['currency'] ?? $product['currency'] ?? 'EUR';
-            return $this->format_price_display($old_price, $currency);
-        }
-        
-        return (string) $old_price;
-    }
-
-    private function render_search_container(array $atts, array $initial_products, bool $has_initial): void {
-        $wrapper_classes = $this->build_wrapper_classes($atts);
-        $data_attributes = $this->build_data_attributes($atts, $has_initial);
-        ?>
-        <div id="<?php echo esc_attr($atts['id']); ?>" 
-             class="<?php echo esc_attr($wrapper_classes); ?>"
-             <?php echo $data_attributes; // phpcs:ignore ?>>
-            
-            <?php $this->render_search_form($atts); ?>
-            
-            <?php if ($atts['show_filters']): ?>
-                <?php $this->render_filters($atts); ?>
-            <?php endif; ?>
-
-            <div class="yaa-results-info yadore-results-info" aria-live="polite" role="status" style="display: none;">
-                <span class="yaa-results-count yadore-results-count"></span>
-                <span class="yaa-results-query yadore-results-query"></span>
-            </div>
-            
-            <?php if ($has_initial): ?>
-                <div class="yaa-initial-products yadore-initial-products">
-                    <div class="yaa-products-grid yadore-products-grid">
-                        <?php foreach ($initial_products as $product): ?>
-                            <?php $this->render_product_card($product, $atts); ?>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            <?php endif; ?>
-            
-            <div class="yaa-search-results yadore-search-results" style="display: none;"
-                 role="region"
-                 aria-label="<?php esc_attr_e('Suchergebnisse', 'yadore-amazon-api'); ?>">
-                <div class="yaa-products-grid yadore-products-grid"></div>
-            </div>
-
-            <?php if ($atts['show_reset'] && $has_initial): ?>
-                <button type="button" class="yaa-reset-btn yadore-reset-btn" style="display: none;">
-                    <?php esc_html_e('← Zurück zu Empfehlungen', 'yadore-amazon-api'); ?>
-                </button>
-            <?php endif; ?>
-            
-            <div class="yaa-loading yadore-loading" aria-hidden="true" style="display: none;">
-                <div class="yaa-spinner yadore-spinner"></div>
-                <span class="screen-reader-text"><?php esc_html_e('Laden...', 'yadore-amazon-api'); ?></span>
-            </div>
-            
-            <div class="yaa-status yadore-status" style="display: none;"></div>
-        </div>
-        <?php
-    }
-
-    private function render_product_card(array $product, array $atts): void {
-        $target = esc_attr($atts['target']);
-        $rel = $this->build_rel_attribute($atts, $product);
-        $source_class = 'yaa-source-' . esc_attr($product['source'] ?? 'yadore');
-        ?>
-        <article class="yaa-product-card yadore-product-card <?php echo $source_class; ?>" 
-                 data-product-id="<?php echo esc_attr($product['id']); ?>"
-                 data-asin="<?php echo esc_attr($product['asin'] ?? ''); ?>"
-                 tabindex="0">
-            
-            <a href="<?php echo esc_url($product['url']); ?>" 
-               target="<?php echo $target; ?>" 
-               rel="<?php echo esc_attr($rel); ?>"
-               class="yaa-product-link yadore-product-link">
-                
-                <?php if ($atts['show_prime'] && !empty($product['is_prime'])): ?>
-                    <span class="yaa-badge-prime yadore-badge-prime" title="Amazon Prime">Prime</span>
-                <?php endif; ?>
-                
-                <?php if (!empty($product['discount_percent'])): ?>
-                    <span class="yaa-badge-discount yadore-badge-discount">-<?php echo esc_html($product['discount_percent']); ?>%</span>
-                <?php endif; ?>
-                
-                <?php if (!empty($product['source'])): ?>
-                    <span class="yaa-badge-source yadore-badge-source"><?php echo esc_html($product['source']); ?></span>
-                <?php endif; ?>
-                
-                <div class="yaa-product-image yadore-product-image">
-                    <?php if (!empty($product['image_url'])): ?>
-                        <?php if ($atts['lazy_load']): ?>
-                            <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-                                 data-src="<?php echo esc_url($product['image_url']); ?>" 
-                                 alt="<?php echo esc_attr($product['title']); ?>" 
-                                 class="yaa-lazy-img yadore-lazy-img"
-                                 data-fallback-attempted="false"
-                                 loading="lazy">
-                        <?php else: ?>
-                            <img src="<?php echo esc_url($product['image_url']); ?>" 
-                                 alt="<?php echo esc_attr($product['title']); ?>"
-                                 loading="lazy">
-                        <?php endif; ?>
-                        <div class="yaa-img-loader yadore-img-loader"></div>
-                    <?php else: ?>
-                        <div class="yaa-no-image yadore-no-image">
-                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                                <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                            </svg>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                
-                <div class="yaa-product-content yadore-product-content">
-                    <h3 class="yaa-product-title yadore-product-title"><?php echo esc_html($product['title']); ?></h3>
-                    
-                    <?php if ($atts['show_rating'] && !empty($product['rating'])): ?>
-                        <div class="yaa-product-rating yadore-product-rating" 
-                             aria-label="<?php printf(esc_attr__('Bewertung: %s von 5 Sternen', 'yadore-amazon-api'), $product['rating']); ?>">
-                            <span class="yaa-stars yadore-stars" style="--rating: <?php echo esc_attr($product['rating']); ?>;"></span>
-                            <?php if (!empty($product['reviews_count'])): ?>
-                                <span class="yaa-reviews-count yadore-reviews-count">(<?php echo esc_html($product['reviews_count']); ?>)</span>
-                            <?php endif; ?>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($atts['show_description'] && !empty($product['description'])): ?>
-                        <p class="yaa-product-desc yadore-product-desc">
-                            <?php echo esc_html(wp_trim_words($product['description'], 20, '…')); ?>
-                        </p>
-                    <?php endif; ?>
-                    
-                    <?php if ($atts['show_merchant'] && !empty($product['merchant'])): ?>
-                        <div class="yaa-product-merchant yadore-product-merchant">
-                            <?php echo esc_html($product['merchant']); ?>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($atts['show_price'] && !empty($product['price'])): ?>
-                        <div class="yaa-price-wrapper yadore-price-wrapper">
-                            <span class="yaa-price yadore-price"><?php echo esc_html($product['price']); ?></span>
-                            <?php if (!empty($product['price_old'])): ?>
-                                <span class="yaa-price-old yadore-price-old"><?php echo esc_html($product['price_old']); ?></span>
-                            <?php endif; ?>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($atts['show_availability'] && !empty($product['availability'])): ?>
-                        <div class="yaa-availability yadore-availability yaa-availability-<?php echo esc_attr($product['availability_status']); ?>">
-                            <?php echo esc_html($product['availability']); ?>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($atts['sponsored'] && !empty($product['sponsored'])): ?>
-                        <span class="yaa-sponsored yadore-sponsored"><?php esc_html_e('Anzeige', 'yadore-amazon-api'); ?></span>
-                    <?php endif; ?>
-                </div>
-            </a>
-            
-            <div class="yaa-product-actions yadore-product-actions">
-                <a href="<?php echo esc_url($product['url']); ?>" 
-                   target="<?php echo $target; ?>" 
-                   rel="<?php echo esc_attr($rel); ?>"
-                   class="yaa-product-btn yadore-product-btn"
-                   data-product-id="<?php echo esc_attr($product['id']); ?>">
-                    <?php echo esc_html(yaa_get_option('button_text_yadore', 'Zum Angebot')); ?>
-                    <span class="yaa-icon-external yadore-icon-external" aria-hidden="true">↗</span>
-                </a>
-            </div>
-        </article>
-        <?php
-    }
-
-    private function build_rel_attribute(array $atts, array $product = []): string {
-        $rel = [];
-        
-        if ($atts['nofollow']) {
-            $rel[] = 'nofollow';
-        }
-        if ($atts['sponsored'] || !empty($product['sponsored'])) {
-            $rel[] = 'sponsored';
-        }
-        if ($atts['target'] === '_blank') {
-            $rel[] = 'noopener';
-            $rel[] = 'noreferrer';
-        }
-        
-        return implode(' ', $rel);
-    }
-
-    private function build_wrapper_classes(array $atts): string {
-        $classes = [
-            'yaa-search-wrapper',
-            'yadore-search-container',
-            'yaa-layout-' . $atts['layout'],
-            'yaa-columns-' . $atts['columns'],
-            'yaa-columns-tablet-' . $atts['columns_tablet'],
-            'yaa-columns-mobile-' . $atts['columns_mobile'],
-            'yaa-image-' . $atts['image_size'],
-            'yaa-native-clear',
-        ];
-        
-        if ($atts['lazy_load']) {
-            $classes[] = 'yaa-lazy-load';
-        }
-        
-        if (!empty($atts['class'])) {
-            $classes[] = $atts['class'];
-        }
-        
-        return implode(' ', $classes);
-    }
-
-    private function build_data_attributes(array $atts, bool $has_initial): string {
-        $data = [
-            'layout'             => $atts['layout'],
-            'columns'            => $atts['columns'],
-            'per-page'           => $atts['products_per_page'],
-            'max-products'       => $atts['max_products'],
-            'sort'               => $atts['default_sort'],
-            'default-sort'       => $atts['default_sort'],
-            'api-source'         => $atts['api_source'],
-            'category'           => $atts['category'],
-            'show-price'         => $atts['show_price'] ? 1 : 0,
-            'show-rating'        => $atts['show_rating'] ? 1 : 0,
-            'show-prime'         => $atts['show_prime'] ? 1 : 0,
-            'show-availability'  => $atts['show_availability'] ? 1 : 0,
-            'show-description'   => $atts['show_description'] ? 1 : 0,
-            'show-merchant'      => $atts['show_merchant'] ? 1 : 0,
-            'description-length' => $atts['description_length'],
-            'target'             => $atts['target'],
-            'nofollow'           => $atts['nofollow'] ? 1 : 0,
-            'sponsored'          => $atts['sponsored'] ? 1 : 0,
-            'min-price'          => $atts['min_price'],
-            'max-price'          => $atts['max_price'],
-            'prime-only'         => $atts['prime_only'] ? 1 : 0,
-            'min-rating'         => $atts['min_rating'],
-            'analytics'          => $atts['analytics'] ? 1 : 0,
-            'lazy-load'          => $atts['lazy_load'] ? 1 : 0,
-            'live-search'        => $atts['live_search'] ? 1 : 0,
-            'min-chars'          => $atts['min_chars'],
-            'debounce'           => $atts['debounce'],
-            'has-initial'        => $has_initial ? 1 : 0,
-            'show-initial'       => $has_initial ? 1 : 0,
-            'show-reset'         => $atts['show_reset'] ? 1 : 0,
-            'native-clear'       => 1,
-        ];
-
-        $output = '';
-        foreach ($data as $key => $value) {
-            if ($value !== '') {
-                $output .= sprintf(' data-%s="%s"', esc_attr($key), esc_attr((string)$value));
-            }
-        }
-        
-        return $output;
-    }
-
-    private function render_search_form(array $atts): void {
-        ?>
-        <form class="yaa-search-form yadore-search-form" role="search" action="" method="get">
-            <div class="yaa-input-wrapper yadore-input-wrapper">
-                <label for="<?php echo esc_attr($atts['id']); ?>-input" class="screen-reader-text">
-                    <?php esc_html_e('Produktsuche', 'yadore-amazon-api'); ?>
-                </label>
-                
-                <input type="search" 
-                       id="<?php echo esc_attr($atts['id']); ?>-input"
-                       class="yaa-input yadore-input" 
-                       name="yaa_search"
-                       placeholder="<?php echo esc_attr($atts['placeholder']); ?>"
-                       autocomplete="off"
-                       autocapitalize="off"
-                       autocorrect="off"
-                       spellcheck="false"
-                       aria-describedby="<?php echo esc_attr($atts['id']); ?>-desc">
-                
-                <button type="submit" class="yaa-submit-btn yadore-submit-btn yaa-btn-<?php echo esc_attr($atts['button_style']); ?>">
-                    <span class="yaa-btn-text yadore-btn-text"><?php echo esc_html($atts['button_text']); ?></span>
-                    <span class="yaa-btn-spinner yadore-btn-spinner" aria-hidden="true" style="display: none;"></span>
-                </button>
-            </div>
-            
-            <div id="<?php echo esc_attr($atts['id']); ?>-desc" class="screen-reader-text">
-                <?php esc_html_e('Geben Sie einen Suchbegriff ein und drücken Sie Enter oder klicken Sie auf Suchen.', 'yadore-amazon-api'); ?>
-            </div>
-            
-            <div class="yaa-suggestions yadore-suggestions" 
-                 role="listbox" 
-                 aria-label="<?php esc_attr_e('Suchvorschläge', 'yadore-amazon-api'); ?>" 
-                 style="display: none;"></div>
-        </form>
-        <?php
-    }
-
-    private function render_filters(array $atts): void {
-        ?>
-        <div class="yaa-filters yadore-filters" role="group" aria-label="<?php esc_attr_e('Filteroptionen', 'yadore-amazon-api'); ?>">
-            <div class="yaa-filters-row yadore-filters-row">
-                <?php $this->render_sort_dropdown($atts); ?>
-                
-                <?php if ($atts['show_source_filter'] && $this->has_multiple_sources()): ?>
-                    <?php $this->render_source_filter($atts); ?>
-                <?php endif; ?>
-                
-                <?php if ($atts['show_prime']): ?>
-                    <?php $this->render_prime_filter($atts); ?>
-                <?php endif; ?>
-            </div>
-        </div>
-        <?php
-    }
-
-    private function render_sort_dropdown(array $atts): void {
-        ?>
-        <div class="yaa-sort-wrapper yadore-sort-wrapper">
-            <label for="<?php echo esc_attr($atts['id']); ?>-sort" class="yaa-filter-label yadore-filter-label">
-                <?php esc_html_e('Sortieren:', 'yadore-amazon-api'); ?>
-            </label>
-            <select id="<?php echo esc_attr($atts['id']); ?>-sort" class="yaa-sort-select yadore-sort-select">
-                <?php foreach (self::SORT_OPTIONS as $value => $label): ?>
-                    <option value="<?php echo esc_attr($value); ?>" <?php selected($atts['default_sort'], $value); ?>>
-                        <?php echo esc_html($label); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <?php
-    }
-
-    private function render_source_filter(array $atts): void {
-        $sources = $this->get_available_sources();
-        ?>
-        <div class="yaa-source-wrapper yadore-source-wrapper">
-            <label for="<?php echo esc_attr($atts['id']); ?>-source" class="yaa-filter-label yadore-filter-label">
-                <?php esc_html_e('Quelle:', 'yadore-amazon-api'); ?>
-            </label>
-            <select id="<?php echo esc_attr($atts['id']); ?>-source" class="yaa-source-select yadore-source-select">
-                <option value=""><?php esc_html_e('Alle Quellen', 'yadore-amazon-api'); ?></option>
-                <?php foreach ($sources as $value => $label): ?>
-                    <option value="<?php echo esc_attr($value); ?>" <?php selected($atts['api_source'], $value); ?>>
-                        <?php echo esc_html($label); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <?php
-    }
-
-    private function render_prime_filter(array $atts): void {
-        ?>
-        <div class="yaa-prime-wrapper yadore-prime-wrapper">
-            <label class="yaa-checkbox-label yadore-checkbox-label">
-                <input type="checkbox" class="yaa-prime-checkbox yadore-prime-checkbox" <?php checked($atts['prime_only']); ?>>
-                <span class="yaa-badge-prime yadore-badge-prime">Prime</span>
-                <span class="yaa-checkbox-text yadore-checkbox-text"><?php esc_html_e('Nur Prime', 'yadore-amazon-api'); ?></span>
-            </label>
-        </div>
-        <?php
-    }
-
-    private function has_multiple_sources(): bool {
-        $count = 0;
-        if ($this->yadore_api !== null && $this->yadore_api->is_configured()) $count++;
-        if ($this->amazon_api !== null && $this->amazon_api->is_configured()) $count++;
-        return $count > 1;
-    }
-
-    private function get_available_sources(): array {
-        $sources = [];
-        if ($this->yadore_api !== null && $this->yadore_api->is_configured()) {
-            $sources['yadore'] = 'Yadore';
-        }
-        if ($this->amazon_api !== null && $this->amazon_api->is_configured()) {
-            $sources['amazon'] = 'Amazon';
-        }
-        return $sources;
-    }
-
-    public function ajax_search(): void {
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
-            
-        if (!wp_verify_nonce($nonce, 'yaa_search_nonce')) {
-            wp_send_json_error([
-                'message' => __('Sicherheitsüberprüfung fehlgeschlagen.', 'yadore-amazon-api'),
-                'code'    => 'invalid_nonce',
-            ], 403);
-        }
-
-        $keyword = isset($_POST['keyword']) ? sanitize_text_field(wp_unslash($_POST['keyword'])) : '';
-        $page = isset($_POST['page']) ? absint($_POST['page']) : 1;
-        $per_page = isset($_POST['per_page']) ? min(absint($_POST['per_page']), 50) : 12;
-        $sort = isset($_POST['sort']) ? $this->validate_sort(sanitize_key(wp_unslash($_POST['sort']))) : $this->get_default_sort();
-        $api_source = isset($_POST['api_source']) ? sanitize_key(wp_unslash($_POST['api_source'])) : '';
-
-        $min_chars = 2;
-        if (empty($keyword) || mb_strlen($keyword) < $min_chars) {
-            wp_send_json_error([
-                'message' => sprintf(__('Bitte geben Sie mindestens %d Zeichen ein.', 'yadore-amazon-api'), $min_chars),
-                'code'    => 'keyword_too_short',
-            ], 400);
-        }
-
-        $results = $this->perform_search($keyword, $page, $per_page, $sort, $api_source);
-
-        if (is_wp_error($results)) {
-            wp_send_json_error([
-                'message' => $results->get_error_message(),
-                'code'    => $results->get_error_code(),
-            ], 500);
-        }
-
-        wp_send_json_success([
-            'products'     => $results['products'],
-            'total'        => $results['total'],
-            'page'         => $page,
-            'per_page'     => $per_page,
-            'has_more'     => $results['has_more'],
-            'current_sort' => $sort,
-            'sort_label'   => self::SORT_OPTIONS[$sort] ?? 'Relevanz',
-            'keyword'      => $keyword,
-            'source'       => $results['source'] ?? 'yadore',
-            'cached'       => $results['cached'] ?? false,
-        ]);
-    }
-
-    public function ajax_suggestions(): void {
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
-            
-        if (!wp_verify_nonce($nonce, 'yaa_search_nonce')) {
-            wp_send_json_error(['message' => 'Invalid nonce'], 403);
-        }
-
-        $keyword = isset($_POST['keyword']) ? sanitize_text_field(wp_unslash($_POST['keyword'])) : '';
-
-        if (mb_strlen($keyword) < 2) {
-            wp_send_json_success(['suggestions' => []]);
-        }
-
-        $featured = yaa_get_option('yadore_featured_keywords', '');
-        $suggestions = [];
-        
-        if (!empty($featured)) {
-            $keywords = array_map('trim', explode(',', $featured));
-            $keyword_lower = mb_strtolower($keyword);
-            
-            foreach ($keywords as $kw) {
-                if (mb_strpos(mb_strtolower($kw), $keyword_lower) !== false) {
-                    $suggestions[] = ['term' => $kw, 'type' => 'popular'];
-                }
-            }
-        }
-        
-        wp_send_json_success(['suggestions' => array_slice($suggestions, 0, 5)]);
-    }
-
-    public function ajax_track_click(): void {
-        wp_send_json_success(['tracked' => true]);
-    }
-
-    private function perform_search(string $keyword, int $page, int $per_page, string $sort, string $api_source): array|\WP_Error {
-        $api_sort = $this->map_sort_to_api($sort);
-        $products = [];
-        $source = 'yadore';
-        
-        if (($api_source === '' || $api_source === 'yadore') && 
-            $this->yadore_api !== null && $this->yadore_api->is_configured()) {
-            
-            $result = $this->yadore_api->fetch([
-                'keyword' => $keyword,
-                'limit'   => $per_page * 2,
-                'sort'    => $api_sort,
-                'market'  => yaa_get_option('yadore_market', 'de'),
-            ]);
-            
-            if (!is_wp_error($result) && !empty($result)) {
-                $products = $this->normalize_products($result, 'yadore');
-                $source = 'yadore';
-            }
-        }
-        
-        if (empty($products) && ($api_source === '' || $api_source === 'amazon') && 
-            $this->amazon_api !== null && $this->amazon_api->is_configured()) {
-            
-            $result = $this->amazon_api->search_items($keyword, 'All', min($per_page, 10));
-            
-            if (!is_wp_error($result) && !empty($result)) {
-                $products = $this->normalize_products($result, 'amazon');
-                $source = 'amazon';
-            }
-        }
-        
-        if (empty($products)) {
-            return ['products' => [], 'total' => 0, 'has_more' => false, 'source' => $source, 'cached' => false];
-        }
-        
-        $products = $this->apply_sorting($products, $sort);
-        
-        $total = count($products);
-        $offset = ($page - 1) * $per_page;
-        $paginated = array_slice($products, $offset, $per_page);
-        
-        return [
-            'products' => $paginated,
-            'total'    => $total,
-            'has_more' => ($offset + $per_page) < $total,
-            'source'   => $source,
-            'cached'   => false,
-        ];
-    }
-
-    private function apply_sorting(array $products, string $sort): array {
-        if (empty($products)) {
-            return $products;
-        }
-
-        switch ($sort) {
-            case 'price_asc':
-                usort($products, fn($a, $b) => $this->extract_price($a['price'] ?? '') <=> $this->extract_price($b['price'] ?? ''));
-                break;
-            case 'price_desc':
-                usort($products, fn($a, $b) => $this->extract_price($b['price'] ?? '') <=> $this->extract_price($a['price'] ?? ''));
-                break;
-            case 'title_asc':
-                usort($products, fn($a, $b) => strcasecmp($a['title'] ?? '', $b['title'] ?? ''));
-                break;
-            case 'title_desc':
-                usort($products, fn($a, $b) => strcasecmp($b['title'] ?? '', $a['title'] ?? ''));
-                break;
-            case 'rating_desc':
-                usort($products, fn($a, $b) => (float)($b['rating'] ?? 0) <=> (float)($a['rating'] ?? 0));
-                break;
-        }
-
-        return $products;
-    }
-
-    private function extract_price(string $price_string): float {
-        if (empty($price_string)) {
-            return PHP_FLOAT_MAX;
-        }
-
-        $normalized = preg_replace('/[^\d,.]/', '', $price_string);
-        if ($normalized === null || $normalized === '') {
-            return PHP_FLOAT_MAX;
-        }
-
-        if (preg_match('/,\d{2}$/', $normalized)) {
-            $normalized = str_replace('.', '', $normalized);
-            $normalized = str_replace(',', '.', $normalized);
-        } else {
-            $normalized = str_replace(',', '', $normalized);
-        }
-
-        $price = (float)$normalized;
-        return $price > 0 ? $price : PHP_FLOAT_MAX;
+    private function render_empty(): string {
+        return '<div class="yaa-message yaa-empty"><span class="yaa-icon">📦</span>' .
+               '<p>' . esc_html__('Keine Produkte für diese Suche gefunden.', 'yadore-amazon-api') . '</p></div>';
     }
 }

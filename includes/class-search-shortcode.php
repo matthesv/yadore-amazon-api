@@ -4,11 +4,12 @@
  *
  * @package Yadore_Amazon_API
  * @since 1.0.0
- * @version 1.8.1 - Uses native browser clear button instead of custom
+ * @version 1.8.2
  * 
- * CHANGE in 1.8.1:
- * - Removed custom .yaa-clear-btn in favor of native browser search clear button
- * - Native clear button works automatically with <input type="search">
+ * CHANGES in 1.8.2:
+ * - Removed pagination (load more button)
+ * - Fixed price extraction for Yadore API format
+ * - Uses native browser clear button
  */
 
 declare(strict_types=1);
@@ -19,42 +20,15 @@ if (!defined('ABSPATH')) {
 
 /**
  * Class YAA_Search_Shortcode
- * 
- * Handles the [yaa_search], [yaa_product_search] and [yadore_search] shortcodes.
- * 
- * IMPORTANT: This class must stay synchronized with yaa-search.js
- * CSS classes use both 'yaa-' and 'yadore-' prefixes for compatibility.
  */
 final class YAA_Search_Shortcode {
 
-    /**
-     * Singleton instance
-     */
     private static ?self $instance = null;
-
-    /**
-     * Yadore API instance
-     */
     private ?YAA_Yadore_API $yadore_api;
-
-    /**
-     * Amazon API instance
-     */
     private ?YAA_Amazon_PAAPI $amazon_api;
-
-    /**
-     * Image handler instance
-     */
     private ?YAA_Image_Handler $image_handler = null;
-
-    /**
-     * Cache handler instance
-     */
     private ?YAA_Cache_Handler $cache_handler = null;
 
-    /**
-     * Valid sort options - MUST MATCH JavaScript sortOptions
-     */
     private const SORT_OPTIONS = [
         'relevance'   => 'Relevanz',
         'price_asc'   => 'Preis aufsteigend',
@@ -65,9 +39,6 @@ final class YAA_Search_Shortcode {
         'newest'      => 'Neueste zuerst',
     ];
 
-    /**
-     * Sort mapping: Frontend -> API
-     */
     private const SORT_MAP_TO_API = [
         'relevance'   => 'rel_desc',
         'price_asc'   => 'price_asc',
@@ -78,37 +49,21 @@ final class YAA_Search_Shortcode {
         'newest'      => 'newest',
     ];
 
-    /**
-     * Valid layout options
-     */
     private const VALID_LAYOUTS = ['grid', 'list', 'compact', 'table'];
 
-    /**
-     * Default shortcode attributes - MUST MATCH JavaScript defaults
-     */
     private const DEFAULT_ATTS = [
-        // Search UI
         'placeholder'        => 'Produkt suchen...',
         'button_text'        => 'Suchen',
         'show_filters'       => 'true',
         'show_source_filter' => 'false',
-        
-        // Sorting
         'default_sort'       => 'relevance',
-        'sort'               => '',  // Alias
-        
-        // Pagination
+        'sort'               => '',
         'products_per_page'  => 12,
         'max_products'       => 100,
-        'show_pagination'    => 'true',
-        
-        // Layout
         'layout'             => 'grid',
         'columns'            => 4,
         'columns_tablet'     => 3,
         'columns_mobile'     => 1,
-        
-        // Display Options - IMPORTANT: Must match JS settings
         'show_price'         => 'true',
         'show_rating'        => 'true',
         'show_prime'         => 'true',
@@ -116,52 +71,32 @@ final class YAA_Search_Shortcode {
         'show_description'   => 'false',
         'show_merchant'      => 'true',
         'description_length' => 150,
-        
-        // Links
         'target'             => '_blank',
         'nofollow'           => 'true',
         'sponsored'          => 'true',
-        
-        // Identifiers
         'class'              => '',
         'id'                 => '',
-        
-        // API
         'api_source'         => '',
         'category'           => '',
-        
-        // Filters
         'min_price'          => '',
         'max_price'          => '',
         'prime_only'         => 'false',
         'min_rating'         => '',
-        
-        // Styling
         'button_style'       => 'primary',
         'image_size'         => 'medium',
         'lazy_load'          => 'true',
-        
-        // Features
         'analytics'          => 'true',
         'cache_duration'     => '',
         'live_search'        => 'true',
         'min_chars'          => 3,
         'debounce'           => 500,
-        
-        // Initial Products
         'initial_keywords'   => '',
         'initial_count'      => 6,
         'show_reset'         => 'true',
     ];
 
-    /**
-     * Current shortcode instance ID
-     */
     private int $instance_id = 0;
 
-    /**
-     * Constructor
-     */
     public function __construct(?YAA_Yadore_API $yadore_api = null, ?YAA_Amazon_PAAPI $amazon_api = null) {
         $this->yadore_api = $yadore_api;
         $this->amazon_api = $amazon_api;
@@ -173,9 +108,6 @@ final class YAA_Search_Shortcode {
         $this->init_hooks();
     }
 
-    /**
-     * Get singleton instance
-     */
     public static function get_instance(?YAA_Yadore_API $yadore_api = null, ?YAA_Amazon_PAAPI $amazon_api = null): self {
         if (self::$instance === null) {
             self::$instance = new self($yadore_api, $amazon_api);
@@ -183,16 +115,11 @@ final class YAA_Search_Shortcode {
         return self::$instance;
     }
 
-    /**
-     * Initialize hooks
-     */
     private function init_hooks(): void {
-        // Shortcodes
         add_shortcode('yaa_search', [$this, 'render_shortcode']);
         add_shortcode('yaa_product_search', [$this, 'render_shortcode']);
         add_shortcode('yadore_search', [$this, 'render_shortcode']);
         
-        // AJAX handlers
         add_action('wp_ajax_yaa_product_search', [$this, 'ajax_search']);
         add_action('wp_ajax_nopriv_yaa_product_search', [$this, 'ajax_search']);
         add_action('wp_ajax_yaa_search_suggestions', [$this, 'ajax_suggestions']);
@@ -200,16 +127,10 @@ final class YAA_Search_Shortcode {
         add_action('wp_ajax_yaa_track_click', [$this, 'ajax_track_click']);
         add_action('wp_ajax_nopriv_yaa_track_click', [$this, 'ajax_track_click']);
         
-        // Assets
         add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
-        
-        // REST API
         add_action('rest_api_init', [$this, 'register_rest_routes']);
     }
 
-    /**
-     * Register REST API routes
-     */
     public function register_rest_routes(): void {
         register_rest_route('yaa/v1', '/search', [
             'methods'             => 'GET',
@@ -224,9 +145,6 @@ final class YAA_Search_Shortcode {
         ]);
     }
 
-    /**
-     * Handle REST API search
-     */
     public function rest_search(\WP_REST_Request $request): \WP_REST_Response {
         $keyword = $request->get_param('keyword');
         $page = $request->get_param('page');
@@ -242,15 +160,11 @@ final class YAA_Search_Shortcode {
         return new \WP_REST_Response($results, 200);
     }
 
-    /**
-     * Enqueue frontend assets
-     */
     public function enqueue_assets(): void {
         if (!$this->should_load_assets()) {
             return;
         }
 
-        // Main Styles
         wp_enqueue_style(
             'yaa-search-style',
             YAA_PLUGIN_URL . 'assets/css/yaa-search.css',
@@ -258,11 +172,8 @@ final class YAA_Search_Shortcode {
             YAA_VERSION
         );
         
-        // Styling for native search clear button
-        $native_clear_css = $this->get_native_clear_button_css();
-        wp_add_inline_style('yaa-search-style', $native_clear_css);
+        wp_add_inline_style('yaa-search-style', $this->get_native_clear_button_css());
 
-        // Main Script
         wp_enqueue_script(
             'yaa-search-script',
             YAA_PLUGIN_URL . 'assets/js/yaa-search.js',
@@ -271,23 +182,11 @@ final class YAA_Search_Shortcode {
             true
         );
 
-        // Localize script - CRITICAL: Must match JS expectations
         wp_localize_script('yaa-search-script', 'yadoreSearch', $this->get_js_config());
     }
 
-    /**
-     * CSS styling for native browser clear button
-     * Makes the native X button look consistent across browsers
-     * 
-     * @return string CSS code
-     */
     private function get_native_clear_button_css(): string {
         return '
-            /* =========================================
-               Native Browser Search Clear Button Styling
-               ========================================= */
-            
-            /* Webkit (Chrome, Safari, Edge) - Style the native clear button */
             .yaa-search-wrapper .yaa-input::-webkit-search-cancel-button,
             .yaa-search-wrapper .yadore-input::-webkit-search-cancel-button,
             .yadore-search-container .yaa-input::-webkit-search-cancel-button,
@@ -311,27 +210,15 @@ final class YAA_Search_Shortcode {
                 opacity: 1;
             }
             
-            /* Adjust input padding to accommodate native clear button */
             .yaa-search-wrapper .yaa-input,
             .yaa-search-wrapper .yadore-input,
             .yadore-search-container .yaa-input,
             .yadore-search-container .yadore-input {
-                padding-right: 12px; /* Reduced since no custom button */
-            }
-            
-            /* Firefox - native clear button styling is limited */
-            @-moz-document url-prefix() {
-                .yaa-search-wrapper .yaa-input,
-                .yaa-search-wrapper .yadore-input {
-                    /* Firefox shows a built-in clear button for type="search" */
-                }
+                padding-right: 12px;
             }
         ';
     }
 
-    /**
-     * Get JavaScript configuration - MUST MATCH JS defaults
-     */
     private function get_js_config(): array {
         return [
             'ajaxurl'           => admin_url('admin-ajax.php'),
@@ -350,21 +237,16 @@ final class YAA_Search_Shortcode {
             'imageLoadError'    => YAA_PLUGIN_URL . 'assets/images/placeholder.svg',
             'debug'             => defined('WP_DEBUG') && WP_DEBUG,
             'buttonText'        => yaa_get_option('button_text_yadore', 'Zum Angebot'),
-            // Flag: Using native browser clear button
             'useNativeClearButton' => true,
         ];
     }
 
-    /**
-     * Get i18n strings for JavaScript
-     */
     private function get_i18n_strings(): array {
         return [
             'searching'        => __('Suche läuft...', 'yadore-amazon-api'),
             'no_results'       => __('Keine Produkte gefunden.', 'yadore-amazon-api'),
             'error'            => __('Fehler bei der Suche. Bitte versuchen Sie es erneut.', 'yadore-amazon-api'),
             'networkError'     => __('Netzwerkfehler. Bitte prüfen Sie Ihre Verbindung.', 'yadore-amazon-api'),
-            'load_more'        => __('Mehr laden', 'yadore-amazon-api'),
             'loading'          => __('Laden...', 'yadore-amazon-api'),
             'sortBy'           => __('Sortieren nach:', 'yadore-amazon-api'),
             'filterBy'         => __('Filtern nach:', 'yadore-amazon-api'),
@@ -385,9 +267,6 @@ final class YAA_Search_Shortcode {
         ];
     }
 
-    /**
-     * Check if assets should be loaded
-     */
     private function should_load_assets(): bool {
         global $post;
 
@@ -406,9 +285,6 @@ final class YAA_Search_Shortcode {
         return false;
     }
 
-    /**
-     * Get default sort option
-     */
     private function get_default_sort(): string {
         $saved_sort = yaa_get_option('search_default_sort', '');
         
@@ -419,13 +295,9 @@ final class YAA_Search_Shortcode {
         return array_key_exists($saved_sort, self::SORT_OPTIONS) ? $saved_sort : 'relevance';
     }
 
-    /**
-     * Validate sort parameter
-     */
     private function validate_sort(string $sort): string {
         $sort = sanitize_key($sort);
         
-        // Map API sort to frontend sort
         if ($sort === 'rel_desc') {
             return 'relevance';
         }
@@ -433,47 +305,33 @@ final class YAA_Search_Shortcode {
         return array_key_exists($sort, self::SORT_OPTIONS) ? $sort : $this->get_default_sort();
     }
 
-    /**
-     * Map frontend sort to API sort
-     */
     private function map_sort_to_api(string $frontend_sort): string {
         return self::SORT_MAP_TO_API[$frontend_sort] ?? 'rel_desc';
     }
 
-    /**
-     * Validate layout parameter
-     */
     private function validate_layout(string $layout): string {
         return in_array($layout, self::VALID_LAYOUTS, true) ? $layout : 'grid';
     }
 
-    /**
-     * Render the shortcode
-     */
     public function render_shortcode(array $atts = [], ?string $content = null, string $tag = ''): string {
         $this->instance_id++;
         
         $atts = shortcode_atts(self::DEFAULT_ATTS, $atts, $tag ?: 'yaa_search');
         
-        // Handle 'sort' alias
         if (!empty($atts['sort'])) {
             $atts['default_sort'] = $atts['sort'];
         }
         
-        // Sanitize attributes
         $atts = $this->sanitize_attributes($atts);
         
-        // Generate unique ID
         if (empty($atts['id'])) {
             $atts['id'] = 'yaa-search-' . $this->instance_id;
         }
 
-        // Check API configuration
         if (!$this->is_any_api_configured()) {
             return $this->render_no_api_message();
         }
 
-        // Fetch initial products
         $initial_products = [];
         $has_initial = false;
         
@@ -487,9 +345,6 @@ final class YAA_Search_Shortcode {
         return ob_get_clean() ?: '';
     }
 
-    /**
-     * Sanitize shortcode attributes
-     */
     private function sanitize_attributes(array $atts): array {
         return [
             'placeholder'        => sanitize_text_field($atts['placeholder']),
@@ -499,7 +354,6 @@ final class YAA_Search_Shortcode {
             'default_sort'       => $this->validate_sort($atts['default_sort']),
             'products_per_page'  => min(max(absint($atts['products_per_page']), 1), 50),
             'max_products'       => min(max(absint($atts['max_products']), 1), 200),
-            'show_pagination'    => $this->to_bool($atts['show_pagination']),
             'layout'             => $this->validate_layout($atts['layout']),
             'columns'            => min(max(absint($atts['columns']), 1), 6),
             'columns_tablet'     => min(max(absint($atts['columns_tablet']), 1), 4),
@@ -539,9 +393,6 @@ final class YAA_Search_Shortcode {
         ];
     }
 
-    /**
-     * Convert to boolean consistently
-     */
     private function to_bool($value): bool {
         if (is_bool($value)) {
             return $value;
@@ -552,9 +403,6 @@ final class YAA_Search_Shortcode {
         return (bool) $value;
     }
 
-    /**
-     * Sanitize price value
-     */
     private function sanitize_price(string $price): string {
         if (empty($price)) {
             return '';
@@ -563,9 +411,6 @@ final class YAA_Search_Shortcode {
         return $price !== null ? $price : '';
     }
 
-    /**
-     * Sanitize rating value
-     */
     private function sanitize_rating(string $rating): string {
         if (empty($rating)) {
             return '';
@@ -574,9 +419,6 @@ final class YAA_Search_Shortcode {
         return ($rating_float >= 1 && $rating_float <= 5) ? (string)$rating_float : '';
     }
 
-    /**
-     * Sanitize cache duration
-     */
     private function sanitize_cache_duration(string $duration): int {
         if (empty($duration)) {
             return 0;
@@ -584,9 +426,6 @@ final class YAA_Search_Shortcode {
         return min(absint($duration), 86400 * 7);
     }
 
-    /**
-     * Check if any API is configured
-     */
     private function is_any_api_configured(): bool {
         if ($this->yadore_api !== null && $this->yadore_api->is_configured()) {
             return true;
@@ -597,9 +436,6 @@ final class YAA_Search_Shortcode {
         return false;
     }
 
-    /**
-     * Render no API message
-     */
     private function render_no_api_message(): string {
         if (current_user_can('manage_options')) {
             return sprintf(
@@ -612,9 +448,6 @@ final class YAA_Search_Shortcode {
         return '';
     }
 
-    /**
-     * Fetch initial products
-     */
     private function fetch_initial_products(array $atts): array {
         $keyword = trim($atts['initial_keywords']);
         $limit = (int) $atts['initial_count'];
@@ -627,7 +460,6 @@ final class YAA_Search_Shortcode {
         $api_sort = $this->map_sort_to_api($sort);
         $api_source = $atts['api_source'];
         
-        // Try Yadore first
         if (($api_source === '' || $api_source === 'yadore') && 
             $this->yadore_api !== null && $this->yadore_api->is_configured()) {
             
@@ -643,7 +475,6 @@ final class YAA_Search_Shortcode {
             }
         }
         
-        // Fallback to Amazon
         if (($api_source === '' || $api_source === 'amazon') && 
             $this->amazon_api !== null && $this->amazon_api->is_configured()) {
             
@@ -658,237 +489,171 @@ final class YAA_Search_Shortcode {
         return [];
     }
 
-/**
- * Normalize products - MUST MATCH JavaScript product structure
- * FIX: Improved price extraction for different API formats
- */
-private function normalize_products(array $products, string $source): array {
-    $normalized = [];
-    
-    foreach ($products as $product) {
-        // === PRICE EXTRACTION - FIXED ===
-        $price_data = $this->extract_price_data($product);
+    /**
+     * Normalize products - handles multiple API formats
+     * FIX: Improved price extraction for Yadore API
+     */
+    private function normalize_products(array $products, string $source): array {
+        $normalized = [];
         
-        $normalized[] = [
-            // IDs
-            'id'              => $product['id'] ?? $product['asin'] ?? $product['offerId'] ?? uniqid('prod_'),
-            'asin'            => $product['asin'] ?? '',
+        foreach ($products as $product) {
+            $price_data = $this->extract_price_data($product);
             
-            // Content
-            'title'           => $product['title'] ?? $product['name'] ?? '',
-            'description'     => $product['description'] ?? '',
-            'url'             => $product['url'] ?? $product['clickUrl'] ?? $product['deeplink'] ?? '#',
-            
-            // Image - check multiple possible locations
-            'image_url'       => $product['image']['url'] 
-                                 ?? $product['image_url'] 
-                                 ?? $product['imageUrl'] 
-                                 ?? $product['thumbnail']['url'] 
-                                 ?? '',
-            
-            // Price - FIXED
-            'price'           => $price_data['display'],
-            'price_amount'    => $price_data['amount'],
-            'price_old'       => $this->extract_old_price($product),
-            'currency'        => $price_data['currency'],
-            'discount_percent'=> $product['discount_percent'] ?? $product['discountPercent'] ?? null,
-            
-            // Merchant - check multiple possible locations
-            'merchant'        => $product['merchant']['name'] 
-                                 ?? (is_string($product['merchant'] ?? null) ? $product['merchant'] : '')
-                                 ?? $product['merchantName'] 
-                                 ?? '',
-            
-            // Meta
-            'source'          => $source,
-            'is_prime'        => !empty($product['is_prime']) || !empty($product['isPrime']),
-            'rating'          => $product['rating'] ?? $product['reviewRating'] ?? null,
-            'reviews_count'   => $product['reviews_count'] ?? $product['reviewCount'] ?? null,
-            'availability'    => $product['availability'] ?? $product['availabilityMessage'] ?? null,
-            'availability_status' => $product['availability_status'] ?? 'unknown',
-            'sponsored'       => $product['sponsored'] ?? false,
-        ];
-    }
-    
-    return $normalized;
-}
-
-/**
- * Extract price data from product - handles multiple API formats
- * 
- * @param array $product Raw product data
- * @return array{display: string, amount: string, currency: string}
- */
-private function extract_price_data(array $product): array {
-    $amount = '';
-    $currency = 'EUR';
-    $display = '';
-    
-    // Method 1: price.display exists (Amazon format)
-    if (!empty($product['price']['display'])) {
-        return [
-            'display'  => $product['price']['display'],
-            'amount'   => $product['price']['amount'] ?? '',
-            'currency' => $product['price']['currency'] ?? 'EUR',
-        ];
-    }
-    
-    // Method 2: price.amount exists (Yadore format)
-    if (!empty($product['price']['amount'])) {
-        $amount = $product['price']['amount'];
-        $currency = $product['price']['currency'] ?? 'EUR';
-        $display = $this->format_price_display($amount, $currency);
+            $normalized[] = [
+                'id'              => $product['id'] ?? $product['asin'] ?? $product['offerId'] ?? uniqid('prod_'),
+                'asin'            => $product['asin'] ?? '',
+                'title'           => $product['title'] ?? $product['name'] ?? '',
+                'description'     => $product['description'] ?? '',
+                'url'             => $product['url'] ?? $product['clickUrl'] ?? $product['deeplink'] ?? '#',
+                'image_url'       => $product['image']['url'] ?? $product['image_url'] ?? $product['imageUrl'] ?? '',
+                'price'           => $price_data['display'],
+                'price_amount'    => $price_data['amount'],
+                'price_old'       => $this->extract_old_price($product),
+                'currency'        => $price_data['currency'],
+                'discount_percent'=> $product['discount_percent'] ?? $product['discountPercent'] ?? null,
+                'merchant'        => $product['merchant']['name'] ?? (is_string($product['merchant'] ?? null) ? $product['merchant'] : '') ?? $product['merchantName'] ?? '',
+                'source'          => $source,
+                'is_prime'        => !empty($product['is_prime']) || !empty($product['isPrime']),
+                'rating'          => $product['rating'] ?? $product['reviewRating'] ?? null,
+                'reviews_count'   => $product['reviews_count'] ?? $product['reviewCount'] ?? null,
+                'availability'    => $product['availability'] ?? $product['availabilityMessage'] ?? null,
+                'availability_status' => $product['availability_status'] ?? 'unknown',
+                'sponsored'       => $product['sponsored'] ?? false,
+            ];
+        }
         
-        return [
-            'display'  => $display,
-            'amount'   => $amount,
-            'currency' => $currency,
-        ];
+        return $normalized;
     }
-    
-    // Method 3: price is a string directly
-    if (is_string($product['price'] ?? null) && !empty($product['price'])) {
-        return [
-            'display'  => $product['price'],
-            'amount'   => preg_replace('/[^\d,.]/', '', $product['price']) ?? '',
-            'currency' => 'EUR',
-        ];
-    }
-    
-    // Method 4: displayPrice field (alternative Yadore response)
-    if (!empty($product['displayPrice'])) {
-        return [
-            'display'  => $product['displayPrice'],
-            'amount'   => preg_replace('/[^\d,.]/', '', $product['displayPrice']) ?? '',
-            'currency' => $product['currency'] ?? 'EUR',
-        ];
-    }
-    
-    // Method 5: priceAmount / price_amount flat fields
-    if (!empty($product['price_amount']) || !empty($product['priceAmount'])) {
-        $amount = $product['price_amount'] ?? $product['priceAmount'];
-        $currency = $product['currency'] ?? 'EUR';
-        $display = $this->format_price_display($amount, $currency);
-        
-        return [
-            'display'  => $display,
-            'amount'   => $amount,
-            'currency' => $currency,
-        ];
-    }
-    
-    // Method 6: currentPrice object
-    if (!empty($product['currentPrice']['amount'])) {
-        $amount = $product['currentPrice']['amount'];
-        $currency = $product['currentPrice']['currency'] ?? 'EUR';
-        $display = $this->format_price_display($amount, $currency);
-        
-        return [
-            'display'  => $display,
-            'amount'   => $amount,
-            'currency' => $currency,
-        ];
-    }
-    
-    // No price found
-    return [
-        'display'  => '',
-        'amount'   => '',
-        'currency' => 'EUR',
-    ];
-}
-
-/**
- * Format price amount for display
- * 
- * @param string|float|int $amount Numeric price amount
- * @param string $currency Currency code (EUR, USD, etc.)
- * @return string Formatted price like "29,99 €"
- */
-private function format_price_display(string|float|int $amount, string $currency = 'EUR'): string {
-    if (empty($amount) || $amount === '0' || $amount === 0) {
-        return '';
-    }
-    
-    // Convert string to float (handle both 29.99 and 29,99 formats)
-    $amount_str = (string) $amount;
-    
-    // If comma is decimal separator (European format like "29,99")
-    if (preg_match('/^\d+,\d{2}$/', $amount_str)) {
-        $amount_float = (float) str_replace(',', '.', $amount_str);
-    }
-    // If comma is thousands separator (like "1,234.56")
-    elseif (str_contains($amount_str, ',') && str_contains($amount_str, '.')) {
-        $amount_float = (float) str_replace(',', '', $amount_str);
-    }
-    // Standard format
-    else {
-        $amount_float = (float) $amount_str;
-    }
-    
-    if ($amount_float <= 0) {
-        return '';
-    }
-    
-    // Currency symbol mapping
-    $symbols = [
-        'EUR' => '€',
-        'USD' => '$',
-        'GBP' => '£',
-        'CHF' => 'CHF',
-        'PLN' => 'zł',
-        'SEK' => 'kr',
-        'DKK' => 'kr',
-        'NOK' => 'kr',
-    ];
-    
-    $symbol = $symbols[strtoupper($currency)] ?? $currency;
-    
-    // German format: 1.234,56 €
-    return number_format($amount_float, 2, ',', '.') . ' ' . $symbol;
-}
-
-/**
- * Extract old/original price from product
- */
-private function extract_old_price(array $product): string {
-    // Try various field names for original/old price
-    $old_price = $product['price_old'] 
-                 ?? $product['originalPrice']['amount'] 
-                 ?? $product['originalPrice']['display']
-                 ?? $product['listPrice']['amount']
-                 ?? $product['wasPrice']
-                 ?? '';
-    
-    if (empty($old_price)) {
-        return '';
-    }
-    
-    // If it's just a number, format it
-    if (is_numeric($old_price)) {
-        $currency = $product['price']['currency'] ?? $product['currency'] ?? 'EUR';
-        return $this->format_price_display($old_price, $currency);
-    }
-    
-    return (string) $old_price;
-}
-
 
     /**
-     * Format price from product data
+     * Extract price data from product - handles multiple API formats
      */
-    private function format_price(array $product): string {
-        $amount = $product['price']['amount'] ?? $product['price_amount'] ?? '';
-        if (empty($amount)) {
+    private function extract_price_data(array $product): array {
+        // Method 1: price.display exists (Amazon format)
+        if (!empty($product['price']['display'])) {
+            return [
+                'display'  => $product['price']['display'],
+                'amount'   => $product['price']['amount'] ?? '',
+                'currency' => $product['price']['currency'] ?? 'EUR',
+            ];
+        }
+        
+        // Method 2: price.amount exists (Yadore format)
+        if (!empty($product['price']['amount'])) {
+            $amount = $product['price']['amount'];
+            $currency = $product['price']['currency'] ?? 'EUR';
+            return [
+                'display'  => $this->format_price_display($amount, $currency),
+                'amount'   => $amount,
+                'currency' => $currency,
+            ];
+        }
+        
+        // Method 3: price is a string directly
+        if (is_string($product['price'] ?? null) && !empty($product['price'])) {
+            return [
+                'display'  => $product['price'],
+                'amount'   => preg_replace('/[^\d,.]/', '', $product['price']) ?? '',
+                'currency' => 'EUR',
+            ];
+        }
+        
+        // Method 4: displayPrice field
+        if (!empty($product['displayPrice'])) {
+            return [
+                'display'  => $product['displayPrice'],
+                'amount'   => preg_replace('/[^\d,.]/', '', $product['displayPrice']) ?? '',
+                'currency' => $product['currency'] ?? 'EUR',
+            ];
+        }
+        
+        // Method 5: price_amount flat field
+        if (!empty($product['price_amount']) || !empty($product['priceAmount'])) {
+            $amount = $product['price_amount'] ?? $product['priceAmount'];
+            $currency = $product['currency'] ?? 'EUR';
+            return [
+                'display'  => $this->format_price_display($amount, $currency),
+                'amount'   => $amount,
+                'currency' => $currency,
+            ];
+        }
+        
+        // Method 6: currentPrice object
+        if (!empty($product['currentPrice']['amount'])) {
+            $amount = $product['currentPrice']['amount'];
+            $currency = $product['currentPrice']['currency'] ?? 'EUR';
+            return [
+                'display'  => $this->format_price_display($amount, $currency),
+                'amount'   => $amount,
+                'currency' => $currency,
+            ];
+        }
+        
+        return ['display' => '', 'amount' => '', 'currency' => 'EUR'];
+    }
+
+    /**
+     * Format price amount for display
+     */
+    private function format_price_display(string|float|int $amount, string $currency = 'EUR'): string {
+        if (empty($amount) || $amount === '0' || $amount === 0) {
             return '';
         }
-        $currency = $product['price']['currency'] ?? $product['currency'] ?? 'EUR';
-        return number_format((float)$amount, 2, ',', '.') . ' ' . $currency;
+        
+        $amount_str = (string) $amount;
+        
+        // European format (29,99)
+        if (preg_match('/^\d+,\d{2}$/', $amount_str)) {
+            $amount_float = (float) str_replace(',', '.', $amount_str);
+        }
+        // Mixed format (1,234.56)
+        elseif (str_contains($amount_str, ',') && str_contains($amount_str, '.')) {
+            $amount_float = (float) str_replace(',', '', $amount_str);
+        }
+        else {
+            $amount_float = (float) $amount_str;
+        }
+        
+        if ($amount_float <= 0) {
+            return '';
+        }
+        
+        $symbols = [
+            'EUR' => '€',
+            'USD' => '$',
+            'GBP' => '£',
+            'CHF' => 'CHF',
+            'PLN' => 'zł',
+        ];
+        
+        $symbol = $symbols[strtoupper($currency)] ?? $currency;
+        
+        return number_format($amount_float, 2, ',', '.') . ' ' . $symbol;
     }
 
     /**
-     * Render search container
+     * Extract old/original price from product
      */
+    private function extract_old_price(array $product): string {
+        $old_price = $product['price_old'] 
+                     ?? $product['originalPrice']['amount'] 
+                     ?? $product['originalPrice']['display']
+                     ?? $product['listPrice']['amount']
+                     ?? $product['wasPrice']
+                     ?? '';
+        
+        if (empty($old_price)) {
+            return '';
+        }
+        
+        if (is_numeric($old_price)) {
+            $currency = $product['price']['currency'] ?? $product['currency'] ?? 'EUR';
+            return $this->format_price_display($old_price, $currency);
+        }
+        
+        return (string) $old_price;
+    }
+
     private function render_search_container(array $atts, array $initial_products, bool $has_initial): void {
         $wrapper_classes = $this->build_wrapper_classes($atts);
         $data_attributes = $this->build_data_attributes($atts, $has_initial);
@@ -929,10 +694,6 @@ private function extract_old_price(array $product): string {
                     <?php esc_html_e('← Zurück zu Empfehlungen', 'yadore-amazon-api'); ?>
                 </button>
             <?php endif; ?>
-
-            <?php if ($atts['show_pagination']): ?>
-                <?php $this->render_pagination($atts); ?>
-            <?php endif; ?>
             
             <div class="yaa-loading yadore-loading" aria-hidden="true" style="display: none;">
                 <div class="yaa-spinner yadore-spinner"></div>
@@ -944,9 +705,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render product card - MUST MATCH JavaScript createProductCard()
-     */
     private function render_product_card(array $product, array $atts): void {
         $target = esc_attr($atts['target']);
         $rel = $this->build_rel_attribute($atts, $product);
@@ -962,7 +720,6 @@ private function extract_old_price(array $product): string {
                rel="<?php echo esc_attr($rel); ?>"
                class="yaa-product-link yadore-product-link">
                 
-                <?php // Badges ?>
                 <?php if ($atts['show_prime'] && !empty($product['is_prime'])): ?>
                     <span class="yaa-badge-prime yadore-badge-prime" title="Amazon Prime">Prime</span>
                 <?php endif; ?>
@@ -975,7 +732,6 @@ private function extract_old_price(array $product): string {
                     <span class="yaa-badge-source yadore-badge-source"><?php echo esc_html($product['source']); ?></span>
                 <?php endif; ?>
                 
-                <?php // Image ?>
                 <div class="yaa-product-image yadore-product-image">
                     <?php if (!empty($product['image_url'])): ?>
                         <?php if ($atts['lazy_load']): ?>
@@ -1000,7 +756,6 @@ private function extract_old_price(array $product): string {
                     <?php endif; ?>
                 </div>
                 
-                <?php // Content ?>
                 <div class="yaa-product-content yadore-product-content">
                     <h3 class="yaa-product-title yadore-product-title"><?php echo esc_html($product['title']); ?></h3>
                     
@@ -1047,7 +802,6 @@ private function extract_old_price(array $product): string {
                 </div>
             </a>
             
-            <?php // Actions ?>
             <div class="yaa-product-actions yadore-product-actions">
                 <a href="<?php echo esc_url($product['url']); ?>" 
                    target="<?php echo $target; ?>" 
@@ -1062,9 +816,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Build rel attribute for links
-     */
     private function build_rel_attribute(array $atts, array $product = []): string {
         $rel = [];
         
@@ -1082,9 +833,6 @@ private function extract_old_price(array $product): string {
         return implode(' ', $rel);
     }
 
-    /**
-     * Build wrapper CSS classes
-     */
     private function build_wrapper_classes(array $atts): string {
         $classes = [
             'yaa-search-wrapper',
@@ -1094,7 +842,7 @@ private function extract_old_price(array $product): string {
             'yaa-columns-tablet-' . $atts['columns_tablet'],
             'yaa-columns-mobile-' . $atts['columns_mobile'],
             'yaa-image-' . $atts['image_size'],
-            'yaa-native-clear', // Flag: Uses native browser clear button
+            'yaa-native-clear',
         ];
         
         if ($atts['lazy_load']) {
@@ -1108,29 +856,16 @@ private function extract_old_price(array $product): string {
         return implode(' ', $classes);
     }
 
-    /**
-     * Build data attributes - MUST MATCH JavaScript settings parsing
-     */
     private function build_data_attributes(array $atts, bool $has_initial): string {
         $data = [
-            // Layout
             'layout'             => $atts['layout'],
             'columns'            => $atts['columns'],
-            
-            // Pagination
             'per-page'           => $atts['products_per_page'],
             'max-products'       => $atts['max_products'],
-            'enable-pagination'  => $atts['show_pagination'] ? 1 : 0,
-            
-            // Sorting
             'sort'               => $atts['default_sort'],
             'default-sort'       => $atts['default_sort'],
-            
-            // API
             'api-source'         => $atts['api_source'],
             'category'           => $atts['category'],
-            
-            // Display Options (integers for JS parsing)
             'show-price'         => $atts['show_price'] ? 1 : 0,
             'show-rating'        => $atts['show_rating'] ? 1 : 0,
             'show-prime'         => $atts['show_prime'] ? 1 : 0,
@@ -1138,31 +873,21 @@ private function extract_old_price(array $product): string {
             'show-description'   => $atts['show_description'] ? 1 : 0,
             'show-merchant'      => $atts['show_merchant'] ? 1 : 0,
             'description-length' => $atts['description_length'],
-            
-            // Links
             'target'             => $atts['target'],
             'nofollow'           => $atts['nofollow'] ? 1 : 0,
             'sponsored'          => $atts['sponsored'] ? 1 : 0,
-            
-            // Filters
             'min-price'          => $atts['min_price'],
             'max-price'          => $atts['max_price'],
             'prime-only'         => $atts['prime_only'] ? 1 : 0,
             'min-rating'         => $atts['min_rating'],
-            
-            // Features
             'analytics'          => $atts['analytics'] ? 1 : 0,
             'lazy-load'          => $atts['lazy_load'] ? 1 : 0,
             'live-search'        => $atts['live_search'] ? 1 : 0,
             'min-chars'          => $atts['min_chars'],
             'debounce'           => $atts['debounce'],
-            
-            // Initial Products
             'has-initial'        => $has_initial ? 1 : 0,
             'show-initial'       => $has_initial ? 1 : 0,
             'show-reset'         => $atts['show_reset'] ? 1 : 0,
-            
-            // Native clear button flag
             'native-clear'       => 1,
         ];
 
@@ -1176,12 +901,6 @@ private function extract_old_price(array $product): string {
         return $output;
     }
 
-    /**
-     * Render search form
-     * 
-     * CHANGED in 1.8.1: Removed custom clear button (.yaa-clear-btn)
-     * Now uses native browser clear button for <input type="search">
-     */
     private function render_search_form(array $atts): void {
         ?>
         <form class="yaa-search-form yadore-search-form" role="search" action="" method="get">
@@ -1190,7 +909,6 @@ private function extract_old_price(array $product): string {
                     <?php esc_html_e('Produktsuche', 'yadore-amazon-api'); ?>
                 </label>
                 
-                <?php // Native browser clear button is shown automatically for type="search" ?>
                 <input type="search" 
                        id="<?php echo esc_attr($atts['id']); ?>-input"
                        class="yaa-input yadore-input" 
@@ -1201,8 +919,6 @@ private function extract_old_price(array $product): string {
                        autocorrect="off"
                        spellcheck="false"
                        aria-describedby="<?php echo esc_attr($atts['id']); ?>-desc">
-                
-                <?php // REMOVED: Custom clear button - using native browser clear button instead ?>
                 
                 <button type="submit" class="yaa-submit-btn yadore-submit-btn yaa-btn-<?php echo esc_attr($atts['button_style']); ?>">
                     <span class="yaa-btn-text yadore-btn-text"><?php echo esc_html($atts['button_text']); ?></span>
@@ -1222,9 +938,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render filters
-     */
     private function render_filters(array $atts): void {
         ?>
         <div class="yaa-filters yadore-filters" role="group" aria-label="<?php esc_attr_e('Filteroptionen', 'yadore-amazon-api'); ?>">
@@ -1243,9 +956,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render sort dropdown
-     */
     private function render_sort_dropdown(array $atts): void {
         ?>
         <div class="yaa-sort-wrapper yadore-sort-wrapper">
@@ -1263,9 +973,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render source filter
-     */
     private function render_source_filter(array $atts): void {
         $sources = $this->get_available_sources();
         ?>
@@ -1285,9 +992,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render Prime filter
-     */
     private function render_prime_filter(array $atts): void {
         ?>
         <div class="yaa-prime-wrapper yadore-prime-wrapper">
@@ -1300,24 +1004,6 @@ private function extract_old_price(array $product): string {
         <?php
     }
 
-    /**
-     * Render pagination
-     */
-    private function render_pagination(array $atts): void {
-        ?>
-        <div class="yaa-pagination yadore-pagination" role="navigation" aria-label="<?php esc_attr_e('Seitennummerierung', 'yadore-amazon-api'); ?>">
-            <button type="button" class="yaa-load-more yadore-load-more yaa-btn-<?php echo esc_attr($atts['button_style']); ?>" style="display: none;">
-                <span class="yaa-btn-text yadore-btn-text"><?php esc_html_e('Mehr laden', 'yadore-amazon-api'); ?></span>
-                <span class="yaa-btn-spinner yadore-btn-spinner" aria-hidden="true" style="display: none;"></span>
-            </button>
-            <div class="yaa-pagination-info yadore-pagination-info" aria-live="polite"></div>
-        </div>
-        <?php
-    }
-
-    /**
-     * Check if multiple sources are available
-     */
     private function has_multiple_sources(): bool {
         $count = 0;
         if ($this->yadore_api !== null && $this->yadore_api->is_configured()) $count++;
@@ -1325,9 +1011,6 @@ private function extract_old_price(array $product): string {
         return $count > 1;
     }
 
-    /**
-     * Get available API sources
-     */
     private function get_available_sources(): array {
         $sources = [];
         if ($this->yadore_api !== null && $this->yadore_api->is_configured()) {
@@ -1339,9 +1022,6 @@ private function extract_old_price(array $product): string {
         return $sources;
     }
 
-    /**
-     * Handle AJAX search
-     */
     public function ajax_search(): void {
         $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
             
@@ -1389,9 +1069,6 @@ private function extract_old_price(array $product): string {
         ]);
     }
 
-    /**
-     * Handle AJAX suggestions
-     */
     public function ajax_suggestions(): void {
         $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
             
@@ -1422,22 +1099,15 @@ private function extract_old_price(array $product): string {
         wp_send_json_success(['suggestions' => array_slice($suggestions, 0, 5)]);
     }
 
-    /**
-     * Handle click tracking
-     */
     public function ajax_track_click(): void {
         wp_send_json_success(['tracked' => true]);
     }
 
-    /**
-     * Perform product search
-     */
     private function perform_search(string $keyword, int $page, int $per_page, string $sort, string $api_source): array|\WP_Error {
         $api_sort = $this->map_sort_to_api($sort);
         $products = [];
         $source = 'yadore';
         
-        // Try Yadore
         if (($api_source === '' || $api_source === 'yadore') && 
             $this->yadore_api !== null && $this->yadore_api->is_configured()) {
             
@@ -1454,7 +1124,6 @@ private function extract_old_price(array $product): string {
             }
         }
         
-        // Fallback to Amazon
         if (empty($products) && ($api_source === '' || $api_source === 'amazon') && 
             $this->amazon_api !== null && $this->amazon_api->is_configured()) {
             
@@ -1485,9 +1154,6 @@ private function extract_old_price(array $product): string {
         ];
     }
 
-    /**
-     * Apply sorting to products
-     */
     private function apply_sorting(array $products, string $sort): array {
         if (empty($products)) {
             return $products;
@@ -1514,9 +1180,6 @@ private function extract_old_price(array $product): string {
         return $products;
     }
 
-    /**
-     * Extract numeric price from string
-     */
     private function extract_price(string $price_string): float {
         if (empty($price_string)) {
             return PHP_FLOAT_MAX;

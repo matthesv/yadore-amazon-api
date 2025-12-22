@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.7.8
+ * Version: 1.8.0
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.7.8');
+define('YAA_VERSION', '1.8.0');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -67,14 +67,8 @@ function yaa_get_fallback_time(): int {
 // =========================================
 // AUTOLOADER
 // =========================================
-
-// Autoloader zuerst laden (manuell, da er sich nicht selbst laden kann)
 require_once YAA_PLUGIN_PATH . 'includes/class-autoloader.php';
-
-// Autoloader registrieren
 YAA_Autoloader::register(YAA_PLUGIN_PATH);
-
-// Admin-Verzeichnis zum Autoloader hinzufügen
 YAA_Autoloader::add_directory('includes/admin');
 
 // =========================================
@@ -99,7 +93,7 @@ if (file_exists(YAA_PLUGIN_PATH . 'includes/plugin-update-checker/plugin-update-
 
 /**
  * Main Plugin Class - PHP 8.3+ compatible
- * Version 1.6.0 - Mit Search Shortcode Support
+ * Version 1.8.0 - Mit separatem Custom CSS pro Shortcode-Typ
  */
 final class Yadore_Amazon_API_Plugin {
     
@@ -119,7 +113,17 @@ final class Yadore_Amazon_API_Plugin {
     public readonly YAA_Admin $admin;
     public readonly YAA_Image_Proxy $image_proxy;
     public readonly YAA_Search_Shortcode $search_shortcode;
-    public readonly YAA_Banner_Shortcode $banner_shortcode; 
+    public readonly YAA_Banner_Shortcode $banner_shortcode;
+    
+    /**
+     * Shortcode-Typen die auf der Seite gefunden wurden
+     * @var array<string, bool>
+     */
+    private array $detected_shortcode_types = [
+        'grid'   => false,
+        'banner' => false,
+        'search' => false,
+    ];
 
     /**
      * Get singleton instance
@@ -143,7 +147,7 @@ final class Yadore_Amazon_API_Plugin {
      * Initialize all plugin components
      */
     private function init_components(): void {
-        // Core Components (werden durch Autoloader geladen)
+        // Core Components
         $this->cache           = new YAA_Cache_Handler();
         $this->yadore_api      = new YAA_Yadore_API($this->cache);
         $this->amazon_api      = new YAA_Amazon_PAAPI($this->cache);
@@ -158,20 +162,20 @@ final class Yadore_Amazon_API_Plugin {
         // Image Proxy Component
         $this->image_proxy = new YAA_Image_Proxy();
 
-        // Search Shortcode Component (mit Dependency Injection)
+        // Search Shortcode Component
         $this->search_shortcode = new YAA_Search_Shortcode(
             $this->yadore_api,
             $this->amazon_api
         );
         
-        // Banner Shortcode Component (NEU)
+        // Banner Shortcode Component
         $this->banner_shortcode = new YAA_Banner_Shortcode(
             $this->yadore_api,
             $this->amazon_api,
             $this->custom_products
         );
 
-        // Admin Component (koordiniert alle Admin-Submodule)
+        // Admin Component
         $this->admin = new YAA_Admin($this->cache, $this->yadore_api, $this->amazon_api);
     }
     
@@ -190,7 +194,7 @@ final class Yadore_Amazon_API_Plugin {
      * Plugin activation
      */
     public function activate(): void {
-        // Default settings
+        // Default settings - NEU: Custom CSS Felder hinzugefügt
         $defaults = [
             // Yadore Settings
             'enable_yadore'          => 'yes',
@@ -199,7 +203,7 @@ final class Yadore_Amazon_API_Plugin {
             'yadore_precision'       => 'fuzzy',
             'yadore_default_limit'   => 9,
             'yadore_default_sort'    => 'rel_desc',
-            'search_default_sort'    => '', // Leer = yadore_default_sort verwenden
+            'search_default_sort'    => '',
             'yadore_featured_keywords' => '',
             
             // Amazon Settings
@@ -229,7 +233,7 @@ final class Yadore_Amazon_API_Plugin {
             
             // Image Proxy Settings
             'enable_image_proxy'     => 'yes',
-            'image_proxy_cache'      => 24, // Stunden
+            'image_proxy_cache'      => 24,
             
             // Fuzzy Search settings
             'enable_fuzzy_search'    => 'yes',
@@ -259,7 +263,12 @@ final class Yadore_Amazon_API_Plugin {
             'color_amazon'           => '#ff9900',
             'color_custom'           => '#4CAF50',
             
-            // Search Shortcode Settings (NEU)
+            // NEU: Custom CSS für jeden Shortcode-Typ (wenn Default-CSS deaktiviert)
+            'custom_css_grid'        => '',
+            'custom_css_banner'      => '',
+            'custom_css_search'      => '',
+            
+            // Search Shortcode Settings
             'yadore_featured_keywords' => '',
             
             // Update Settings
@@ -281,7 +290,6 @@ final class Yadore_Amazon_API_Plugin {
         $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
         if (!is_dir($image_dir)) {
             wp_mkdir_p($image_dir);
-            // Index-Datei für Sicherheit
             file_put_contents($image_dir . '/index.php', '<?php // Silence is golden');
         }
         
@@ -303,6 +311,7 @@ final class Yadore_Amazon_API_Plugin {
     
     /**
      * Enqueue frontend assets when shortcodes are present
+     * NEU: Erkennt und speichert welche Shortcode-Typen vorhanden sind
      */
     public function enqueue_frontend_assets(): void {
         global $post;
@@ -311,8 +320,8 @@ final class Yadore_Amazon_API_Plugin {
             return;
         }
         
-        // Alle Shortcodes die Assets benötigen (inkl. yadore_search)
-        $shortcodes = [
+        // Grid Shortcodes
+        $grid_shortcodes = [
             'yaa_products', 
             'yadore_products', 
             'amazon_products', 
@@ -320,88 +329,60 @@ final class Yadore_Amazon_API_Plugin {
             'custom_products',
             'all_products',
             'fuzzy_products',
-            'yadore_search', // NEU: Search Shortcode hinzugefügt
-            'yaa_banner',  // ← NEU
         ];
         
-        $has_shortcode = false;
+        // Banner Shortcode
+        $banner_shortcodes = ['yaa_banner'];
         
-        foreach ($shortcodes as $shortcode) {
+        // Search Shortcode
+        $search_shortcodes = ['yadore_search', 'yaa_search', 'yaa_product_search'];
+        
+        // Prüfen welche Shortcode-Typen vorhanden sind
+        foreach ($grid_shortcodes as $shortcode) {
             if (has_shortcode($post->post_content, $shortcode)) {
-                $has_shortcode = true;
+                $this->detected_shortcode_types['grid'] = true;
                 break;
             }
         }
         
-        if ($has_shortcode) {
+        foreach ($banner_shortcodes as $shortcode) {
+            if (has_shortcode($post->post_content, $shortcode)) {
+                $this->detected_shortcode_types['banner'] = true;
+                break;
+            }
+        }
+        
+        foreach ($search_shortcodes as $shortcode) {
+            if (has_shortcode($post->post_content, $shortcode)) {
+                $this->detected_shortcode_types['search'] = true;
+                break;
+            }
+        }
+        
+        // Wenn mindestens ein Shortcode gefunden wurde, Assets laden
+        if ($this->detected_shortcode_types['grid'] || 
+            $this->detected_shortcode_types['banner'] || 
+            $this->detected_shortcode_types['search']) {
             $this->load_assets();
         }
     }
     
     /**
      * Load frontend assets
+     * NEU: Lädt Custom CSS pro Shortcode-Typ wenn Default-CSS deaktiviert
      */
     public function load_assets(): void {
         $disable_css = yaa_get_option('disable_default_css', 'no') === 'yes';
-
+        
         if (!$disable_css) {
-            wp_enqueue_style(
-                'yaa-frontend-grid',
-                YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
-                [],
-                YAA_VERSION
-            );
-            
-            $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
-            $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
-            $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
-            $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
-            $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
-            $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
-            $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
-            
-            $custom_css = "
-                .yaa-grid-container {
-                    --yaa-primary: {$primary};
-                    --yaa-secondary: {$secondary};
-                    --yaa-amazon: {$amazon};
-                    --yaa-custom: {$custom};
-                    --yaa-columns-desktop: {$columns_desktop};
-                    --yaa-columns-tablet: {$columns_tablet};
-                    --yaa-columns-mobile: {$columns_mobile};
-                }
-            ";
-            wp_add_inline_style('yaa-frontend-grid', $custom_css);
+            // Standard-CSS laden (wie bisher)
+            $this->load_default_css();
         } else {
-            // Minimal CSS wenn Default-CSS deaktiviert
-            wp_register_style('yaa-minimal-functional', false, [], YAA_VERSION);
-            wp_enqueue_style('yaa-minimal-functional');
-            
-            $minimal_css = "
-                .yaa-description {
-                    overflow: hidden;
-                    position: relative;
-                    max-height: 4.8em; 
-                    transition: max-height 0.4s ease-out;
-                }
-                .yaa-description.expanded {
-                    max-height: none !important;
-                    -webkit-line-clamp: unset !important;
-                    line-clamp: unset !important;
-                    display: block !important;
-                    overflow: visible !important;
-                }
-                .yaa-read-more { cursor: pointer; display: inline-block; }
-                .yaa-grid-container {
-                    display: grid;
-                    gap: 20px;
-                    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-                }
-            ";
-            wp_add_inline_style('yaa-minimal-functional', $minimal_css);
+            // Custom CSS laden - nur für vorhandene Shortcode-Typen
+            $this->load_custom_css();
         }
         
-        // Frontend JavaScript
+        // Frontend JavaScript (immer laden)
         wp_enqueue_script(
             'yaa-frontend-grid',
             YAA_PLUGIN_URL . 'assets/js/frontend-grid.js',
@@ -416,6 +397,205 @@ final class Yadore_Amazon_API_Plugin {
             'endpoint' => admin_url('admin-ajax.php'),
             'action'   => 'yaa_proxy_image',
         ]);
+    }
+    
+    /**
+     * Load default CSS (Standard-Verhalten)
+     */
+    private function load_default_css(): void {
+        // Grid CSS
+        if ($this->detected_shortcode_types['grid']) {
+            wp_enqueue_style(
+                'yaa-frontend-grid',
+                YAA_PLUGIN_URL . 'assets/css/frontend-grid.css',
+                [],
+                YAA_VERSION
+            );
+            
+            // CSS Variablen hinzufügen
+            $this->add_css_variables('yaa-frontend-grid');
+        }
+        
+        // Banner CSS
+        if ($this->detected_shortcode_types['banner']) {
+            wp_enqueue_style(
+                'yaa-banner',
+                YAA_PLUGIN_URL . 'assets/css/yaa-banner.css',
+                $this->detected_shortcode_types['grid'] ? ['yaa-frontend-grid'] : [],
+                YAA_VERSION
+            );
+        }
+        
+        // Search CSS
+        if ($this->detected_shortcode_types['search']) {
+            wp_enqueue_style(
+                'yaa-search',
+                YAA_PLUGIN_URL . 'assets/css/yaa-search.css',
+                [],
+                YAA_VERSION
+            );
+        }
+    }
+    
+    /**
+     * Load custom CSS when default CSS is disabled
+     * NEU: Lädt nur CSS für Shortcodes die auf der Seite sind
+     */
+    private function load_custom_css(): void {
+        // Minimales funktionales CSS (immer nötig für JS-Funktionalität)
+        $minimal_css = "
+            .yaa-description {
+                overflow: hidden;
+                position: relative;
+                max-height: 4.8em; 
+                transition: max-height 0.4s ease-out;
+            }
+            .yaa-description.expanded {
+                max-height: none !important;
+                -webkit-line-clamp: unset !important;
+                line-clamp: unset !important;
+                display: block !important;
+                overflow: visible !important;
+            }
+            .yaa-read-more { cursor: pointer; display: inline-block; }
+        ";
+        
+        // Grid Custom CSS
+        if ($this->detected_shortcode_types['grid']) {
+            $custom_css_grid = yaa_get_option('custom_css_grid', '');
+            
+            wp_register_style('yaa-custom-grid', false, [], YAA_VERSION);
+            wp_enqueue_style('yaa-custom-grid');
+            
+            // Minimales CSS + Custom CSS kombinieren
+            $grid_css = $minimal_css;
+            
+            // Fallback Grid-Layout wenn kein Custom CSS
+            if (empty(trim($custom_css_grid))) {
+                $grid_css .= "
+                    .yaa-grid-container {
+                        display: grid;
+                        gap: 20px;
+                        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                    }
+                ";
+            } else {
+                $grid_css .= "\n" . $custom_css_grid;
+            }
+            
+            wp_add_inline_style('yaa-custom-grid', $grid_css);
+        }
+        
+        // Banner Custom CSS
+        if ($this->detected_shortcode_types['banner']) {
+            $custom_css_banner = yaa_get_option('custom_css_banner', '');
+            
+            wp_register_style('yaa-custom-banner', false, [], YAA_VERSION);
+            wp_enqueue_style('yaa-custom-banner');
+            
+            // Fallback Banner-Layout wenn kein Custom CSS
+            $banner_css = '';
+            if (empty(trim($custom_css_banner))) {
+                $banner_css = "
+                    .yaa-banner-container {
+                        position: relative;
+                        width: 100%;
+                        margin: 1rem 0;
+                    }
+                    .yaa-banner-scroll-wrapper {
+                        overflow-x: auto;
+                        scroll-behavior: smooth;
+                    }
+                    .yaa-banner-track {
+                        display: flex;
+                        gap: 12px;
+                    }
+                    .yaa-banner-item {
+                        flex: 0 0 auto;
+                        min-width: 200px;
+                    }
+                ";
+            } else {
+                $banner_css = $custom_css_banner;
+            }
+            
+            wp_add_inline_style('yaa-custom-banner', $banner_css);
+        }
+        
+        // Search Custom CSS
+        if ($this->detected_shortcode_types['search']) {
+            $custom_css_search = yaa_get_option('custom_css_search', '');
+            
+            wp_register_style('yaa-custom-search', false, [], YAA_VERSION);
+            wp_enqueue_style('yaa-custom-search');
+            
+            // Fallback Search-Layout wenn kein Custom CSS
+            $search_css = '';
+            if (empty(trim($custom_css_search))) {
+                $search_css = "
+                    .yaa-search-wrapper {
+                        max-width: 100%;
+                        margin: 0 auto;
+                    }
+                    .yaa-search-form {
+                        margin-bottom: 1.5rem;
+                    }
+                    .yaa-search-input-wrapper {
+                        display: flex;
+                        gap: 0.5rem;
+                    }
+                    .yaa-search-input {
+                        flex: 1;
+                        padding: 0.75rem 1rem;
+                        border: 1px solid #ccc;
+                        border-radius: 4px;
+                    }
+                    .yaa-search-button {
+                        padding: 0.75rem 1.5rem;
+                        background: #0073aa;
+                        color: #fff;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                    }
+                    .yaa-search-results-inner {
+                        display: grid;
+                        gap: 1rem;
+                        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                    }
+                ";
+            } else {
+                $search_css = $custom_css_search;
+            }
+            
+            wp_add_inline_style('yaa-custom-search', $search_css);
+        }
+    }
+    
+    /**
+     * Add CSS variables to a stylesheet
+     */
+    private function add_css_variables(string $handle): void {
+        $primary = esc_attr((string) yaa_get_option('color_primary', '#ff00cc'));
+        $secondary = esc_attr((string) yaa_get_option('color_secondary', '#00ffff'));
+        $amazon = esc_attr((string) yaa_get_option('color_amazon', '#ff9900'));
+        $custom = esc_attr((string) yaa_get_option('color_custom', '#4CAF50'));
+        $columns_desktop = (int) yaa_get_option('grid_columns_desktop', 3);
+        $columns_tablet = (int) yaa_get_option('grid_columns_tablet', 2);
+        $columns_mobile = (int) yaa_get_option('grid_columns_mobile', 1);
+        
+        $custom_css = "
+            .yaa-grid-container {
+                --yaa-primary: {$primary};
+                --yaa-secondary: {$secondary};
+                --yaa-amazon: {$amazon};
+                --yaa-custom: {$custom};
+                --yaa-columns-desktop: {$columns_desktop};
+                --yaa-columns-tablet: {$columns_tablet};
+                --yaa-columns-mobile: {$columns_mobile};
+            }
+        ";
+        wp_add_inline_style($handle, $custom_css);
     }
     
     /**
@@ -449,7 +629,7 @@ final class Yadore_Amazon_API_Plugin {
                 ]);
             }
             
-            // Rate-Limiting: 1 Sekunde zwischen Requests
+            // Rate-Limiting
             sleep(1);
         }
     }
@@ -457,8 +637,6 @@ final class Yadore_Amazon_API_Plugin {
 
 /**
  * Initialize Plugin
- * 
- * @return Yadore_Amazon_API_Plugin Plugin instance
  */
 function yaa_init(): Yadore_Amazon_API_Plugin {
     return Yadore_Amazon_API_Plugin::get_instance();
@@ -466,10 +644,7 @@ function yaa_init(): Yadore_Amazon_API_Plugin {
 add_action('plugins_loaded', 'yaa_init', 10);
 
 /**
- * Plugin action links (Settings link in plugin list)
- * 
- * @param array<string, string> $links Existing links
- * @return array<string, string> Modified links
+ * Plugin action links
  */
 function yaa_plugin_action_links(array $links): array {
     $settings_link = '<a href="' . admin_url('admin.php?page=yaa-settings') . '">' . 

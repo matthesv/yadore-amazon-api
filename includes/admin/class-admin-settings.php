@@ -2,7 +2,11 @@
 /**
  * Admin Settings Page
  * PHP 8.3+ compatible
- * Version: 1.6.2
+ * Version: 1.7.0
+ * 
+ * CHANGELOG 1.7.0:
+ * - NEU: Custom CSS Tab mit separaten Eingabefeldern für Grid, Banner und Search
+ * - CSS wird nur geladen wenn der entsprechende Shortcode auf der Seite ist
  * 
  * CHANGELOG 1.6.2:
  * - Neue Einstellung: search_default_sort (Standard-Sortierung für Search Shortcode)
@@ -53,11 +57,12 @@ final class YAA_Admin_Settings {
                 <?php settings_fields('yaa_settings'); ?>
                 
                 <div class="yaa-tabs">
-                    <div class="yaa-tab active" data-tab="yadore">📂 Yadore API</div>
+                    <div class="yaa-tab active" data-tab="yadore">📊 Yadore API</div>
                     <div class="yaa-tab" data-tab="amazon">🛒 Amazon PA-API</div>
                     <div class="yaa-tab" data-tab="custom">⭐ Eigene Produkte</div>
                     <div class="yaa-tab" data-tab="cache">⚡ Cache &amp; Bilder</div>
                     <div class="yaa-tab" data-tab="display">🎨 Darstellung</div>
+                    <div class="yaa-tab" data-tab="css">🖌️ Custom CSS</div>
                 </div>
                 
                 <div id="yaa-tab-yadore" class="yaa-tab-content active">
@@ -78,6 +83,10 @@ final class YAA_Admin_Settings {
                 
                 <div id="yaa-tab-display" class="yaa-tab-content">
                     <?php $this->render_display_settings($options); ?>
+                </div>
+                
+                <div id="yaa-tab-css" class="yaa-tab-content">
+                    <?php $this->render_css_settings($options); ?>
                 </div>
                 
                 <?php submit_button(__('Einstellungen speichern', 'yadore-amazon-api')); ?>
@@ -177,10 +186,42 @@ final class YAA_Admin_Settings {
         $sanitized['color_amazon'] = sanitize_hex_color($input['color_amazon'] ?? '#ff9900') ?: '#ff9900';
         $sanitized['color_custom'] = sanitize_hex_color($input['color_custom'] ?? '#4CAF50') ?: '#4CAF50';
         
+        // NEU 1.7.0: Custom CSS für jeden Shortcode-Typ
+        $sanitized['custom_css_grid'] = $this->sanitize_css($input['custom_css_grid'] ?? '');
+        $sanitized['custom_css_banner'] = $this->sanitize_css($input['custom_css_banner'] ?? '');
+        $sanitized['custom_css_search'] = $this->sanitize_css($input['custom_css_search'] ?? '');
+        
         // GitHub Token
         $sanitized['github_token'] = sanitize_text_field($input['github_token'] ?? '');
         
         return $sanitized;
+    }
+    
+    /**
+     * Sanitize CSS input - entfernt potenziell gefährliche Inhalte
+     * 
+     * @param string $css Raw CSS input
+     * @return string Sanitized CSS
+     */
+    private function sanitize_css(string $css): string {
+        // Entferne HTML-Tags
+        $css = wp_strip_all_tags($css);
+        
+        // Entferne potenziell gefährliche CSS-Ausdrücke
+        $dangerous_patterns = [
+            '/expression\s*\(/i',      // IE expression()
+            '/javascript\s*:/i',        // javascript: URLs
+            '/behavior\s*:/i',          // IE behavior
+            '/@import/i',               // @import (könnte externe Ressourcen laden)
+            '/binding\s*:/i',           // -moz-binding
+            '/-moz-binding\s*:/i',
+        ];
+        
+        foreach ($dangerous_patterns as $pattern) {
+            $css = preg_replace($pattern, '', $css) ?? $css;
+        }
+        
+        return $css;
     }
     
     private function sanitize_merchant_list(string $input): string {
@@ -203,7 +244,7 @@ final class YAA_Admin_Settings {
         $sort_options = $this->yadore_api->get_sort_options();
         ?>
         <div class="yaa-card">
-            <h2>📂 Yadore API Konfiguration</h2>
+            <h2>📊 Yadore API Konfiguration</h2>
             <p class="description">
                 Yadore bietet Zugang zu über 9.000 Shops und 250 Millionen Produkten. 
                 <a href="https://www.yadore.com/publisher" target="_blank" rel="noopener">Publisher-Account erstellen →</a>
@@ -1014,6 +1055,10 @@ final class YAA_Admin_Settings {
                         <?php checked(($options['disable_default_css'] ?? 'no'), 'yes'); ?>>
                     Standard-CSS deaktivieren (eigenes Styling verwenden)
                 </label>
+                <p class="description">
+                    Wenn aktiviert, werden die Plugin-Stylesheets nicht geladen. 
+                    Nutze den <strong>Custom CSS Tab</strong> für eigene Styles.
+                </p>
             </div>
         </div>
         
@@ -1057,7 +1102,7 @@ final class YAA_Admin_Settings {
         </div>
         
         <div class="yaa-card">
-            <h2>🔒 Button-Texte</h2>
+            <h2>🔘 Button-Texte</h2>
             
             <div class="yaa-grid">
                 <div class="yaa-form-row">
@@ -1177,6 +1222,420 @@ final class YAA_Admin_Settings {
                         Token erstellen →
                     </a>
                 </p>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * NEU 1.7.0: Custom CSS Settings Tab
+     * Enthält separate Eingabefelder für Grid, Banner und Search CSS
+     * 
+     * @param array<string, mixed> $options
+     */
+    private function render_css_settings(array $options): void {
+        ?>
+        <div class="yaa-card">
+            <h2>🖌️ Custom CSS Einstellungen</h2>
+            
+            <div class="yaa-feature-box info" style="margin-bottom: 20px;">
+                <h4 style="margin-top: 0;">💡 Wie funktioniert Custom CSS?</h4>
+                <p>
+                    Wenn du im <strong>Darstellung</strong>-Tab "Standard-CSS deaktivieren" aktivierst, werden die 
+                    Plugin-Stylesheets nicht geladen. Stattdessen wird das hier eingetragene Custom CSS verwendet.
+                </p>
+                <ul style="margin: 10px 0 0 20px; line-height: 1.8;">
+                    <li><strong>Grid-CSS:</strong> Für Produkt-Grids (<code>yadore_products</code>, <code>amazon_products</code>, etc.)</li>
+                    <li><strong>Banner-CSS:</strong> Für den Banner-Shortcode (<code>yaa_banner</code>)</li>
+                    <li><strong>Search-CSS:</strong> Für die Produktsuche (<code>yadore_search</code>)</li>
+                </ul>
+                <p style="margin-top: 10px;">
+                    <strong>✨ Wichtig:</strong> Das CSS wird nur geladen, wenn der entsprechende Shortcode auf der Seite vorhanden ist.
+                </p>
+            </div>
+            
+            <!-- Status-Anzeige -->
+            <div class="yaa-form-row" style="padding: 15px; background: <?php echo ($options['disable_default_css'] ?? 'no') === 'yes' ? '#e8f5e9' : '#fff3e0'; ?>; border-radius: 6px; margin-bottom: 20px;">
+                <?php if (($options['disable_default_css'] ?? 'no') === 'yes'): ?>
+                    <span style="color: #2e7d32;">✅ <strong>Custom CSS aktiv</strong> – Das unten eingetragene CSS wird verwendet.</span>
+                <?php else: ?>
+                    <span style="color: #e65100;">⚠️ <strong>Standard-CSS aktiv</strong> – Um Custom CSS zu nutzen, aktiviere "Standard-CSS deaktivieren" im Darstellung-Tab.</span>
+                <?php endif; ?>
+            </div>
+        </div>
+        
+        <!-- Grid CSS -->
+        <div class="yaa-card">
+            <h2>📦 Custom CSS für Produkt-Grids</h2>
+            <p class="description" style="margin-bottom: 15px;">
+                Für Shortcodes: 
+                <code>[yadore_products]</code>, <code>[amazon_products]</code>, <code>[custom_products]</code>, 
+                <code>[combined_products]</code>, <code>[all_products]</code>, <code>[fuzzy_products]</code>
+            </p>
+            
+            <div class="yaa-form-row">
+                <textarea id="yaa_custom_css_grid" 
+                          name="yaa_settings[custom_css_grid]" 
+                          rows="18" 
+                          style="width: 100%; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.5; padding: 12px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9;"
+                          placeholder="/* Dein Grid CSS hier */"
+                ><?php echo esc_textarea($options['custom_css_grid'] ?? ''); ?></textarea>
+            </div>
+            
+            <details style="margin-top: 15px;">
+                <summary style="cursor: pointer; color: #0073aa; font-weight: 500; padding: 8px 0;">
+                    📋 Beispiel CSS für Grid anzeigen
+                </summary>
+                <pre style="background: #2d2d2d; color: #f8f8f2; padding: 20px; margin-top: 10px; overflow-x: auto; font-size: 12px; border-radius: 6px; line-height: 1.6;">
+<span style="color: #66d9ef;">.yaa-grid-container</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">grid</span>;
+    <span style="color: #a6e22e;">grid-template-columns</span>: <span style="color: #ae81ff;">repeat(3, 1fr)</span>;
+    <span style="color: #a6e22e;">gap</span>: <span style="color: #ae81ff;">20px</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-item</span> {
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">#fff</span>;
+    <span style="color: #a6e22e;">border</span>: <span style="color: #ae81ff;">1px solid #ddd</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">8px</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">15px</span>;
+    <span style="color: #a6e22e;">transition</span>: <span style="color: #ae81ff;">box-shadow 0.3s</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-item:hover</span> {
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 4px 12px rgba(0,0,0,0.1)</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-image-wrapper</span> {
+    <span style="color: #a6e22e;">aspect-ratio</span>: <span style="color: #ae81ff;">1</span>;
+    <span style="color: #a6e22e;">overflow</span>: <span style="color: #ae81ff;">hidden</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">6px</span>;
+    <span style="color: #a6e22e;">margin-bottom</span>: <span style="color: #ae81ff;">12px</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-image-wrapper img</span> {
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">height</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">object-fit</span>: <span style="color: #ae81ff;">contain</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-title</span> {
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">1rem</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">600</span>;
+    <span style="color: #a6e22e;">margin-bottom</span>: <span style="color: #ae81ff;">8px</span>;
+    <span style="color: #a6e22e;">line-height</span>: <span style="color: #ae81ff;">1.3</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-price</span> {
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">1.25rem</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">700</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#e00</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-button</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">inline-block</span>;
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">12px 20px</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">linear-gradient(135deg, #ff00cc, #3333ff)</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#fff</span>;
+    <span style="color: #a6e22e;">text-align</span>: <span style="color: #ae81ff;">center</span>;
+    <span style="color: #a6e22e;">text-decoration</span>: <span style="color: #ae81ff;">none</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">6px</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">600</span>;
+    <span style="color: #a6e22e;">transition</span>: <span style="color: #ae81ff;">transform 0.2s, box-shadow 0.2s</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-button:hover</span> {
+    <span style="color: #a6e22e;">transform</span>: <span style="color: #ae81ff;">translateY(-2px)</span>;
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 4px 12px rgba(255, 0, 204, 0.4)</span>;
+}
+
+<span style="color: #75715e;">/* Responsive */</span>
+<span style="color: #66d9ef;">@media (max-width: 1024px)</span> {
+    <span style="color: #66d9ef;">.yaa-grid-container</span> {
+        <span style="color: #a6e22e;">grid-template-columns</span>: <span style="color: #ae81ff;">repeat(2, 1fr)</span>;
+    }
+}
+
+<span style="color: #66d9ef;">@media (max-width: 768px)</span> {
+    <span style="color: #66d9ef;">.yaa-grid-container</span> {
+        <span style="color: #a6e22e;">grid-template-columns</span>: <span style="color: #ae81ff;">1fr</span>;
+    }
+}</pre>
+            </details>
+        </div>
+        
+        <!-- Banner CSS -->
+        <div class="yaa-card">
+            <h2>🎯 Custom CSS für Banner</h2>
+            <p class="description" style="margin-bottom: 15px;">
+                Für Shortcode: <code>[yaa_banner]</code>
+            </p>
+            
+            <div class="yaa-form-row">
+                <textarea id="yaa_custom_css_banner" 
+                          name="yaa_settings[custom_css_banner]" 
+                          rows="18" 
+                          style="width: 100%; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.5; padding: 12px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9;"
+                          placeholder="/* Dein Banner CSS hier */"
+                ><?php echo esc_textarea($options['custom_css_banner'] ?? ''); ?></textarea>
+            </div>
+            
+            <details style="margin-top: 15px;">
+                <summary style="cursor: pointer; color: #0073aa; font-weight: 500; padding: 8px 0;">
+                    📋 Beispiel CSS für Banner anzeigen
+                </summary>
+                <pre style="background: #2d2d2d; color: #f8f8f2; padding: 20px; margin-top: 10px; overflow-x: auto; font-size: 12px; border-radius: 6px; line-height: 1.6;">
+<span style="color: #66d9ef;">.yaa-banner-container</span> {
+    <span style="color: #a6e22e;">position</span>: <span style="color: #ae81ff;">relative</span>;
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">margin</span>: <span style="color: #ae81ff;">1.5rem 0</span>;
+    <span style="color: #a6e22e;">overflow</span>: <span style="color: #ae81ff;">hidden</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-scroll-wrapper</span> {
+    <span style="color: #a6e22e;">overflow-x</span>: <span style="color: #ae81ff;">auto</span>;
+    <span style="color: #a6e22e;">scroll-behavior</span>: <span style="color: #ae81ff;">smooth</span>;
+    <span style="color: #a6e22e;">scrollbar-width</span>: <span style="color: #ae81ff;">none</span>;
+    <span style="color: #a6e22e;">-ms-overflow-style</span>: <span style="color: #ae81ff;">none</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-scroll-wrapper::-webkit-scrollbar</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">none</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-track</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">flex</span>;
+    <span style="color: #a6e22e;">gap</span>: <span style="color: #ae81ff;">14px</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">6px</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-item</span> {
+    <span style="color: #a6e22e;">flex</span>: <span style="color: #ae81ff;">0 0 auto</span>;
+    <span style="color: #a6e22e;">min-width</span>: <span style="color: #ae81ff;">280px</span>;
+    <span style="color: #a6e22e;">max-width</span>: <span style="color: #ae81ff;">320px</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">#fff</span>;
+    <span style="color: #a6e22e;">border</span>: <span style="color: #ae81ff;">1px solid #e0e0e0</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">10px</span>;
+    <span style="color: #a6e22e;">transition</span>: <span style="color: #ae81ff;">transform 0.2s, box-shadow 0.2s</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-item:hover</span> {
+    <span style="color: #a6e22e;">transform</span>: <span style="color: #ae81ff;">translateY(-3px)</span>;
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 6px 20px rgba(0,0,0,0.12)</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-link</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">flex</span>;
+    <span style="color: #a6e22e;">align-items</span>: <span style="color: #ae81ff;">center</span>;
+    <span style="color: #a6e22e;">gap</span>: <span style="color: #ae81ff;">14px</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">12px 16px</span>;
+    <span style="color: #a6e22e;">text-decoration</span>: <span style="color: #ae81ff;">none</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">inherit</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-image</span> {
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">65px</span>;
+    <span style="color: #a6e22e;">height</span>: <span style="color: #ae81ff;">65px</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">8px</span>;
+    <span style="color: #a6e22e;">overflow</span>: <span style="color: #ae81ff;">hidden</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">#f5f5f5</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-image img</span> {
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">height</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">object-fit</span>: <span style="color: #ae81ff;">contain</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-title</span> {
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">0.9rem</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">500</span>;
+    <span style="color: #a6e22e;">line-height</span>: <span style="color: #ae81ff;">1.3</span>;
+    <span style="color: #a6e22e;">margin-bottom</span>: <span style="color: #ae81ff;">4px</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-price</span> {
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">1rem</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">700</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#e00</span>;
+}
+
+<span style="color: #75715e;">/* Navigation Arrows */</span>
+<span style="color: #66d9ef;">.yaa-banner-nav</span> {
+    <span style="color: #a6e22e;">position</span>: <span style="color: #ae81ff;">absolute</span>;
+    <span style="color: #a6e22e;">top</span>: <span style="color: #ae81ff;">50%</span>;
+    <span style="color: #a6e22e;">transform</span>: <span style="color: #ae81ff;">translateY(-50%)</span>;
+    <span style="color: #a6e22e;">width</span>: <span style="color: #ae81ff;">36px</span>;
+    <span style="color: #a6e22e;">height</span>: <span style="color: #ae81ff;">36px</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">rgba(255,255,255,0.95)</span>;
+    <span style="color: #a6e22e;">border</span>: <span style="color: #ae81ff;">none</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">50%</span>;
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 2px 8px rgba(0,0,0,0.15)</span>;
+    <span style="color: #a6e22e;">cursor</span>: <span style="color: #ae81ff;">pointer</span>;
+    <span style="color: #a6e22e;">z-index</span>: <span style="color: #ae81ff;">10</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-banner-nav.prev</span> { <span style="color: #a6e22e;">left</span>: <span style="color: #ae81ff;">8px</span>; }
+<span style="color: #66d9ef;">.yaa-banner-nav.next</span> { <span style="color: #a6e22e;">right</span>: <span style="color: #ae81ff;">8px</span>; }</pre>
+            </details>
+        </div>
+        
+        <!-- Search CSS -->
+        <div class="yaa-card">
+            <h2>🔍 Custom CSS für Produktsuche</h2>
+            <p class="description" style="margin-bottom: 15px;">
+                Für Shortcodes: <code>[yadore_search]</code>, <code>[yaa_search]</code>, <code>[yaa_product_search]</code>
+            </p>
+            
+            <div class="yaa-form-row">
+                <textarea id="yaa_custom_css_search" 
+                          name="yaa_settings[custom_css_search]" 
+                          rows="18" 
+                          style="width: 100%; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.5; padding: 12px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9;"
+                          placeholder="/* Dein Search CSS hier */"
+                ><?php echo esc_textarea($options['custom_css_search'] ?? ''); ?></textarea>
+            </div>
+            
+            <details style="margin-top: 15px;">
+                <summary style="cursor: pointer; color: #0073aa; font-weight: 500; padding: 8px 0;">
+                    📋 Beispiel CSS für Search anzeigen
+                </summary>
+                <pre style="background: #2d2d2d; color: #f8f8f2; padding: 20px; margin-top: 10px; overflow-x: auto; font-size: 12px; border-radius: 6px; line-height: 1.6;">
+<span style="color: #66d9ef;">.yaa-search-wrapper</span> {
+    <span style="color: #a6e22e;">max-width</span>: <span style="color: #ae81ff;">100%</span>;
+    <span style="color: #a6e22e;">margin</span>: <span style="color: #ae81ff;">0 auto</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-form</span> {
+    <span style="color: #a6e22e;">margin-bottom</span>: <span style="color: #ae81ff;">2rem</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-input-wrapper</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">flex</span>;
+    <span style="color: #a6e22e;">gap</span>: <span style="color: #ae81ff;">0.75rem</span>;
+    <span style="color: #a6e22e;">max-width</span>: <span style="color: #ae81ff;">600px</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-input</span> {
+    <span style="color: #a6e22e;">flex</span>: <span style="color: #ae81ff;">1</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">0.875rem 1.25rem</span>;
+    <span style="color: #a6e22e;">border</span>: <span style="color: #ae81ff;">2px solid #e0e0e0</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">10px</span>;
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">1rem</span>;
+    <span style="color: #a6e22e;">transition</span>: <span style="color: #ae81ff;">border-color 0.2s, box-shadow 0.2s</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-input:focus</span> {
+    <span style="color: #a6e22e;">border-color</span>: <span style="color: #ae81ff;">#ff00cc</span>;
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 0 0 3px rgba(255, 0, 204, 0.1)</span>;
+    <span style="color: #a6e22e;">outline</span>: <span style="color: #ae81ff;">none</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-button</span> {
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">0.875rem 1.75rem</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">linear-gradient(135deg, #ff00cc, #3333ff)</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#fff</span>;
+    <span style="color: #a6e22e;">border</span>: <span style="color: #ae81ff;">none</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">10px</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">600</span>;
+    <span style="color: #a6e22e;">cursor</span>: <span style="color: #ae81ff;">pointer</span>;
+    <span style="color: #a6e22e;">transition</span>: <span style="color: #ae81ff;">transform 0.2s, box-shadow 0.2s</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-button:hover</span> {
+    <span style="color: #a6e22e;">transform</span>: <span style="color: #ae81ff;">translateY(-2px)</span>;
+    <span style="color: #a6e22e;">box-shadow</span>: <span style="color: #ae81ff;">0 4px 12px rgba(255, 0, 204, 0.4)</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-results-inner</span> {
+    <span style="color: #a6e22e;">display</span>: <span style="color: #ae81ff;">grid</span>;
+    <span style="color: #a6e22e;">gap</span>: <span style="color: #ae81ff;">1.5rem</span>;
+    <span style="color: #a6e22e;">grid-template-columns</span>: <span style="color: #ae81ff;">repeat(auto-fill, minmax(250px, 1fr))</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-loading</span> {
+    <span style="color: #a6e22e;">text-align</span>: <span style="color: #ae81ff;">center</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">3rem</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#666</span>;
+}
+
+<span style="color: #66d9ef;">.yaa-search-no-results</span> {
+    <span style="color: #a6e22e;">text-align</span>: <span style="color: #ae81ff;">center</span>;
+    <span style="color: #a6e22e;">padding</span>: <span style="color: #ae81ff;">3rem</span>;
+    <span style="color: #a6e22e;">background</span>: <span style="color: #ae81ff;">#f9f9f9</span>;
+    <span style="color: #a6e22e;">border-radius</span>: <span style="color: #ae81ff;">10px</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#666</span>;
+}
+
+<span style="color: #75715e;">/* Initial Products Section */</span>
+<span style="color: #66d9ef;">.yaa-search-initial-title</span> {
+    <span style="color: #a6e22e;">font-size</span>: <span style="color: #ae81ff;">1.25rem</span>;
+    <span style="color: #a6e22e;">font-weight</span>: <span style="color: #ae81ff;">600</span>;
+    <span style="color: #a6e22e;">margin-bottom</span>: <span style="color: #ae81ff;">1.25rem</span>;
+    <span style="color: #a6e22e;">color</span>: <span style="color: #ae81ff;">#333</span>;
+}</pre>
+            </details>
+        </div>
+        
+        <!-- CSS Klassen Referenz -->
+        <div class="yaa-card">
+            <h2>📚 CSS Klassen Referenz</h2>
+            
+            <div class="yaa-grid" style="gap: 20px;">
+                <div>
+                    <h4 style="margin-top: 0;">Grid Klassen</h4>
+                    <ul style="font-family: monospace; font-size: 12px; line-height: 2;">
+                        <li><code>.yaa-grid-container</code> - Grid-Wrapper</li>
+                        <li><code>.yaa-item</code> - Einzelnes Produkt</li>
+                        <li><code>.yaa-item-yadore</code> - Yadore-Produkt</li>
+                        <li><code>.yaa-item-amazon</code> - Amazon-Produkt</li>
+                        <li><code>.yaa-item-custom</code> - Eigenes Produkt</li>
+                        <li><code>.yaa-image-wrapper</code> - Bild-Container</li>
+                        <li><code>.yaa-title</code> - Produkttitel</li>
+                        <li><code>.yaa-description</code> - Beschreibung</li>
+                        <li><code>.yaa-price</code> - Preis</li>
+                        <li><code>.yaa-merchant</code> - Händlername</li>
+                        <li><code>.yaa-button</code> - CTA Button</li>
+                        <li><code>.yaa-badge</code> - Badge (Prime, etc.)</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 style="margin-top: 0;">Banner Klassen</h4>
+                    <ul style="font-family: monospace; font-size: 12px; line-height: 2;">
+                        <li><code>.yaa-banner-container</code> - Wrapper</li>
+                        <li><code>.yaa-banner-scroll-wrapper</code> - Scroll-Area</li>
+                        <li><code>.yaa-banner-track</code> - Flex-Container</li>
+                        <li><code>.yaa-banner-item</code> - Einzelnes Item</li>
+                        <li><code>.yaa-banner-link</code> - Klickbarer Link</li>
+                        <li><code>.yaa-banner-image</code> - Bild-Container</li>
+                        <li><code>.yaa-banner-content</code> - Text-Bereich</li>
+                        <li><code>.yaa-banner-title</code> - Titel</li>
+                        <li><code>.yaa-banner-price</code> - Preis</li>
+                        <li><code>.yaa-banner-nav</code> - Navigation</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 style="margin-top: 0;">Search Klassen</h4>
+                    <ul style="font-family: monospace; font-size: 12px; line-height: 2;">
+                        <li><code>.yaa-search-wrapper</code> - Haupt-Wrapper</li>
+                        <li><code>.yaa-search-form</code> - Suchformular</li>
+                        <li><code>.yaa-search-input-wrapper</code> - Input-Wrapper</li>
+                        <li><code>.yaa-search-input</code> - Textfeld</li>
+                        <li><code>.yaa-search-button</code> - Such-Button</li>
+                        <li><code>.yaa-search-results</code> - Ergebnis-Container</li>
+                        <li><code>.yaa-search-results-inner</code> - Grid</li>
+                        <li><code>.yaa-search-loading</code> - Lade-Anzeige</li>
+                        <li><code>.yaa-search-no-results</code> - Keine Treffer</li>
+                        <li><code>.yaa-search-initial</code> - Initial-Produkte</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="yaa-tip" style="margin-top: 20px;">
+                <strong>💡 Tipp:</strong> Nutze die Browser-Entwicklertools (F12), um die CSS-Klassen im Frontend zu inspizieren 
+                und dein Custom CSS zu testen.
             </div>
         </div>
         <?php
