@@ -1,14 +1,13 @@
 <?php
 /**
  * Image Handler Class
- * Handles downloading remote images and serving local versions.
- * Includes validation, retry mechanism, SEO filenames, and admin logging.
- * 
- * Version: 1.5.0
+ * Version: 1.5.1
  * PHP 8.3+ compatible
  * 
- * FIX 1.5.0: Verbessertes Referer-Handling für CDN-URLs (KeyCDN, CloudFront, etc.)
- * NEU 1.4.0: Verbesserte Download-Logik mit curl für Hotlink-Protection Bypass
+ * FIX 1.5.1: TLS-Fingerprinting Problem behoben
+ *            - Keine Browser-spezifischen Headers mehr (Sec-Ch-Ua etc.)
+ *            - Einfacher, konsistenter User-Agent
+ *            - Funktioniert mit CDNs die JA3-Fingerprinting nutzen
  */
 
 declare(strict_types=1);
@@ -19,93 +18,37 @@ if (!defined('ABSPATH')) {
 
 class YAA_Image_Handler {
 
-    /**
-     * Max retry attempts for failed images
-     */
     private const MAX_RETRIES = 3;
-    
-    /**
-     * Retry cooldown multiplier (hours)
-     */
     private const RETRY_COOLDOWN_HOURS = 1;
-    
-    /**
-     * Max log entries to keep
-     */
     private const MAX_LOG_ENTRIES = 100;
-    
-    /**
-     * Max characters for SEO filename (product name part)
-     */
     private const SEO_NAME_MAX_LENGTH = 30;
     
-    /**
-     * Image size limits for resizing
-     */
     private const IMAGE_SIZES = [
         'Large'  => 500,
         'Medium' => 160,
         'Small'  => 75,
     ];
-    
-    /**
-     * CDN zu Hauptdomain Mapping für korrekten Referer
-     * FIX 1.5.0: Bekannte CDN-Muster auf Hauptdomain mappen
-     * 
-     * @var array<string, string>
-     */
-    private const CDN_DOMAIN_MAP = [
-        'cdn-assets.office-partner.de' => 'https://shop.office-partner.de',
-        'cdn.office-partner.de'        => 'https://shop.office-partner.de',
-        'images.office-partner.de'     => 'https://shop.office-partner.de',
-        // Weitere bekannte CDN-Mappings können hier hinzugefügt werden
-    ];
 
-    /**
-     * Check if image resizing is available
-     * 
-     * @return bool True if GD or Imagick is available
-     */
     public static function can_resize_images(): bool {
         return self::get_image_library() !== 'None';
     }
 
-    /**
-     * Get the available image processing library
-     * 
-     * @return string 'Imagick', 'GD', or 'None'
-     */
     public static function get_image_library(): string {
         if (extension_loaded('imagick') && class_exists('Imagick')) {
             return 'Imagick';
         }
-        
         if (extension_loaded('gd') && function_exists('imagecreatetruecolor')) {
             return 'GD';
         }
-        
         return 'None';
     }
 
-    /**
-     * Get the max dimension for a given size setting
-     * 
-     * @param string $size 'Large', 'Medium', or 'Small'
-     * @return int Max dimension in pixels
-     */
     public static function get_max_dimension(string $size = 'Large'): int {
         return self::IMAGE_SIZES[$size] ?? self::IMAGE_SIZES['Large'];
     }
 
     /**
      * Process an image: Download if not exists, return local URL.
-     * Includes validation, retry logic, and SEO filename generation.
-     * 
-     * @param string|null $remote_url The remote image URL.
-     * @param string $id Unique identifier (ASIN or EAN) for the filename.
-     * @param string $product_name Product name for SEO filename.
-     * @param string $source Source identifier (amazon, yadore, custom).
-     * @return string Local URL or Placeholder URL.
      */
     public static function process(
         ?string $remote_url, 
@@ -113,18 +56,15 @@ class YAA_Image_Handler {
         string $product_name = '',
         string $source = ''
     ): string {
-        // 1. Check if remote URL is valid
         if (empty($remote_url)) {
             return self::get_placeholder_url();
         }
 
-        // 2. Check retry status (skip if too many failures)
         if (self::should_skip_retry($remote_url)) {
             self::debug_log('Skipping retry for URL (too many failures): ' . $remote_url);
             return self::get_placeholder_url();
         }
 
-        // 3. Setup Upload Directory
         $upload_dir = wp_upload_dir();
         if (isset($upload_dir['error']) && $upload_dir['error'] !== false) {
             return $remote_url;
@@ -133,16 +73,13 @@ class YAA_Image_Handler {
         $base_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
         $base_url = $upload_dir['baseurl'] . '/yadore-amazon-api';
 
-        // Create directory if not exists
         if (!file_exists($base_dir)) {
             if (!wp_mkdir_p($base_dir)) {
                 return $remote_url;
             }
-            
             file_put_contents($base_dir . '/index.php', '<?php // Silence is golden');
         }
 
-        // 4. Determine file extension
         $path_parts = pathinfo(parse_url($remote_url, PHP_URL_PATH) ?? '');
         $ext = isset($path_parts['extension']) ? strtolower($path_parts['extension']) : 'jpg';
         
@@ -152,18 +89,15 @@ class YAA_Image_Handler {
             default => 'jpg',
         };
         
-        // 5. Generate filename
         $filename = self::generate_filename($id, $product_name, $source, $ext);
         $file_path = $base_dir . '/' . $filename;
         $file_url = $base_url . '/' . $filename;
 
-        // 6. Check if file already exists
         $existing_file = self::find_existing_file($base_dir, $base_url, $id, $source, $ext);
         if ($existing_file !== null) {
             return $existing_file;
         }
 
-        // 7. Return local URL if already exists and is valid
         if (file_exists($file_path)) {
             if (filesize($file_path) > 100 && self::is_valid_image_file($file_path)) {
                 return $file_url;
@@ -171,7 +105,7 @@ class YAA_Image_Handler {
             @unlink($file_path);
         }
 
-        // 8. Download mit verbesserter Methode
+        // Download mit verbesserter Methode
         self::debug_log('Starting download for: ' . $remote_url);
         
         $download_result = self::download_image_smart($remote_url);
@@ -182,27 +116,23 @@ class YAA_Image_Handler {
             return self::get_placeholder_url();
         }
 
-        // 9. Validate that it's actually an image
         if (!self::is_valid_image_data($download_result)) {
             self::log_failed_image($remote_url, $id, 'Invalid image data');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 10. Check minimum size
         if (strlen($download_result) < 500) {
             self::log_failed_image($remote_url, $id, 'Image too small (likely tracking pixel)');
             self::increment_retry_counter($remote_url);
             return self::get_placeholder_url();
         }
 
-        // 11. Save File
         if (file_put_contents($file_path, $download_result) === false) {
             self::log_failed_image($remote_url, $id, 'Could not save file');
             return self::get_placeholder_url();
         }
 
-        // 12. Optional: Resize image
         $resize_enabled = function_exists('yaa_get_option') 
             ? yaa_get_option('image_resize_enabled', 'yes') === 'yes' 
             : false;
@@ -215,7 +145,6 @@ class YAA_Image_Handler {
             self::resize_image($file_path, $preferred_size);
         }
 
-        // 13. Clear retry counter on success
         self::clear_retry_counter($remote_url);
         
         self::debug_log('Successfully downloaded: ' . $remote_url . ' -> ' . $file_path);
@@ -223,9 +152,6 @@ class YAA_Image_Handler {
         return $file_url;
     }
 
-    /**
-     * Debug-Logging (nur wenn WP_DEBUG aktiv)
-     */
     private static function debug_log(string $message): void {
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log('YAA Image Handler: ' . $message);
@@ -233,90 +159,41 @@ class YAA_Image_Handler {
     }
 
     /**
-     * FIX 1.5.0: Ermittelt den korrekten Referer für eine URL
+     * FIX 1.5.1: Smart Download mit mehreren Methoden
      * 
-     * Bei CDN-URLs wird versucht, die Hauptdomain zu ermitteln.
-     * Beispiel: cdn-assets.office-partner.de -> shop.office-partner.de
-     * 
-     * @param string $url Die Bild-URL
-     * @return string Der zu verwendende Referer
-     */
-    private static function get_smart_referer(string $url): string {
-        $parsed = parse_url($url);
-        $host = $parsed['host'] ?? '';
-        $scheme = $parsed['scheme'] ?? 'https';
-        
-        // 1. Prüfe ob wir ein bekanntes CDN-Mapping haben
-        if (isset(self::CDN_DOMAIN_MAP[$host])) {
-            return self::CDN_DOMAIN_MAP[$host];
-        }
-        
-        // 2. Versuche CDN-Subdomains zu erkennen und auf Hauptdomain zu mappen
-        $cdn_patterns = [
-            '/^cdn[.-]/',           // cdn. oder cdn-
-            '/^cdn-assets[.-]/',    // cdn-assets.
-            '/^images[.-]/',        // images.
-            '/^img[.-]/',           // img.
-            '/^static[.-]/',        // static.
-            '/^assets[.-]/',        // assets.
-            '/^media[.-]/',         // media.
-        ];
-        
-        foreach ($cdn_patterns as $pattern) {
-            if (preg_match($pattern, $host)) {
-                // Entferne CDN-Prefix und versuche Hauptdomain
-                $main_domain = preg_replace($pattern, '', $host);
-                
-                // Für Shop-Domains
-                $possible_referers = [
-                    $scheme . '://shop.' . $main_domain,
-                    $scheme . '://www.' . $main_domain,
-                    $scheme . '://' . $main_domain,
-                ];
-                
-                // Gib die wahrscheinlichste zurück
-                return $possible_referers[0];
-            }
-        }
-        
-        // 3. Fallback: Verwende die gleiche Domain
-        return $scheme . '://' . $host;
-    }
-
-    /**
-     * Smart Download mit mehreren Methoden
-     * FIX 1.5.0: Verbessertes Referer-Handling
-     * 
-     * @param string $url Remote image URL
-     * @return string|false Binary image data or false on failure
+     * Reihenfolge:
+     * 1. curl MINIMAL (keine verdächtigen Headers) - BESTE METHODE
+     * 2. curl mit einfachem User-Agent
+     * 3. wp_remote_get 
+     * 4. file_get_contents
      */
     public static function download_image_smart(string $url): string|false {
-        // Methode 1: curl mit Smart Referer (beste Methode)
-        $result = self::download_with_curl($url);
+        // Methode 1: curl MINIMAL - wie auf der Konsole
+        $result = self::download_with_curl_minimal($url);
         if ($result !== false && strlen($result) > 500) {
-            self::debug_log('curl download succeeded for: ' . $url);
+            self::debug_log('curl MINIMAL succeeded for: ' . $url);
             return $result;
         }
-        self::debug_log('curl download failed for: ' . $url);
+        self::debug_log('curl MINIMAL failed for: ' . $url);
         
-        // Methode 2: curl ohne Referer (für Server die keinen Referer prüfen)
-        $result = self::download_with_curl_no_referer($url);
+        // Methode 2: curl mit einfachem User-Agent
+        $result = self::download_with_curl_simple($url);
         if ($result !== false && strlen($result) > 500) {
-            self::debug_log('curl (no referer) download succeeded for: ' . $url);
+            self::debug_log('curl SIMPLE succeeded for: ' . $url);
             return $result;
         }
         
-        // Methode 3: wp_remote_get mit angepassten Headern
+        // Methode 3: wp_remote_get
         $result = self::download_with_wp_remote($url);
         if ($result !== false && strlen($result) > 500) {
-            self::debug_log('wp_remote_get download succeeded for: ' . $url);
+            self::debug_log('wp_remote_get succeeded for: ' . $url);
             return $result;
         }
         
-        // Methode 4: file_get_contents mit Stream Context
+        // Methode 4: file_get_contents
         $result = self::download_with_stream_context($url);
         if ($result !== false && strlen($result) > 500) {
-            self::debug_log('stream_context download succeeded for: ' . $url);
+            self::debug_log('stream_context succeeded for: ' . $url);
             return $result;
         }
         
@@ -325,27 +202,17 @@ class YAA_Image_Handler {
     }
 
     /**
-     * Download mit curl - beste Methode für Hotlink-Protection Bypass
-     * FIX 1.5.0: Smart Referer basierend auf CDN-Domain
+     * FIX 1.5.1: MINIMALER curl Request - wie auf der Konsole
      * 
-     * @param string $url Remote image URL
-     * @return string|false Binary image data or false on failure
+     * Keine zusätzlichen Headers!
+     * Der Befehl `curl -I URL` funktioniert - also machen wir genau das.
      */
-    private static function download_with_curl(string $url): string|false {
+    private static function download_with_curl_minimal(string $url): string|false {
         if (!function_exists('curl_init')) {
-            self::debug_log('curl extension not available');
             return false;
         }
         
         $ch = curl_init();
-        
-        // Realistischer Browser User-Agent (Chrome 120 auf Windows 10)
-        $user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        
-        // FIX 1.5.0: Smart Referer ermitteln
-        $referer = self::get_smart_referer($url);
-        
-        self::debug_log('Using referer: ' . $referer . ' for URL: ' . $url);
         
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
@@ -356,70 +223,49 @@ class YAA_Image_Handler {
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 0,
-            CURLOPT_USERAGENT      => $user_agent,
-            CURLOPT_REFERER        => $referer,
-            CURLOPT_ENCODING       => '',
-            // HTTP/2 erzwingen wenn verfügbar (KeyCDN verwendet HTTP/2)
-            CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_2_0,
-            CURLOPT_HTTPHEADER     => [
-                'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                'Accept-Language: de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding: gzip, deflate, br',
-                'Cache-Control: no-cache',
-                'Pragma: no-cache',
-                'Sec-Ch-Ua: "Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile: ?0',
-                'Sec-Ch-Ua-Platform: "Windows"',
-                'Sec-Fetch-Dest: image',
-                'Sec-Fetch-Mode: no-cors',
-                'Sec-Fetch-Site: cross-site',
-                'Connection: keep-alive',
-            ],
-            CURLOPT_COOKIESESSION  => true,
-            CURLOPT_COOKIEFILE     => '',
+            // KEINE zusätzlichen Headers!
+            // KEIN User-Agent!
+            // KEIN Referer!
+            // Genau wie: curl -o file.jpg URL
+            CURLOPT_ENCODING       => '', // Akzeptiert gzip automatisch
         ]);
         
         $response = curl_exec($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
         $error = curl_error($ch);
-        $errno = curl_errno($ch);
         
         curl_close($ch);
         
-        // Detailliertes Logging
         if ($response === false) {
-            self::debug_log('curl error (' . $errno . '): ' . $error . ' - URL: ' . $url);
+            self::debug_log('curl MINIMAL error: ' . $error . ' - URL: ' . $url);
             return false;
         }
         
         if ($http_code !== 200) {
-            self::debug_log('curl HTTP ' . $http_code . ' - URL: ' . $url);
+            self::debug_log('curl MINIMAL HTTP ' . $http_code . ' - URL: ' . $url);
             return false;
-        }
-        
-        if ($content_type !== null && !str_starts_with($content_type, 'image/')) {
-            self::debug_log('curl warning: Content-Type is ' . $content_type . ' - URL: ' . $url);
         }
         
         return $response;
     }
 
     /**
-     * FIX 1.5.0: Download ohne Referer als Fallback
-     * Manche Server blockieren bestimmte Referer, akzeptieren aber keinen Referer
+     * FIX 1.5.1: Einfacher curl mit generischem User-Agent
      * 
-     * @param string $url Remote image URL
-     * @return string|false Binary image data or false on failure
+     * WICHTIG: Keine Browser-spezifischen Headers (Sec-Ch-Ua etc.)
+     * Diese verraten, dass wir Chrome nachahmen, aber der TLS-Fingerprint
+     * zeigt PHP/OpenSSL - das führt zu Blocking!
      */
-    private static function download_with_curl_no_referer(string $url): string|false {
+    private static function download_with_curl_simple(string $url): string|false {
         if (!function_exists('curl_init')) {
             return false;
         }
         
         $ch = curl_init();
         
-        $user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        // Generischer, ehrlicher User-Agent
+        // NICHT Chrome vortäuschen - das führt zu TLS-Fingerprint Mismatch!
+        $user_agent = 'Mozilla/5.0 (compatible; WordPress/' . get_bloginfo('version') . ')';
         
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
@@ -431,22 +277,27 @@ class YAA_Image_Handler {
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_USERAGENT      => $user_agent,
-            // Kein Referer!
             CURLOPT_ENCODING       => '',
-            CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_2_0,
+            // NUR einfache, nicht-verdächtige Headers
             CURLOPT_HTTPHEADER     => [
-                'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-                'Accept-Language: de-DE,de;q=0.9',
-                'Cache-Control: no-cache',
+                'Accept: image/*,*/*;q=0.8',
+                'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
             ],
         ]);
         
         $response = curl_exec($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
         
         curl_close($ch);
         
-        if ($response === false || $http_code !== 200) {
+        if ($response === false) {
+            self::debug_log('curl SIMPLE error: ' . $error . ' - URL: ' . $url);
+            return false;
+        }
+        
+        if ($http_code !== 200) {
+            self::debug_log('curl SIMPLE HTTP ' . $http_code . ' - URL: ' . $url);
             return false;
         }
         
@@ -455,23 +306,14 @@ class YAA_Image_Handler {
 
     /**
      * Download mit wp_remote_get (WordPress native)
-     * 
-     * @param string $url Remote image URL
-     * @return string|false Binary image data or false on failure
      */
     private static function download_with_wp_remote(string $url): string|false {
-        // Smart Referer
-        $referer = self::get_smart_referer($url);
-        
         $response = wp_remote_get($url, [
             'timeout'    => 30,
             'sslverify'  => false,
-            'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            // WordPress Standard User-Agent verwenden
             'headers'    => [
-                'Accept'          => 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-                'Accept-Language' => 'de-DE,de;q=0.9,en;q=0.8',
-                'Referer'         => $referer,
-                'Cache-Control'   => 'no-cache',
+                'Accept' => 'image/*,*/*;q=0.8',
             ],
         ]);
 
@@ -491,16 +333,11 @@ class YAA_Image_Handler {
 
     /**
      * Download mit file_get_contents und Stream Context (Fallback)
-     * 
-     * @param string $url Remote image URL
-     * @return string|false Binary image data or false on failure
      */
     private static function download_with_stream_context(string $url): string|false {
         if (!ini_get('allow_url_fopen')) {
             return false;
         }
-        
-        $referer = self::get_smart_referer($url);
         
         $opts = [
             'http' => [
@@ -509,12 +346,8 @@ class YAA_Image_Handler {
                 'follow_location'  => true,
                 'max_redirects'    => 5,
                 'ignore_errors'    => true,
-                'user_agent'       => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'header'           => implode("\r\n", [
-                    'Accept: image/*,*/*;q=0.8',
-                    'Accept-Language: de-DE,de;q=0.9',
-                    'Referer: ' . $referer,
-                ]),
+                // Minimale Headers
+                'header'           => 'Accept: image/*,*/*',
             ],
             'ssl' => [
                 'verify_peer'      => false,
@@ -534,9 +367,10 @@ class YAA_Image_Handler {
         return $result;
     }
 
-    /**
-     * Resize an image to fit within max dimensions
-     */
+    // ========================================
+    // Ab hier: Unveränderte Methoden
+    // ========================================
+
     public static function resize_image(string $file_path, string $size_setting = 'Large'): bool {
         if (!file_exists($file_path)) {
             return false;
@@ -577,9 +411,6 @@ class YAA_Image_Handler {
         }
     }
 
-    /**
-     * Resize image using Imagick
-     */
     private static function resize_with_imagick(string $file_path, int $width, int $height): bool {
         try {
             $imagick = new \Imagick($file_path);
@@ -595,9 +426,6 @@ class YAA_Image_Handler {
         }
     }
 
-    /**
-     * Resize image using GD
-     */
     private static function resize_with_gd(string $file_path, int $width, int $height, string $mime): bool {
         try {
             $source = match($mime) {
@@ -654,9 +482,6 @@ class YAA_Image_Handler {
         }
     }
 
-    /**
-     * Generate filename based on plugin settings
-     */
     public static function generate_filename(
         string $id, 
         string $product_name = '', 
@@ -676,9 +501,6 @@ class YAA_Image_Handler {
         return self::generate_id_filename($id, $source, $ext);
     }
 
-    /**
-     * Generate SEO-optimized filename
-     */
     private static function generate_seo_filename(string $product_name, string $ext): string {
         $name = self::sanitize_for_filename($product_name);
         
@@ -696,9 +518,6 @@ class YAA_Image_Handler {
         return $name . '_' . $timestamp . '.' . $ext;
     }
 
-    /**
-     * Generate ID-based filename (legacy format)
-     */
     private static function generate_id_filename(string $id, string $source, string $ext): string {
         $prefix = '';
         
@@ -715,9 +534,6 @@ class YAA_Image_Handler {
         return $prefix . $safe_id . '.' . $ext;
     }
 
-    /**
-     * Sanitize a string for use in a filename
-     */
     private static function sanitize_for_filename(string $text): string {
         $text = mb_strtolower($text, 'UTF-8');
         
@@ -740,9 +556,6 @@ class YAA_Image_Handler {
         return $text;
     }
 
-    /**
-     * Find existing file by ID
-     */
     private static function find_existing_file(
         string $base_dir, 
         string $base_url, 
@@ -769,9 +582,6 @@ class YAA_Image_Handler {
         return null;
     }
 
-    /**
-     * Process with automatic retry
-     */
     public static function process_with_retry(
         ?string $remote_url, 
         string $id, 
@@ -781,50 +591,24 @@ class YAA_Image_Handler {
         return self::process($remote_url, $id, $product_name, $source);
     }
 
-    /**
-     * Check if a remote URL is accessible
-     */
     public static function is_remote_url_accessible(string $url): bool {
         if (empty($url)) {
             return false;
         }
 
-        // Bei bekannten CDN-Domains HEAD-Check überspringen
-        $skip_head_check_domains = [
-            'proshop.de',
-            'amazon.',
-            'ebay.',
-            'otto.de',
-            'mediamarkt.',
-            'saturn.',
-            'office-partner.de',
-            'keycdn',
-        ];
+        // HEAD-Checks bei bekannten Domains überspringen
+        $skip_domains = ['proshop.de', 'amazon.', 'ebay.', 'otto.de', 'mediamarkt.', 'saturn.', 'office-partner.de', 'keycdn'];
         
         $url_host = parse_url($url, PHP_URL_HOST) ?? '';
-        foreach ($skip_head_check_domains as $domain) {
+        foreach ($skip_domains as $domain) {
             if (str_contains($url_host, $domain)) {
                 return true;
             }
         }
 
-        $response = wp_remote_head($url, [
-            'timeout'    => 5,
-            'sslverify'  => false,
-            'user-agent' => 'Mozilla/5.0 (compatible; ImageCheck/1.0)',
-        ]);
-
-        if (is_wp_error($response)) {
-            return true;
-        }
-
-        $status = wp_remote_retrieve_response_code($response);
-        return $status >= 200 && $status < 400;
+        return true; // Immer versuchen zu laden
     }
 
-    /**
-     * Validate image data using magic bytes
-     */
     public static function is_valid_image_data(string $data): bool {
         if (strlen($data) < 8) {
             return false;
@@ -857,9 +641,6 @@ class YAA_Image_Handler {
         return false;
     }
 
-    /**
-     * Validate an existing image file
-     */
     public static function is_valid_image_file(string $file_path): bool {
         if (!file_exists($file_path) || !is_readable($file_path)) {
             return false;
@@ -880,9 +661,6 @@ class YAA_Image_Handler {
         return self::is_valid_image_data($header);
     }
 
-    /**
-     * Check if we should skip retrying this URL
-     */
     private static function should_skip_retry(string $url): bool {
         $retry_key = 'yaa_img_retry_' . md5($url);
         $retry_data = get_transient($retry_key);
@@ -898,9 +676,6 @@ class YAA_Image_Handler {
         return ($retry_data['count'] ?? 0) >= self::MAX_RETRIES;
     }
 
-    /**
-     * Increment retry counter for a URL
-     */
     private static function increment_retry_counter(string $url): void {
         $retry_key = 'yaa_img_retry_' . md5($url);
         $retry_data = get_transient($retry_key);
@@ -919,17 +694,11 @@ class YAA_Image_Handler {
         ], $expiration);
     }
 
-    /**
-     * Clear retry counter on success
-     */
     private static function clear_retry_counter(string $url): void {
         $retry_key = 'yaa_img_retry_' . md5($url);
         delete_transient($retry_key);
     }
 
-    /**
-     * Reset all retry counters
-     */
     public static function reset_all_retry_counters(): int {
         global $wpdb;
         
@@ -944,9 +713,6 @@ class YAA_Image_Handler {
         return (int) $deleted;
     }
 
-    /**
-     * Log a failed image download
-     */
     public static function log_failed_image(string $url, string $product_id, string $reason): void {
         $log = get_option('yaa_failed_images_log', []);
 
@@ -976,24 +742,15 @@ class YAA_Image_Handler {
         update_option('yaa_failed_images_log', $log, false);
     }
 
-    /**
-     * Get failed images log
-     */
     public static function get_failed_images_log(): array {
         $log = get_option('yaa_failed_images_log', []);
         return is_array($log) ? $log : [];
     }
 
-    /**
-     * Clear failed images log
-     */
     public static function clear_failed_images_log(): void {
         delete_option('yaa_failed_images_log');
     }
 
-    /**
-     * Get count of failed images in last 24 hours
-     */
     public static function get_recent_failures_count(): int {
         $log = self::get_failed_images_log();
         $one_day_ago = time() - DAY_IN_SECONDS;
@@ -1008,9 +765,6 @@ class YAA_Image_Handler {
         return $count;
     }
 
-    /**
-     * Placeholder URL
-     */
     public static function get_placeholder_url(): string {
         $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
             <defs>
@@ -1033,9 +787,6 @@ class YAA_Image_Handler {
         return 'data:image/svg+xml;base64,' . base64_encode($svg);
     }
 
-    /**
-     * Get a colored placeholder based on product source
-     */
     public static function get_placeholder_url_colored(string $source = ''): string {
         $color = match($source) {
             'amazon' => '#ff9900',
@@ -1058,9 +809,6 @@ class YAA_Image_Handler {
         return 'data:image/svg+xml;base64,' . base64_encode($svg);
     }
 
-    /**
-     * Clean up old/orphaned images
-     */
     public static function cleanup_old_images(int $days_old = 90): int {
         $upload_dir = wp_upload_dir();
         $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
@@ -1088,9 +836,6 @@ class YAA_Image_Handler {
         return $deleted;
     }
 
-    /**
-     * Get statistics about local images
-     */
     public static function get_statistics(): array {
         $upload_dir = wp_upload_dir();
         $image_dir = $upload_dir['basedir'] . '/yadore-amazon-api';
@@ -1139,9 +884,6 @@ class YAA_Image_Handler {
         return $stats;
     }
 
-    /**
-     * Preview SEO filename
-     */
     public static function preview_seo_filename(string $product_name): string {
         return self::generate_seo_filename($product_name, 'jpg');
     }
@@ -1160,26 +902,25 @@ class YAA_Image_Handler {
         
         if ($test_url !== '') {
             $results['test_url'] = $test_url;
-            $results['smart_referer'] = self::get_smart_referer($test_url);
             
-            // Test curl mit Smart Referer
+            // Test curl MINIMAL
             $start = microtime(true);
-            $curl_result = self::download_with_curl($test_url);
-            $results['curl_smart_test'] = [
-                'success'  => $curl_result !== false && strlen($curl_result) > 500,
-                'size'     => $curl_result !== false ? strlen($curl_result) : 0,
+            $curl_minimal = self::download_with_curl_minimal($test_url);
+            $results['curl_minimal_test'] = [
+                'success'  => $curl_minimal !== false && strlen($curl_minimal) > 500,
+                'size'     => $curl_minimal !== false ? strlen($curl_minimal) : 0,
                 'time_ms'  => round((microtime(true) - $start) * 1000),
-                'is_image' => $curl_result !== false ? self::is_valid_image_data($curl_result) : false,
+                'is_image' => $curl_minimal !== false ? self::is_valid_image_data($curl_minimal) : false,
             ];
             
-            // Test curl ohne Referer
+            // Test curl SIMPLE
             $start = microtime(true);
-            $curl_no_ref_result = self::download_with_curl_no_referer($test_url);
-            $results['curl_no_referer_test'] = [
-                'success'  => $curl_no_ref_result !== false && strlen($curl_no_ref_result) > 500,
-                'size'     => $curl_no_ref_result !== false ? strlen($curl_no_ref_result) : 0,
+            $curl_simple = self::download_with_curl_simple($test_url);
+            $results['curl_simple_test'] = [
+                'success'  => $curl_simple !== false && strlen($curl_simple) > 500,
+                'size'     => $curl_simple !== false ? strlen($curl_simple) : 0,
                 'time_ms'  => round((microtime(true) - $start) * 1000),
-                'is_image' => $curl_no_ref_result !== false ? self::is_valid_image_data($curl_no_ref_result) : false,
+                'is_image' => $curl_simple !== false ? self::is_valid_image_data($curl_simple) : false,
             ];
             
             // Test wp_remote
