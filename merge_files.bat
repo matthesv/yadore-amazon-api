@@ -22,7 +22,7 @@ if "%output_file%"=="" set "output_file=output.txt"
 ) > "%output_file%"
 
 :: Durchsuchen der Verzeichnisse nach .php und .js-Dateien
-for /r "%source_dir%" %%f in (*.php *.js *.css *.yaml) do (
+for /r "%source_dir%" %%f in (*.php *.js) do (
     :: Pfad prüfen, ob er "plugin-update-checker" enthält
     echo %%f | findstr /i "\\includes\\plugin-update-checker\\" >nul
     if errorlevel 1 (

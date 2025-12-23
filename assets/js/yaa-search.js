@@ -894,11 +894,16 @@
                 html += '</div>';
             }
             
-            // Availability
+            // Availability Dot (ohne Text)
             if (this.settings.showAvailability && product.availability) {
-                const statusClass = product.availability_status || 'unknown';
-                html += `<div class="yaa-availability yadore-availability yaa-availability-${statusClass}">${this.escapeHtml(product.availability)}</div>`;
+                const isAvailable = (product.availability_status === 'available') || 
+                                    (product.availability.toLowerCase() === 'available') ||
+                                    (product.availability.toLowerCase() === 'in stock');
+                const dotClass = isAvailable ? 'yaa-dot-available' : 'yaa-dot-unknown';
+                const dotTitle = isAvailable ? 'Verfügbar' : 'Unbekannt';
+                html += `<span class="yaa-availability-dot ${dotClass}" title="${dotTitle}" aria-label="${dotTitle}"></span>`;
             }
+
             
             // Sponsored
             if (this.settings.sponsored && product.sponsored) {
