@@ -791,10 +791,21 @@ final class YAA_Search_Shortcode {
                     <?php endif; ?>
                     
                     <?php if ($atts['show_availability'] && !empty($product['availability'])): ?>
-                        <div class="yaa-availability yadore-availability yaa-availability-<?php echo esc_attr($product['availability_status']); ?>">
-                            <?php echo esc_html($product['availability']); ?>
-                        </div>
+                        <?php 
+                        $availability_status = $product['availability_status'] ?? 'unknown';
+                        $availability_text = strtolower($product['availability'] ?? '');
+                        $is_available = ($availability_status === 'available') || 
+                                        ($availability_text === 'available') || 
+                                        ($availability_text === 'in stock') ||
+                                        ($availability_text === 'auf lager');
+                        $dot_class = $is_available ? 'yaa-dot-available' : 'yaa-dot-unknown';
+                        $dot_title = $is_available ? __('Verfügbar', 'yadore-amazon-api') : __('Unbekannt', 'yadore-amazon-api');
+                        ?>
+                        <span class="yaa-availability-dot <?php echo esc_attr($dot_class); ?>" 
+                            title="<?php echo esc_attr($dot_title); ?>" 
+                            aria-label="<?php echo esc_attr($dot_title); ?>"></span>
                     <?php endif; ?>
+
                     
                     <?php if ($atts['sponsored'] && !empty($product['sponsored'])): ?>
                         <span class="yaa-sponsored yadore-sponsored"><?php esc_html_e('Anzeige', 'yadore-amazon-api'); ?></span>

@@ -3,7 +3,7 @@
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.8.2
+ * Version: 1.8.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.8.2');
+define('YAA_VERSION', '1.8.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
