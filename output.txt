@@ -12,7 +12,7 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
  * Plugin Name: Yadore-Amazon-API
  * Plugin URI: https://github.com/matthesv/yadore-amazon-api
  * Description: Universelles Affiliate-Plugin für Yadore und Amazon PA-API 5.0 mit Redis-Caching, eigenen Produkten und vollständiger Backend-Konfiguration.
- * Version: 1.8.1
+ * Version: 1.8.3
  * Author: Matthes Vogel
  * Author URI: https://example.com
  * Text Domain: yadore-amazon-api
@@ -31,7 +31,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin Constants
-define('YAA_VERSION', '1.8.1');
+define('YAA_VERSION', '1.8.3');
 define('YAA_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YAA_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YAA_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -1726,11 +1726,16 @@ Beginn des Codes C:\Users\rando\OneDrive\Dokumente\Websites\matthesv.de\yadore-a
                 html += '</div>';
             }
             
-            // Availability
+            // Availability Dot (ohne Text)
             if (this.settings.showAvailability && product.availability) {
-                const statusClass = product.availability_status || 'unknown';
-                html += `<div class="yaa-availability yadore-availability yaa-availability-${statusClass}">${this.escapeHtml(product.availability)}</div>`;
+                const isAvailable = (product.availability_status === 'available') || 
+                                    (product.availability.toLowerCase() === 'available') ||
+                                    (product.availability.toLowerCase() === 'in stock');
+                const dotClass = isAvailable ? 'yaa-dot-available' : 'yaa-dot-unknown';
+                const dotTitle = isAvailable ? 'Verfügbar' : 'Unbekannt';
+                html += `<span class="yaa-availability-dot ${dotClass}" title="${dotTitle}" aria-label="${dotTitle}"></span>`;
             }
+
             
             // Sponsored
             if (this.settings.sponsored && product.sponsored) {
@@ -9050,10 +9055,21 @@ final class YAA_Search_Shortcode {
                     <?php endif; ?>
                     
                     <?php if ($atts['show_availability'] && !empty($product['availability'])): ?>
-                        <div class="yaa-availability yadore-availability yaa-availability-<?php echo esc_attr($product['availability_status']); ?>">
-                            <?php echo esc_html($product['availability']); ?>
-                        </div>
+                        <?php 
+                        $availability_status = $product['availability_status'] ?? 'unknown';
+                        $availability_text = strtolower($product['availability'] ?? '');
+                        $is_available = ($availability_status === 'available') || 
+                                        ($availability_text === 'available') || 
+                                        ($availability_text === 'in stock') ||
+                                        ($availability_text === 'auf lager');
+                        $dot_class = $is_available ? 'yaa-dot-available' : 'yaa-dot-unknown';
+                        $dot_title = $is_available ? __('Verfügbar', 'yadore-amazon-api') : __('Unbekannt', 'yadore-amazon-api');
+                        ?>
+                        <span class="yaa-availability-dot <?php echo esc_attr($dot_class); ?>" 
+                            title="<?php echo esc_attr($dot_title); ?>" 
+                            aria-label="<?php echo esc_attr($dot_title); ?>"></span>
                     <?php endif; ?>
+
                     
                     <?php if ($atts['sponsored'] && !empty($product['sponsored'])): ?>
                         <span class="yaa-sponsored yadore-sponsored"><?php esc_html_e('Anzeige', 'yadore-amazon-api'); ?></span>
